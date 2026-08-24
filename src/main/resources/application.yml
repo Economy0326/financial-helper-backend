@@ -1,0 +1,9 @@
+# 모든 환경에서 공통으로 사용하는 기본 설정을 넣는 파일
+
+spring:
+  application:
+    name: financial-helper-backend
+
+  # local -> 내 컴퓨터, prod -> 실제 배포 서버
+  profiles:
+    default: local

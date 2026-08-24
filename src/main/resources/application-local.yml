@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    # Windows 환경변수에서 갖고오기
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      # DDL 임의로 못 쓰게 설정
+      ddl-auto: none
+    open-in-view: false
