@@ -11,3 +11,5 @@ spring:
 app:
   guest-session:
     ttl: ${GUEST_SESSION_TTL}
+    cookie:
+      same-site: ${GUEST_COOKIE_SAME_SITE:Lax}

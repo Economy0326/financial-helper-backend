@@ -1,5 +1,7 @@
 package com.financialhelper.guest;
 
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,13 +20,24 @@ public class SessionController {
     }
 
     @GetMapping
-    public SessionResponse getSession(
+    public ResponseEntity<SessionResponse> getSession(
             @CookieValue(
                     name = GuestSessionCookie.NAME,
                     required = false
             )
-            String rawToken
+            String rawToken,
+            CsrfToken csrfToken
     ) {
-        return guestSessionService.getSessionState(rawToken);
+        SessionResponse response =
+                guestSessionService
+                        .getSessionState(rawToken);
+
+        return ResponseEntity
+                .ok()
+                .header(
+                        csrfToken.getHeaderName(),
+                        csrfToken.getToken()
+                )
+                .body(response);
     }
 }

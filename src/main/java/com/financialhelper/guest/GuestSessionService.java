@@ -9,19 +9,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.EnumSet;
 import java.util.Optional;
-import java.util.Set;
 
 @Service
 public class GuestSessionService {
-
-    private static final Set<ConsultationStatus> ACTIVE_STATUSES =
-            EnumSet.of(
-                    ConsultationStatus.IN_PROGRESS,
-                    ConsultationStatus.ANALYZING,
-                    ConsultationStatus.NEEDS_MORE_INFO
-            );
 
     private final GuestSessionRepository guestSessionRepository;
     private final ConsultationRepository consultationRepository;
@@ -40,37 +31,50 @@ public class GuestSessionService {
         this.sessionTtl = sessionTtl;
     }
 
-    // @Transactional => DB 작업을 하나의 논리적 작업 단위로 묶음
     @Transactional
-    // GuestSession 생성
-    public GuestSessionCreationResult createSession() {
-        String rawToken = tokenService.generateRawToken();
+    public GuestSessionResolution resolveOrCreateForConsultation(
+            String rawToken
+    ) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return createNewSession();
+        }
 
-        OffsetDateTime now = now();
+        GuestSession guestSession =
+                findValidSessionInternal(rawToken)
+                        .orElseThrow(
+                                GuestSessionExpiredException::new
+                        );
 
-        GuestSession guestSession = new GuestSession(
-                tokenService.hashToken(rawToken),
-                now,
-                now.plus(sessionTtl)
-        );
-
-        GuestSession savedSession =
-                guestSessionRepository.save(guestSession);
-
-        return new GuestSessionCreationResult(
-                savedSession,
-                rawToken
+        return GuestSessionResolution.existing(
+                guestSession
         );
     }
 
-    // GuestSession 조회
     @Transactional(readOnly = true)
-    public Optional<GuestSession> findValidSession(String rawToken) {
+    public GuestSession requireValidSession(
+            String rawToken
+    ) {
+        if (rawToken == null || rawToken.isBlank()) {
+            throw new GuestSessionExpiredException();
+        }
+
+        return findValidSessionInternal(rawToken)
+                .orElseThrow(
+                        GuestSessionExpiredException::new
+                );
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<GuestSession> findValidSession(
+            String rawToken
+    ) {
         return findValidSessionInternal(rawToken);
     }
 
     @Transactional(readOnly = true)
-    public SessionResponse getSessionState(String rawToken) {
+    public SessionResponse getSessionState(
+            String rawToken
+    ) {
         Optional<GuestSession> guestSession =
                 findValidSessionInternal(rawToken);
 
@@ -85,12 +89,37 @@ public class GuestSessionService {
                 consultationRepository
                         .existsByGuestSession_IdAndStatusIn(
                                 guestSession.get().getId(),
-                                ACTIVE_STATUSES
+                                ConsultationStatus.activeStatuses()
                         );
 
         return new SessionResponse(
                 true,
                 hasActiveConsultation
+        );
+    }
+
+    private GuestSessionResolution createNewSession() {
+        String rawToken =
+                tokenService.generateRawToken();
+
+        OffsetDateTime now =
+                OffsetDateTime.now(ZoneOffset.UTC);
+
+        GuestSession guestSession =
+                new GuestSession(
+                        tokenService.hashToken(rawToken),
+                        now,
+                        now.plus(sessionTtl)
+                );
+
+        GuestSession savedSession =
+                guestSessionRepository.save(
+                        guestSession
+                );
+
+        return GuestSessionResolution.created(
+                savedSession,
+                rawToken
         );
     }
 
@@ -101,16 +130,13 @@ public class GuestSessionService {
             return Optional.empty();
         }
 
-        String tokenHash = tokenService.hashToken(rawToken);
+        String tokenHash =
+                tokenService.hashToken(rawToken);
 
         return guestSessionRepository
                 .findByTokenHashAndExpiresAtAfter(
                         tokenHash,
-                        now()
+                        OffsetDateTime.now(ZoneOffset.UTC)
                 );
-    }
-
-    private OffsetDateTime now() {
-        return OffsetDateTime.now(ZoneOffset.UTC);
     }
 }

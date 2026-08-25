@@ -20,4 +20,11 @@ public interface ConsultationRepository
             UUID guestSessionId,
             Collection<ConsultationStatus> statuses
     );
+
+    // 현재 Guest의 Active Consultation을 가져옴
+    Optional<Consultation>
+    findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
+            UUID guestSessionId,
+            Collection<ConsultationStatus> statuses
+    );
 }
