@@ -14,7 +14,7 @@ public class SecurityConfig {
         http
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/health").permitAll()
-                        // 그 외는 일단 차단
+                        .requestMatchers("/api/v1/session").permitAll()
                         .anyRequest().denyAll()
                 );
 

@@ -7,3 +7,7 @@ spring:
   # local -> 내 컴퓨터, prod -> 실제 배포 서버
   profiles:
     default: local
+
+app:
+  guest-session:
+    ttl: ${GUEST_SESSION_TTL}
