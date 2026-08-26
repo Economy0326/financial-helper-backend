@@ -42,6 +42,7 @@ public class ConsultationService {
                 ConsultationStep.FOLLOW_UP
         );
 
+    // 새로운 상담 생성
     @Transactional
     public ConsultationStartResult startConsultation(
             String rawToken
@@ -97,6 +98,7 @@ public class ConsultationService {
         );
     }
 
+    // 이어서하기 조회
     @Transactional(readOnly = true)
     public ActiveConsultationResponse getActiveConsultation(
             String rawToken
@@ -116,6 +118,28 @@ public class ConsultationService {
                         );
 
         return ActiveConsultationResponse.from(
+                consultation
+        );
+    }
+
+    // Consultation 상세 조회
+    @Transactional(readOnly = true)
+    public ConsultationDetailResponse getConsultation(
+            UUID consultationId,
+            String rawToken
+    ) {
+        GuestSession guestSession =
+                guestSessionService.requireValidSession(
+                        rawToken
+                );
+
+        Consultation consultation =
+                findOwnedConsultation(
+                        consultationId,
+                        guestSession
+                );
+
+        return ConsultationDetailResponse.from(
                 consultation
         );
     }

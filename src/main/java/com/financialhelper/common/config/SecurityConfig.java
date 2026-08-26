@@ -46,6 +46,10 @@ public class SecurityConfig {
                                 "/api/v1/consultations/active"
                         ).permitAll()
                         .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/consultations/*"
+                        ).permitAll()
+                        .requestMatchers(
                                 HttpMethod.PUT,
                                 "/api/v1/consultations/*/category",
                                 "/api/v1/consultations/*/situation"

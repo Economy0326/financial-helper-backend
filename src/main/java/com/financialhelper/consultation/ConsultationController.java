@@ -75,6 +75,22 @@ public class ConsultationController {
                 .getActiveConsultation(rawToken);
     }
 
+    @GetMapping("/{id}")
+    public ConsultationDetailResponse getConsultation(
+            @PathVariable UUID id,
+
+            @CookieValue(
+                    name = GuestSessionCookie.NAME,
+                    required = false
+            )
+            String rawToken
+    ) {
+        return consultationService.getConsultation(
+                id,
+                rawToken
+        );
+    }
+
     @PutMapping("/{id}/category")
     public UpdateConsultationCategoryResponse updateCategory(
             @PathVariable UUID id,
