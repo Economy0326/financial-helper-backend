@@ -31,6 +31,8 @@ public class GuestSessionService {
         this.sessionTtl = sessionTtl;
     }
 
+    // 유효한 Guest Session을 조회하고,
+    // 없거나 만료된 경우 새 Guest Session을 생성
     @Transactional
     public GuestSessionResolution resolveOrCreateForConsultation(
             String rawToken
@@ -39,17 +41,13 @@ public class GuestSessionService {
             return createNewSession();
         }
 
-        GuestSession guestSession =
-                findValidSessionInternal(rawToken)
-                        .orElseThrow(
-                                GuestSessionExpiredException::new
-                        );
-
-        return GuestSessionResolution.existing(
-                guestSession
-        );
+        return findValidSessionInternal(rawToken)
+            .map(GuestSessionResolution::existing)
+            .orElseGet(this::createNewSession);
     }
 
+    // 기존 Guest Session이 유효한지 조회하고,
+    // 유효하지 않으면 만료 예외 발생
     @Transactional(readOnly = true)
     public GuestSession requireValidSession(
             String rawToken
@@ -64,6 +62,7 @@ public class GuestSessionService {
                 );
     }
 
+    // Raw Token에 대응하는 유효한 Guest Session을 조회
     @Transactional(readOnly = true)
     public Optional<GuestSession> findValidSession(
             String rawToken
@@ -71,6 +70,8 @@ public class GuestSessionService {
         return findValidSessionInternal(rawToken);
     }
 
+    // Guest Session과 진행 중 Consultation 존재 여부를 조회해
+    // 현재 세션 상태를 반환
     @Transactional(readOnly = true)
     public SessionResponse getSessionState(
             String rawToken
@@ -98,6 +99,7 @@ public class GuestSessionService {
         );
     }
 
+    // 새 Guest Token을 생성하고 Hash만 DB에 저장
     private GuestSessionResolution createNewSession() {
         String rawToken =
                 tokenService.generateRawToken();
@@ -123,6 +125,7 @@ public class GuestSessionService {
         );
     }
 
+    // Raw Token을 Hash한 뒤 만료되지 않은 Guest Session을 조회
     private Optional<GuestSession> findValidSessionInternal(
             String rawToken
     ) {
