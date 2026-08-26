@@ -54,5 +54,5 @@ out/
 .DS_Store
 Thumbs.db
 
-### Raw Guest Token ###
-cookies.txt
+### Curl / Guest Session Test Files ###
+cookies*.txt

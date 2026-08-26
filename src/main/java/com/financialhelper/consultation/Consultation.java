@@ -99,4 +99,30 @@ public class Consultation {
     public OffsetDateTime getUpdatedAt() {
         return updatedAt;
     }
+
+    public void updateCategory(
+            ConsultationCategory category,
+            OffsetDateTime updatedAt
+    ) {
+        this.category = category;
+
+        if (this.currentStep == ConsultationStep.CATEGORY) {
+            this.currentStep = ConsultationStep.SITUATION;
+        }
+
+        this.updatedAt = updatedAt;
+    }
+
+    public void updateSituation(
+            String situationText,
+            OffsetDateTime updatedAt
+    ) {
+        this.situationText = situationText;
+
+        if (this.currentStep == ConsultationStep.SITUATION) {
+            this.currentStep = ConsultationStep.FOLLOW_UP;
+        }
+
+        this.updatedAt = updatedAt;
+    }
 }

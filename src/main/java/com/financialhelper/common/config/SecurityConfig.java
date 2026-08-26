@@ -30,22 +30,23 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/health"
                         ).permitAll()
-
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/session"
                         ).permitAll()
-
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/v1/consultations"
                         ).permitAll()
-
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/v1/consultations/active"
                         ).permitAll()
-
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/v1/consultations/*/category",
+                                "/api/v1/consultations/*/situation"
+                        ).permitAll()
                         .anyRequest().denyAll()
                 );
 

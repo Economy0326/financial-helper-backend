@@ -11,6 +11,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/api/v1/consultations")
 public class ConsultationController {
@@ -66,5 +73,47 @@ public class ConsultationController {
     ) {
         return consultationService
                 .getActiveConsultation(rawToken);
+    }
+
+    @PutMapping("/{id}/category")
+    public UpdateConsultationCategoryResponse updateCategory(
+            @PathVariable UUID id,
+
+            @CookieValue(
+                    name = GuestSessionCookie.NAME,
+                    required = false
+            )
+            String rawToken,
+
+            @Valid
+            @RequestBody
+            UpdateConsultationCategoryRequest request
+    ) {
+        return consultationService.updateCategory(
+                id,
+                rawToken,
+                request
+        );
+    }
+
+    @PutMapping("/{id}/situation")
+    public UpdateConsultationSituationResponse updateSituation(
+            @PathVariable UUID id,
+
+            @CookieValue(
+                    name = GuestSessionCookie.NAME,
+                    required = false
+            )
+            String rawToken,
+
+            @Valid
+            @RequestBody
+            UpdateConsultationSituationRequest request
+    ) {
+        return consultationService.updateSituation(
+                id,
+                rawToken,
+                request
+        );
     }
 }
