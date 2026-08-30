@@ -53,3 +53,6 @@ out/
 ### OS ###
 .DS_Store
 Thumbs.db
+
+### Curl / Guest Session Test Files ###
+cookies*.txt

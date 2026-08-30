@@ -1,20 +1,59 @@
-// Get health는 로그인 없이 접근 가능하게 하기 위해서
 package com.financialhelper.common.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+
+import org.springframework.security.config.Customizer;
 
 @Configuration
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
+
+        CookieCsrfTokenRepository csrfTokenRepository =
+                new CookieCsrfTokenRepository();
+
+        csrfTokenRepository.setCookiePath("/");
+
         http
+                .cors(Customizer.withDefaults())
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(
+                                csrfTokenRepository
+                        )
+                )
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/health").permitAll()
-                        // 그 외는 일단 차단
+                        .requestMatchers(
+                                "/health"
+                        ).permitAll()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/session"
+                        ).permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/consultations"
+                        ).permitAll()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/consultations/active"
+                        ).permitAll()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/consultations/*"
+                        ).permitAll()
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/v1/consultations/*/category",
+                                "/api/v1/consultations/*/situation"
+                        ).permitAll()
                         .anyRequest().denyAll()
                 );
 

@@ -7,3 +7,12 @@ spring:
   # local -> 내 컴퓨터, prod -> 실제 배포 서버
   profiles:
     default: local
+
+app:
+  guest-session:
+    ttl: ${GUEST_SESSION_TTL}
+    cookie:
+      same-site: ${GUEST_COOKIE_SAME_SITE:Lax}
+
+  cors:
+    allowed-origin: ${FRONTEND_ORIGIN}

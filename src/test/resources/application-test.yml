@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: ${TEST_DB_URL}
+    username: ${TEST_DB_USERNAME}
+    password: ${TEST_DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+app:
+  guest-session:
+    ttl: PT24H
+    cookie:
+      secure: false
+      same-site: Lax
+
+  cors:
+    allowed-origin: http://localhost:3000

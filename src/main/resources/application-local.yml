@@ -10,3 +10,9 @@ spring:
       # DDL 임의로 못 쓰게 설정
       ddl-auto: none
     open-in-view: false
+
+# local은 http://localhost이므로 Secure = false
+app:
+  guest-session:
+    cookie:
+      secure: false
