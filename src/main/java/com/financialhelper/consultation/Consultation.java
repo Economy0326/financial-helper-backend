@@ -14,6 +14,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -46,6 +47,12 @@ public class Consultation {
     @Enumerated(EnumType.STRING)
     @Column(name = "current_step", nullable = false, length = 32)
     private ConsultationStep currentStep;
+    
+    @Column(name = "case_input_revision", nullable = false)
+    private long caseInputRevision;
+
+    @Column(name = "follow_up_answer_revision", nullable = false)
+    private long followUpAnswerRevision;
 
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
@@ -64,6 +71,10 @@ public class Consultation {
         // 새로운 Consultation의 status와 currentStep을 보장하게 함
         this.status = ConsultationStatus.IN_PROGRESS;
         this.currentStep = ConsultationStep.CATEGORY;
+        
+        this.caseInputRevision = 0L;
+        this.followUpAnswerRevision = 0L;
+        
         this.createdAt = createdAt;
         this.updatedAt = createdAt;
     }
@@ -92,6 +103,14 @@ public class Consultation {
         return currentStep;
     }
 
+    public long getCaseInputRevision() {
+        return caseInputRevision;
+    }
+
+    public long getFollowUpAnswerRevision() {
+        return followUpAnswerRevision;
+    }
+
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
@@ -104,10 +123,17 @@ public class Consultation {
             ConsultationCategory category,
             OffsetDateTime updatedAt
     ) {
+        // Category는 enum 값이기 때문에 비교 연산자 사용
+        boolean changed =
+                this.category != category;
+
         this.category = category;
 
-        if (this.currentStep == ConsultationStep.CATEGORY) {
-            this.currentStep = ConsultationStep.SITUATION;
+        if (changed) {
+            markCaseInputChanged();
+
+            this.currentStep =
+                    ConsultationStep.SITUATION;
         }
 
         this.updatedAt = updatedAt;
@@ -117,12 +143,28 @@ public class Consultation {
             String situationText,
             OffsetDateTime updatedAt
     ) {
+        // Situation은 문자열이기 때문에 equals 사용
+        boolean changed =
+                !Objects.equals(
+                        this.situationText,
+                        situationText
+                );
+
         this.situationText = situationText;
 
-        if (this.currentStep == ConsultationStep.SITUATION) {
-            this.currentStep = ConsultationStep.FOLLOW_UP;
+        if (changed) {
+            markCaseInputChanged();
+
+            this.currentStep =
+                    ConsultationStep.FOLLOW_UP;
         }
 
         this.updatedAt = updatedAt;
+    }
+
+    private void markCaseInputChanged() {
+        this.caseInputRevision++;
+
+        this.followUpAnswerRevision = 0L;
     }
 }
