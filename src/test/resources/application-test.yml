@@ -18,3 +18,13 @@ app:
 
   cors:
     allowed-origin: http://localhost:3000
+
+  ai:
+    enabled: true
+    smoke-test-enabled: false
+
+    openai:
+      # Test에서는 실제 OpenAI 호출을 하지 않는다.
+      api-key: test-only-key
+      model: gpt-5.6-luna
+      timeout: 30s
