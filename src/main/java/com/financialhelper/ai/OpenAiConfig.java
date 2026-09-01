@@ -21,6 +21,7 @@ import org.springframework.context.annotation.Configuration;
         OpenAiProperties.class
 )
 
+// 실제 OpenAIClient를 만들어 Spring에게 등록하는 역할
 public class OpenAiConfig {
 
     // @Bean 만들어진 OpenAIClient를 Spring이 관리

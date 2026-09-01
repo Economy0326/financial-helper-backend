@@ -6,6 +6,7 @@ import java.time.Duration;
 
 // application.yml을 Java 객체로 매핑하기 위해 사용되는 클래스
 @ConfigurationProperties(prefix = "app.ai.openai")
+// 환경변수/설정값을 읽어오는 역할
 public record OpenAiProperties(
         String apiKey,
         String model,

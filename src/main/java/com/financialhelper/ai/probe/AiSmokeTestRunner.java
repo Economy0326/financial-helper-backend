@@ -1,4 +1,6 @@
-package com.financialhelper.ai;
+package com.financialhelper.ai.probe;
+
+import com.financialhelper.ai.OpenAiStructuredClient;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,13 +29,13 @@ public class AiSmokeTestRunner
                     AiSmokeTestRunner.class
             );
 
-    private final OpenAiTextClient openAiTextClient;
+    private final OpenAiStructuredClient openAiStructuredClient;
 
     public AiSmokeTestRunner(
-            OpenAiTextClient openAiTextClient
+            OpenAiStructuredClient openAiStructuredClient
     ) {
-        this.openAiTextClient =
-                openAiTextClient;
+        this.openAiStructuredClient =
+                openAiStructuredClient;
     }
 
     @Override
@@ -41,17 +43,27 @@ public class AiSmokeTestRunner
             ApplicationArguments args
     ) {
 
-        openAiTextClient.generateText(
+        openAiStructuredClient.generateStructured(
                 """
-                This is a connectivity test.
+                You are performing a backend connectivity test.
 
-                Return only:
+                Follow the requested output schema exactly.
+
+                The status field must be exactly:
                 AI_CONNECTION_OK
+
+                Do not include user data or financial advice.
+                """,
                 """
+                Confirm that structured AI output is working.
+
+                Return a short Korean confirmation message.
+                """,
+                AiStructuredProbeResponse.class
         );
 
         log.info(
-                "OpenAI API smoke test succeeded."
+                "OpenAI structured output smoke test succeeded."
         );
     }
 }
