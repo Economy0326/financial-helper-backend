@@ -23,9 +23,13 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 
-	// Spring boot와 Flyway를 연결
+	// OpenAI 공식 Java SDK
+	implementation 'com.openai:openai-java:4.52.0'
+
+	// Spring Boot와 Flyway 연결
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
-	// Flyway가 PostgreSQL을 실제 migration 대상으로 처리할 수 있게 함
+
+	// Flyway PostgreSQL 지원
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 
 	runtimeOnly 'org.postgresql:postgresql'
@@ -34,6 +38,7 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

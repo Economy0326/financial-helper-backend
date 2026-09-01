@@ -1,10 +1,11 @@
-# 모든 환경에서 공통으로 사용하는 기본 설정을 넣는 파일
+# 모든 환경에서 공통으로 사용하는 기본 설정
 
 spring:
   application:
     name: financial-helper-backend
 
-  # local -> 내 컴퓨터, prod -> 실제 배포 서버
+  # local -> 내 컴퓨터
+  # prod -> 실제 배포 서버
   profiles:
     default: local
 
@@ -16,3 +17,15 @@ app:
 
   cors:
     allowed-origin: ${FRONTEND_ORIGIN}
+
+  ai:
+    enabled: ${AI_ENABLED:false}
+
+    # 실제 API 연결 확인용
+    # 평상시에는 false로 사용
+    smoke-test-enabled: ${AI_SMOKE_TEST_ENABLED:false}
+
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-5.6-terra}
+      timeout: ${OPENAI_TIMEOUT:30s}
