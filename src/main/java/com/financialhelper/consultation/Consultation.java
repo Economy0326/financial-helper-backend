@@ -54,6 +54,25 @@ public class Consultation {
     @Column(name = "follow_up_answer_revision", nullable = false)
     private long followUpAnswerRevision;
 
+    public void recordFollowUpAnswerChanged(
+            OffsetDateTime updatedAt
+    ) {
+        // 답변 처음 저장 하면 followUpAnswerRevision + 1
+        // 같은 답은 증가 x
+        this.followUpAnswerRevision++;
+        this.updatedAt = updatedAt;
+    }
+
+    public void moveToSummary(
+            OffsetDateTime updatedAt
+    ) {
+        this.currentStep =
+                ConsultationStep.SUMMARY;
+
+        this.updatedAt =
+                updatedAt;
+    }
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 

@@ -35,54 +35,66 @@ public class SecurityConfig {
                         )
                 )
 
-                .authorizeHttpRequests(
-                        authorize -> authorize
+                .authorizeHttpRequests(authorize -> authorize
 
-                                .requestMatchers(
-                                        "/health"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            "/health"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.GET,
-                                        "/api/v1/session"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/session"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.POST,
-                                        "/api/v1/consultations"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.POST,
+                            "/api/v1/consultations"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.GET,
-                                        "/api/v1/consultations/active"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/active"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.GET,
-                                        "/api/v1/consultations/*"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.PUT,
-                                        "/api/v1/consultations/*/category",
-                                        "/api/v1/consultations/*/situation"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.PUT,
+                            "/api/v1/consultations/*/category",
+                            "/api/v1/consultations/*/situation"
+                    )
+                    .permitAll()
 
-                                .requestMatchers(
-                                        HttpMethod.POST,
-                                        "/api/v1/consultations/*/understanding"
-                                )
-                                .permitAll()
+                    .requestMatchers(
+                            HttpMethod.POST,
+                            "/api/v1/consultations/*/understanding",
+                            "/api/v1/consultations/*/follow-up/prepare"
+                    )
+                    .permitAll()
 
-                                .anyRequest()
-                                .denyAll()
-                );
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*/follow-up"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.PUT,
+                            "/api/v1/consultations/*/follow-up/questions/*/answer"
+                    )
+                    .permitAll()
+
+                    .anyRequest()
+                    .denyAll()
+            );
 
         return http.build();
     }
