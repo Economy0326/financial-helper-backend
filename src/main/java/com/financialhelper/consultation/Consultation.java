@@ -73,6 +73,16 @@ public class Consultation {
                 updatedAt;
     }
 
+    public void moveToAnalysis(
+            OffsetDateTime updatedAt
+    ) {
+        this.currentStep =
+                ConsultationStep.ANALYSIS;
+
+        this.updatedAt =
+                updatedAt;
+    }
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
