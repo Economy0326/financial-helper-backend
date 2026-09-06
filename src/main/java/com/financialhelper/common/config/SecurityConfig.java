@@ -119,6 +119,13 @@ public class SecurityConfig {
                     )
                     .permitAll()
 
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*/analysis",
+                            "/api/v1/consultations/*/analysis/supplement-context"
+                    )
+                    .permitAll()
+
                     // 정의되지 않은 나머지 요청은 모두 차단
                     .anyRequest()
                     .denyAll()

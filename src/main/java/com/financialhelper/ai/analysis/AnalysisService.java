@@ -106,4 +106,17 @@ public class AnalysisService {
                         rawToken
                 );
     }
+
+    public InformationSupplementContextResponse
+    getSupplementContext(
+            UUID consultationId,
+            String rawToken
+    ) {
+
+        return persistenceService
+                .getSupplementContext(
+                        consultationId,
+                        rawToken
+                );
+    }
 }

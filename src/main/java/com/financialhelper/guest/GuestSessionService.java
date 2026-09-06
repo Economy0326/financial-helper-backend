@@ -90,7 +90,7 @@ public class GuestSessionService {
                 consultationRepository
                         .existsByGuestSession_IdAndStatusIn(
                                 guestSession.get().getId(),
-                                ConsultationStatus.activeStatuses()
+                                ConsultationStatus.resumableStatuses()
                         );
 
         return new SessionResponse(

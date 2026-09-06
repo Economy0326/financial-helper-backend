@@ -123,7 +123,10 @@ public class AnalysisPersistenceService {
             return new AnalysisData.Reservation(
                     job.getId(),
                     false,
-                    toState(job)
+                    toState(
+                        job,
+                        consultation
+                    )
             );
         }
 
@@ -163,9 +166,9 @@ public class AnalysisPersistenceService {
                 job.getId(),
                 // AI 분석 시작 가능
                 true,
-                AnalysisStateResponse.from(
+                toState(
                         job,
-                        null
+                        consultation
                 )
         );
     }
@@ -221,7 +224,10 @@ public class AnalysisPersistenceService {
                     job.getId(),
                     // AI 분석 시작 불가능
                     false,
-                    toState(job)
+                    toState(
+                        job,
+                        consultation
+                    )
             );
         }
 
@@ -249,9 +255,9 @@ public class AnalysisPersistenceService {
         return new AnalysisData.Reservation(
                 job.getId(),
                 true,
-                AnalysisStateResponse.from(
+                toState(
                         job,
-                        null
+                        consultation
                 )
         );
     }
@@ -398,6 +404,25 @@ public class AnalysisPersistenceService {
             return;
         }
 
+        if (
+                consultation
+                        .getInformationSupplementCount()
+                        >= 1
+        ) {
+            // 이미 사용자가 정보를 보완한 이후에는 다시 Situation으로 보내지 않는다.
+            job.insufficientInformation(
+                    resultJson,
+                    now
+            );
+
+            consultation
+                    .markInsufficientInformation(
+                            now
+                    );
+
+            return;
+        }
+
         job.needsMoreInfo(
                 resultJson,
                 now
@@ -488,10 +513,22 @@ public class AnalysisPersistenceService {
                 );
 
         return job
-                .map(this::toState)
-                .orElseGet(
-                        AnalysisStateResponse::notStarted
-                );
+            .map(
+                    current ->
+                            toState(
+                                    current,
+                                    consultation
+                            )
+            )
+            .orElseGet(
+                    () ->
+                            AnalysisStateResponse
+                                    .notStarted(
+                                            consultation
+                                                    // 현재 보완을 이미 진행했는지
+                                                    .getInformationSupplementCount()
+                                    )
+            );
     }
 
     @Transactional
@@ -546,6 +583,82 @@ public class AnalysisPersistenceService {
         return new ReopenAnalysisResponse(
                 consultation.getId(),
                 "SITUATION"
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public InformationSupplementContextResponse
+    getSupplementContext(
+            UUID consultationId,
+            String rawToken
+    ) {
+
+        Consultation consultation =
+                findOwnedConsultation(
+                        consultationId,
+                        rawToken
+                );
+
+        // 일반 Situation 수정 화면이면 추가정보 Context가 아님
+        if (
+                consultation.getCurrentStep()
+                        != ConsultationStep.SITUATION
+                || consultation
+                        .getInformationSupplementCount()
+                        != 1
+        ) {
+            // active = False, count = getInformationSupplementCount()
+            return InformationSupplementContextResponse
+                    .inactive(
+                            consultation
+                                    .getInformationSupplementCount()
+                    );
+        }
+
+        Optional<AnalysisJob> job =
+                currentJob(
+                        consultation
+                );
+
+        // 추가정보 입력하기 클릭 이후인데,
+        // NEEDS_MORE_INFO Job이 없는 상황
+        if (
+                job.isEmpty()
+                || job.get().getStatus()
+                        != AnalysisJobStatus.NEEDS_MORE_INFO
+                || job.get().getResultJson()
+                        == null
+        ) {
+            // active = False, count == 1
+            return InformationSupplementContextResponse
+                    .inactive(
+                            consultation
+                                    .getInformationSupplementCount()
+                    );
+        }
+
+        AnalysisAiResult result =
+                deserializeResult(
+                        job.get()
+                                .getResultJson()
+                );
+
+        return new InformationSupplementContextResponse(
+                true,
+                consultation
+                        .getInformationSupplementCount(),
+
+                result
+                        .additionalInformationNeeded
+                        .stream()
+                        .map(
+                                item ->
+                                        new InformationSupplementContextResponse.Item(
+                                                item.topic,
+                                                item.reason
+                                        )
+                        )
+                        .toList()
         );
     }
 
@@ -672,7 +785,8 @@ public class AnalysisPersistenceService {
     }
 
     private AnalysisStateResponse toState(
-            AnalysisJob job
+            AnalysisJob job,
+            Consultation consultation
     ) {
 
         AnalysisAiResult result = null;
@@ -684,6 +798,8 @@ public class AnalysisPersistenceService {
                         == AnalysisJobStatus.COMPLETED
                 || job.getStatus()
                         == AnalysisJobStatus.NEEDS_MORE_INFO
+                || job.getStatus()
+                        == AnalysisJobStatus.INSUFFICIENT_INFORMATION
         )
         ) {
             result =
@@ -694,7 +810,9 @@ public class AnalysisPersistenceService {
 
         return AnalysisStateResponse.from(
                 job,
-                result
+                result,
+                consultation
+                        .getInformationSupplementCount()
         );
     }
 }

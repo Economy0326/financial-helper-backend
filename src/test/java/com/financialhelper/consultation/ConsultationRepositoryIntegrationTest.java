@@ -123,4 +123,82 @@ class ConsultationRepositoryIntegrationTest {
                 consultation.getId()
         );
     }
+
+    // 종료성 상태라도 Home Resume 대상이면 조회 가능한지 검증
+    @Test
+    void findsResumableInsufficientInformationConsultationForGuest() {
+
+        OffsetDateTime now =
+                OffsetDateTime.now(
+                        ZoneOffset.UTC
+                );
+
+        GuestSession guestSession =
+                guestSessionRepository.save(
+                        new GuestSession(
+                                UUID.randomUUID().toString(),
+                                now,
+                                now.plusHours(1)
+                        )
+                );
+
+        Consultation consultation =
+                new Consultation(
+                        guestSession,
+                        now
+                );
+
+        consultation.updateCategory(
+                ConsultationCategory.INSURANCE,
+                now.plusSeconds(1)
+        );
+
+        consultation.updateSituation(
+                "보험 해지환급금 문제입니다.",
+                now.plusSeconds(2)
+        );
+
+        consultation.moveToAnalysis(
+                now.plusSeconds(3)
+        );
+
+        consultation.markInsufficientInformation(
+                now.plusSeconds(4)
+        );
+
+        consultation =
+                consultationRepository.saveAndFlush(
+                        consultation
+                );
+
+        Optional<Consultation> resumableResult =
+                consultationRepository
+                        .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
+                                guestSession.getId(),
+                                ConsultationStatus.resumableStatuses()
+                        );
+
+        Optional<Consultation> activeResult =
+                consultationRepository
+                        .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
+                                guestSession.getId(),
+                                ConsultationStatus.activeStatuses()
+                        );
+
+        // Home에서 다시 접근 가능한가
+        assertThat(resumableResult).isPresent();
+
+        assertThat(
+                resumableResult
+                        .orElseThrow()
+                        .getStatus()
+        ).isEqualTo(
+                ConsultationStatus.INSUFFICIENT_INFORMATION
+        );
+
+        // 접근 가능할 때 계속 진행/재시도가 가능한가
+        assertThat(activeResult).isEmpty();
+
+        // INSUFFICIENT_INFORMATION은 Resumable이지만 Active는 아님
+    }
 }

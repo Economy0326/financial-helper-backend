@@ -6,5 +6,8 @@ public enum AnalysisJobStatus {
     PROCESSING,
     COMPLETED,
     NEEDS_MORE_INFO,
+
+    INSUFFICIENT_INFORMATION,
+
     FAILED
 }

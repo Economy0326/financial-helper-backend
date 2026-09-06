@@ -266,4 +266,22 @@ public class AnalysisJob {
         this.startedAt = null;
         this.finishedAt = null;
     }
+
+    public void insufficientInformation(
+            String resultJson,
+            OffsetDateTime now
+    ) {
+
+        this.resultJson =
+                resultJson;
+
+        this.failureCode =
+                null;
+
+        this.status =
+                AnalysisJobStatus.INSUFFICIENT_INFORMATION;
+
+        this.finishedAt =
+                now;
+    }
 }

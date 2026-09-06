@@ -113,7 +113,7 @@ public class ConsultationService {
                 consultationRepository
                         .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
                                 guestSession.getId(),
-                                ConsultationStatus.activeStatuses()
+                                ConsultationStatus.resumableStatuses()
                         )
                         .orElseThrow(
                                 ConsultationNotFoundException::new

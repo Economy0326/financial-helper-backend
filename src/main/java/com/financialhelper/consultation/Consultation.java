@@ -92,6 +92,14 @@ public class Consultation {
     )
     private OffsetDateTime updatedAt;
 
+    // NEEDS_MORE_INFO 이후 사용자가 실제로 추가 정보 입력 FLOW를 연 횟수
+    // Analysis Retry 횟수와 별개
+    @Column(
+            name = "information_supplement_count",
+            nullable = false
+    )
+    private int informationSupplementCount;
+
 
     // =========================
     // Constructors
@@ -118,6 +126,8 @@ public class Consultation {
 
         this.createdAt = createdAt;
         this.updatedAt = createdAt;
+
+        this.informationSupplementCount = 0;
     }
 
 
@@ -165,6 +175,9 @@ public class Consultation {
         return updatedAt;
     }
 
+    public int getInformationSupplementCount() {
+        return informationSupplementCount;
+    }
 
     // =========================
     // Consultation Input
@@ -299,6 +312,7 @@ public class Consultation {
     public void reopenForMoreInfo(
             OffsetDateTime updatedAt
     ) {
+
         if (
                 this.status
                         != ConsultationStatus.NEEDS_MORE_INFO
@@ -308,13 +322,45 @@ public class Consultation {
             );
         }
 
+        if (
+                this.informationSupplementCount >= 1
+        ) {
+            throw new IllegalStateException(
+                    "Information supplementation limit has been reached"
+            );
+        }
+
+        // 실제 사용자가 '추가 정보 입력하기'를 선택해
+        // 보완 flow에 진입한 시점에 1회로 기록
+        this.informationSupplementCount++;
+
         this.status =
                 ConsultationStatus.IN_PROGRESS;
 
         this.currentStep =
                 ConsultationStep.SITUATION;
 
-        this.updatedAt = updatedAt;
+        this.updatedAt =
+                updatedAt;
+    }
+
+    public boolean canSupplementInformation() {
+        return informationSupplementCount < 1;
+    }
+
+    public void markInsufficientInformation(
+            OffsetDateTime updatedAt
+    ) {
+        // 추가 보완 1회 이후에도 NEEDS_MORE_INFO가 나온 경우
+        // 신뢰 가능한 분석 불가 상태로 종료
+        this.status =
+                ConsultationStatus.INSUFFICIENT_INFORMATION;
+
+        this.currentStep =
+                ConsultationStep.ANALYSIS;
+
+        this.updatedAt =
+                updatedAt;
     }
 
 

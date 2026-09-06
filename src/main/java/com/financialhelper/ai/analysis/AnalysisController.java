@@ -103,4 +103,23 @@ public class AnalysisController {
                         rawToken
                 );
     }
+
+    @GetMapping("/supplement-context")
+    public InformationSupplementContextResponse
+    getSupplementContext(
+            @PathVariable UUID consultationId,
+
+            @CookieValue(
+                    name = GuestSessionCookie.NAME,
+                    required = false
+            )
+            String rawToken
+    ) {
+
+        return analysisService
+                .getSupplementContext(
+                        consultationId,
+                        rawToken
+                );
+    }
 }
