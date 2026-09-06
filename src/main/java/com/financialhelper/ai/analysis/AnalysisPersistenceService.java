@@ -52,13 +52,17 @@ public class AnalysisPersistenceService {
 
     private final JsonMapper jsonMapper;
 
+    private final AnalysisProperties
+        analysisProperties;
+
     public AnalysisPersistenceService(
             ConsultationRepository consultationRepository,
             ConsultationSummaryRepository summaryRepository,
             AnalysisJobRepository analysisJobRepository,
             GuestSessionService guestSessionService,
             OpenAiProperties openAiProperties,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            AnalysisProperties analysisProperties
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -77,6 +81,9 @@ public class AnalysisPersistenceService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.analysisProperties =
+                analysisProperties;
     }
 
     @Transactional
@@ -120,12 +127,17 @@ public class AnalysisPersistenceService {
             AnalysisJob job =
                     existing.get();
 
+            recoverStaleJobIfNeeded(
+                    job,
+                    consultation
+            );
+
             return new AnalysisData.Reservation(
                     job.getId(),
                     false,
                     toState(
-                        job,
-                        consultation
+                            job,
+                            consultation
                     )
             );
         }
@@ -211,6 +223,11 @@ public class AnalysisPersistenceService {
                                 InvalidConsultationStateException::new
                         );
 
+        recoverStaleJobIfNeeded(
+                job,
+                consultation
+        );
+
         // 같은 Retry 요청이 거의 동시에 들어왔다면 첫 요청이 이미 QUEUED/PROCESSING으로 바꿨을 가능성이 높음
         // 따라서 이 경우에는 새 Worker를 또 예약하지 않는다.
         if (
@@ -237,6 +254,14 @@ public class AnalysisPersistenceService {
                         != AnalysisJobStatus.FAILED
         ) {
             throw new InvalidConsultationStateException();
+        }
+
+        if (
+                job.getAttemptCount()
+                        >= analysisProperties
+                        .maxAttempts()
+        ) {
+            throw new AnalysisRetryLimitExceededException();
         }
 
         OffsetDateTime now =
@@ -491,17 +516,27 @@ public class AnalysisPersistenceService {
         }
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public AnalysisStateResponse getState(
             UUID consultationId,
             String rawToken
     ) {
 
+        GuestSession guestSession =
+                guestSessionService
+                        .requireValidSession(
+                                rawToken
+                        );
+
         Consultation consultation =
-                findOwnedConsultation(
-                        consultationId,
-                        rawToken
-                );
+                consultationRepository
+                        .findForUpdateByIdAndGuestSession_Id(
+                                consultationId,
+                                guestSession.getId()
+                        )
+                        .orElseThrow(
+                                ConsultationNotFoundException::new
+                        );
 
         ensureAnalysisStep(
                 consultation
@@ -512,23 +547,27 @@ public class AnalysisPersistenceService {
                         consultation
                 );
 
-        return job
-            .map(
-                    current ->
-                            toState(
-                                    current,
-                                    consultation
-                            )
-            )
-            .orElseGet(
-                    () ->
-                            AnalysisStateResponse
-                                    .notStarted(
-                                            consultation
-                                                    // 현재 보완을 이미 진행했는지
-                                                    .getInformationSupplementCount()
-                                    )
-            );
+        if (job.isEmpty()) {
+
+            return AnalysisStateResponse
+                    .notStarted(
+                            consultation
+                                    .getInformationSupplementCount()
+                    );
+        }
+
+        AnalysisJob currentJob =
+                job.get();
+
+        recoverStaleJobIfNeeded(
+                currentJob,
+                consultation
+        );
+
+        return toState(
+                currentJob,
+                consultation
+        );
     }
 
     @Transactional
@@ -726,6 +765,80 @@ public class AnalysisPersistenceService {
                         != ConsultationStep.ANALYSIS
         ) {
             throw new InvalidConsultationStateException();
+        }
+    }
+
+    private void recoverStaleJobIfNeeded(
+            AnalysisJob job,
+            Consultation consultation
+    ) {
+
+        OffsetDateTime referenceTime;
+
+        if (
+                job.getStatus()
+                        == AnalysisJobStatus.QUEUED
+        ) {
+
+            referenceTime =
+                    job.getQueuedAt();
+
+        } else if (
+                job.getStatus()
+                        == AnalysisJobStatus.PROCESSING
+        ) {
+
+            referenceTime =
+                    job.getStartedAt() != null
+                            ? job.getStartedAt()
+                            : job.getQueuedAt();
+
+        } else {
+
+            return;
+        }
+
+        OffsetDateTime now =
+                OffsetDateTime.now(
+                        ZoneOffset.UTC
+                );
+
+        if (
+                !referenceTime
+                        // 기준시간 + 허용시간 => 제한시간 이 현재 시간보다 이전일경우 True -> 시간이 초과된 상태
+                        // !True => False
+                        .plus(
+                                analysisProperties
+                                        .staleAfter()
+                        )
+                        .isBefore(now)
+        ) {
+            return;
+        }
+
+        job.fail(
+                "STALE_ANALYSIS_JOB",
+                now
+        );
+
+        // 이미 새로운 Revision으로 이동했다면
+        // 과거 Job 때문에 현재 Consultation을 FAILED로 만들면 안 된다.
+        if (
+                consultation.getCaseInputRevision()
+                        == job.getCaseInputRevision()
+                && consultation
+                        .getFollowUpAnswerRevision()
+                        == job.getFollowUpAnswerRevision()
+                && consultation.getCurrentStep()
+                        == ConsultationStep.ANALYSIS
+                && consultation.getStatus()
+                        == ConsultationStatus.ANALYZING
+        ) {
+
+            consultation
+                    .markAnalysisFailed(
+                            now
+                    );
         }
     }
 

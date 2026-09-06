@@ -32,7 +32,6 @@ public class AnalysisAsyncConfig {
 
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(4);
-
         executor.setQueueCapacity(50);
 
         executor.setWaitForTasksToCompleteOnShutdown(
