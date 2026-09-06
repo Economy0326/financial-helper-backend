@@ -1,5 +1,10 @@
 package com.financialhelper.consultation;
 
+import jakarta.persistence.LockModeType;
+
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Collection;
@@ -26,5 +31,37 @@ public interface ConsultationRepository
     findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
             UUID guestSessionId,
             Collection<ConsultationStatus> statuses
+    );
+
+    // PESSIMISTIC_WRITE를 걸어 같은 ROW에 대한 동시 수정/중복 상태 전이를 막음 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+            """
+            select consultation
+            from Consultation consultation
+            where consultation.id = :consultationId
+            and consultation.guestSession.id = :guestSessionId
+            """
+    )
+    Optional<Consultation>
+    findForUpdateByIdAndGuestSession_Id(
+            @Param("consultationId")
+            UUID consultationId,
+
+            @Param("guestSessionId")
+            UUID guestSessionId
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+            """
+            select consultation
+            from Consultation consultation
+            where consultation.id = :consultationId
+            """
+    )
+    Optional<Consultation> findForUpdateById(
+            @Param("consultationId")
+            UUID consultationId
     );
 }

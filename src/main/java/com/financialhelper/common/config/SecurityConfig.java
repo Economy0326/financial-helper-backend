@@ -105,6 +105,20 @@ public class SecurityConfig {
                     )
                     .permitAll()
 
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*/analysis"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.POST,
+                            "/api/v1/consultations/*/analysis/start",
+                            "/api/v1/consultations/*/analysis/retry",
+                            "/api/v1/consultations/*/analysis/reopen"
+                    )
+                    .permitAll()
+
                     // 정의되지 않은 나머지 요청은 모두 차단
                     .anyRequest()
                     .denyAll()

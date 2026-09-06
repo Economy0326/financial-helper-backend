@@ -86,6 +86,7 @@ class ConsultationSummaryApiIntegrationTest {
         cleanDatabase();
     }
 
+    // Summary 생성/재사용과 Confirm 후 ANAYLSIS 단계 전환까지 전체 FLOW 검증
     @Test
     void preparesSummaryReusesItAndConfirmsToAnalysis()
             throws Exception {
