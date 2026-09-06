@@ -256,6 +256,20 @@ public class Consultation {
         this.updatedAt = updatedAt;
     }
 
+    public void moveToReport(
+            OffsetDateTime updatedAt
+    ) {
+
+        this.status =
+                ConsultationStatus.IN_PROGRESS;
+
+        this.currentStep =
+                ConsultationStep.REPORT;
+
+        this.updatedAt =
+                updatedAt;
+    }
+
 
     // =========================
     // Analysis State
