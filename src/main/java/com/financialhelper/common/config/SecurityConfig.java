@@ -138,6 +138,19 @@ public class SecurityConfig {
                     )
                     .permitAll()
 
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/emergency/types",
+                            "/api/v1/emergency/scenario"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.PUT,
+                            "/api/v1/emergency/selection"
+                    )
+                    .permitAll()
+
                     // 정의되지 않은 나머지 요청은 모두 차단
                     .anyRequest()
                     .denyAll()

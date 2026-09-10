@@ -51,7 +51,7 @@ public class ConsultationService {
     ) {
         GuestSessionResolution sessionResolution =
                 guestSessionService
-                        .resolveOrCreateForConsultation(
+                        .resolveOrCreate(
                                 rawToken
                         );
 
