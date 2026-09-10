@@ -39,7 +39,9 @@ public class ConsultationService {
         SITUATION_EDITABLE_STEPS =
         EnumSet.of(
                 ConsultationStep.SITUATION,
-                ConsultationStep.FOLLOW_UP
+                ConsultationStep.FOLLOW_UP,
+                // 요약 수정 => Situation에서 진행
+                ConsultationStep.SUMMARY
         );
 
     // 새로운 상담 생성
@@ -49,7 +51,7 @@ public class ConsultationService {
     ) {
         GuestSessionResolution sessionResolution =
                 guestSessionService
-                        .resolveOrCreateForConsultation(
+                        .resolveOrCreate(
                                 rawToken
                         );
 
@@ -111,7 +113,7 @@ public class ConsultationService {
                 consultationRepository
                         .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
                                 guestSession.getId(),
-                                ConsultationStatus.activeStatuses()
+                                ConsultationStatus.resumableStatuses()
                         )
                         .orElseThrow(
                                 ConsultationNotFoundException::new

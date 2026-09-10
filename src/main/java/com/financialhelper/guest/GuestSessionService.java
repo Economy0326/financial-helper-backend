@@ -34,7 +34,7 @@ public class GuestSessionService {
     // 유효한 Guest Session을 조회하고,
     // 없거나 만료된 경우 새 Guest Session을 생성
     @Transactional
-    public GuestSessionResolution resolveOrCreateForConsultation(
+    public GuestSessionResolution resolveOrCreate(
             String rawToken
     ) {
         if (rawToken == null || rawToken.isBlank()) {
@@ -81,7 +81,9 @@ public class GuestSessionService {
 
         if (guestSession.isEmpty()) {
             return new SessionResponse(
+                    // Guest는 존재
                     true,
+                    // 이어갈 상담은 없음
                     false
             );
         }
@@ -90,7 +92,7 @@ public class GuestSessionService {
                 consultationRepository
                         .existsByGuestSession_IdAndStatusIn(
                                 guestSession.get().getId(),
-                                ConsultationStatus.activeStatuses()
+                                ConsultationStatus.resumableStatuses()
                         );
 
         return new SessionResponse(

@@ -18,3 +18,16 @@ app:
 
   cors:
     allowed-origin: http://localhost:3000
+
+  ai:
+    enabled: true
+    smoke-test-enabled: false
+
+    openai:
+      api-key: test-only-key
+      model: gpt-5.6-luna
+      timeout: 30s
+
+    analysis:
+      stale-after: PT1M
+      max-attempts: 3
