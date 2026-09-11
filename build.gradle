@@ -29,6 +29,9 @@ dependencies {
 	// Spring Boot와 Flyway 연결
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 
+	// 공식 HTML 원문 파싱 / 정규화
+	implementation 'org.jsoup:jsoup:1.23.2'
+
 	// Flyway PostgreSQL 지원
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 

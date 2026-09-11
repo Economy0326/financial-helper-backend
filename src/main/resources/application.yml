@@ -19,6 +19,14 @@ app:
   cors:
     allowed-origin: ${FRONTEND_ORIGIN:http://localhost:3000}
 
+  source-ingestion:
+    run-on-startup: ${SOURCE_INGESTION_RUN_ON_STARTUP:false}
+    connect-timeout: ${SOURCE_INGESTION_CONNECT_TIMEOUT:10s}
+    request-timeout: ${SOURCE_INGESTION_REQUEST_TIMEOUT:20s}
+    max-response-bytes: ${SOURCE_INGESTION_MAX_RESPONSE_BYTES:5242880}
+    max-redirects: ${SOURCE_INGESTION_MAX_REDIRECTS:5}
+    user-agent: ${SOURCE_INGESTION_USER_AGENT:FinancialHelperSourceIngestion/1.0}
+
   ai:
     enabled: ${AI_ENABLED:false}
     smoke-test-enabled: ${AI_SMOKE_TEST_ENABLED:false}
