@@ -49,6 +49,8 @@ public interface RetrievalGenerationRepository
                         encoding_config_json,
                         index_config_json,
                         metadata_json,
+                        chunk_config_version,
+                        corpus_snapshot_sha256,
                         status,
                         ready_chunk_count,
                         created_at,
@@ -66,6 +68,8 @@ public interface RetrievalGenerationRepository
                         :encodingConfigJson,
                         :indexConfigJson,
                         :metadataJson,
+                        :chunkConfigVersion,
+                        :corpusSnapshotSha256,
                         'PENDING',
                         0,
                         CURRENT_TIMESTAMP,
@@ -96,6 +100,10 @@ public interface RetrievalGenerationRepository
             @Param("indexConfigJson")
             String indexConfigJson,
             @Param("metadataJson")
-            String metadataJson
+            String metadataJson,
+            @Param("chunkConfigVersion")
+            String chunkConfigVersion,
+            @Param("corpusSnapshotSha256")
+            String corpusSnapshotSha256
     );
 }

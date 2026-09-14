@@ -64,7 +64,9 @@ public class RetrievalGenerationPersistenceService {
                             definition.tokenizerRevision(),
                             definition.encodingConfigJson(),
                             definition.indexConfigJson(),
-                            definition.metadataJson()
+                            definition.metadataJson(),
+                            definition.chunkConfigVersion(),
+                            definition.corpusSnapshotSha256()
                     );
 
             existing =
@@ -86,6 +88,20 @@ public class RetrievalGenerationPersistenceService {
         }
 
         return generation;
+    }
+
+    @Transactional
+    public RetrievalGeneration bindCorpusSnapshot(
+            RetrievalGeneration retrievalGeneration,
+            String corpusSnapshotSha256
+    ) {
+        RetrievalGeneration current =
+                lockPersistedGeneration(retrievalGeneration);
+        current.bindCorpusSnapshot(
+                corpusSnapshotSha256,
+                OffsetDateTime.now(ZoneOffset.UTC)
+        );
+        return retrievalGenerationRepository.save(current);
     }
 
     /**

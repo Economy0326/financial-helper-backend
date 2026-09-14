@@ -19,8 +19,36 @@ public final class RetrievalGenerationData {
             String tokenizerRevision,
             String encodingConfigJson,
             String indexConfigJson,
-            String metadataJson
+            String metadataJson,
+            String chunkConfigVersion,
+            String corpusSnapshotSha256
     ) {
+
+        public Definition(
+                String generationKey,
+                String representationConfigVersion,
+                String modelIdentifier,
+                String modelRevision,
+                String tokenizerIdentifier,
+                String tokenizerRevision,
+                String encodingConfigJson,
+                String indexConfigJson,
+                String metadataJson
+        ) {
+            this(
+                    generationKey,
+                    representationConfigVersion,
+                    modelIdentifier,
+                    modelRevision,
+                    tokenizerIdentifier,
+                    tokenizerRevision,
+                    encodingConfigJson,
+                    indexConfigJson,
+                    metadataJson,
+                    null,
+                    null
+            );
+        }
 
         public Definition {
             generationKey =
@@ -53,6 +81,52 @@ public final class RetrievalGenerationData {
                             metadataJson,
                             "metadataJson"
                     );
+            chunkConfigVersion =
+                    normalizeOptionalText(
+                            chunkConfigVersion,
+                            "chunkConfigVersion"
+                    );
+            corpusSnapshotSha256 =
+                    normalizeOptionalHash(
+                            corpusSnapshotSha256,
+                            "corpusSnapshotSha256"
+                    );
+        }
+
+        private static String normalizeOptionalText(
+                String value,
+                String fieldName
+        ) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+
+            String normalized = value.trim();
+            if (normalized.length() > 100) {
+                throw new IllegalArgumentException(
+                        fieldName + " is too long"
+                );
+            }
+
+            return normalized;
+        }
+
+        private static String normalizeOptionalHash(
+                String value,
+                String fieldName
+        ) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+
+            String normalized = value.trim().toLowerCase();
+            if (!normalized.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException(
+                        fieldName + " must be a SHA-256 hex value"
+                );
+            }
+
+            return normalized;
         }
 
         private static String requireText(

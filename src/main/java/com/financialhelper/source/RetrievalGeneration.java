@@ -100,6 +100,18 @@ public class RetrievalGeneration {
     )
     private String metadataJson;
 
+    @Column(
+            name = "chunk_config_version",
+            length = 100
+    )
+    private String chunkConfigVersion;
+
+    @Column(
+            name = "corpus_snapshot_sha256",
+            length = 64
+    )
+    private String corpusSnapshotSha256;
+
     @Enumerated(EnumType.STRING)
     @Column(
             name = "status",
@@ -184,6 +196,12 @@ public class RetrievalGeneration {
         this.metadataJson =
                 definition.metadataJson();
 
+        this.chunkConfigVersion =
+                definition.chunkConfigVersion();
+
+        this.corpusSnapshotSha256 =
+                definition.corpusSnapshotSha256();
+
         this.status =
                 RetrievalGenerationStatus.PENDING;
 
@@ -255,6 +273,14 @@ public class RetrievalGeneration {
         return metadataJson;
     }
 
+    public String getChunkConfigVersion() {
+        return chunkConfigVersion;
+    }
+
+    public String getCorpusSnapshotSha256() {
+        return corpusSnapshotSha256;
+    }
+
     public RetrievalGenerationStatus getStatus() {
         return status;
     }
@@ -310,7 +336,38 @@ public class RetrievalGeneration {
                 && JsonObjectSupport.deepEquals(
                 metadataJson,
                 definition.metadataJson()
-        );
+        )
+                && Objects.equals(
+                chunkConfigVersion,
+                definition.chunkConfigVersion()
+        )
+                && (definition.corpusSnapshotSha256() == null
+                || Objects.equals(
+                corpusSnapshotSha256,
+                definition.corpusSnapshotSha256()
+        ));
+    }
+
+    /** Bind the immutable corpus snapshot once before a build starts. */
+    public void bindCorpusSnapshot(
+            String corpusSnapshotSha256,
+            OffsetDateTime boundAt
+    ) {
+        String normalized =
+                requireSha256(corpusSnapshotSha256);
+
+        if (this.corpusSnapshotSha256 != null
+                && !this.corpusSnapshotSha256.equals(normalized)) {
+            throw new IllegalStateException(
+                    "The retrieval generation corpus snapshot cannot be changed"
+            );
+        }
+
+        OffsetDateTime timestamp =
+                requireTimestamp(boundAt);
+
+        this.corpusSnapshotSha256 = normalized;
+        this.updatedAt = timestamp;
     }
 
     public void markProcessing(
@@ -352,7 +409,7 @@ public class RetrievalGeneration {
      * A generation cannot become READY without a non-empty indexed corpus.
      * The active-generation switch remains a later orchestration concern.
      */
-    void markReady(
+    public void markReady(
             long readyChunkCount,
             OffsetDateTime readyAt
     ) {
@@ -387,7 +444,7 @@ public class RetrievalGeneration {
                 this.readyAt;
     }
 
-    void markReady(
+    public void markReady(
             long readyChunkCount
     ) {
         markReady(
@@ -447,5 +504,17 @@ public class RetrievalGeneration {
                 timestamp,
                 "timestamp must not be null"
         );
+    }
+
+    private static String requireSha256(
+            String value
+    ) {
+        if (value == null || !value.matches("[0-9a-fA-F]{64}")) {
+            throw new IllegalArgumentException(
+                    "corpusSnapshotSha256 must be a SHA-256 hex value"
+            );
+        }
+
+        return value.toLowerCase();
     }
 }

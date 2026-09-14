@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface SourceChunkIndexingRepository
@@ -35,6 +36,22 @@ public interface SourceChunkIndexingRepository
             UUID retrievalGenerationId
     );
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+            """
+            select indexing
+            from SourceChunkIndexing indexing
+            join fetch indexing.sourceChunk chunk
+            join fetch chunk.sourceDocument
+            join fetch indexing.retrievalGeneration
+            where indexing.retrievalGeneration.id = :generationId
+            order by chunk.sourceDocument.id, chunk.sequence
+            """
+    )
+    List<SourceChunkIndexing> findAllForUpdateByGenerationId(
+            @Param("generationId") UUID generationId
+    );
+
     long countByRetrievalGeneration_IdAndIndexingStatus(
             UUID retrievalGenerationId,
             SourceChunkIndexingStatus indexingStatus
@@ -51,6 +68,7 @@ public interface SourceChunkIndexingRepository
             where indexing.retrievalGeneration.id = :generationId
               and indexing.indexingStatus = com.financialhelper.source.SourceChunkIndexingStatus.READY
               and indexing.sourceChunk.reviewStatus = com.financialhelper.source.SourceChunkReviewStatus.APPROVED
+              and indexing.sourceChunk.sourceDocument.status = com.financialhelper.source.SourceDocumentStatus.ACTIVE
             """
     )
     long countReadyApprovedByGenerationId(

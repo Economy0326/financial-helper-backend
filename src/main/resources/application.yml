@@ -27,6 +27,30 @@ app:
     max-redirects: ${SOURCE_INGESTION_MAX_REDIRECTS:5}
     user-agent: ${SOURCE_INGESTION_USER_AGENT:FinancialHelperSourceIngestion/1.0}
 
+  retrieval:
+    chunking:
+      target-tokens: ${RETRIEVAL_CHUNK_TARGET_TOKENS:500}
+      max-tokens: ${RETRIEVAL_CHUNK_MAX_TOKENS:600}
+      overlap-tokens: ${RETRIEVAL_CHUNK_OVERLAP_TOKENS:0}
+      config-version: ${RETRIEVAL_CHUNK_CONFIG_VERSION:structure-first-v1}
+      tokenizer-identifier: ${RETRIEVAL_TOKENIZER_IDENTIFIER:nlpai-lab/KURE-v2}
+      tokenizer-revision: ${RETRIEVAL_TOKENIZER_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+
+    kure:
+      enabled: ${KURE_RUNTIME_ENABLED:false}
+      endpoint: ${KURE_RUNTIME_ENDPOINT:http://127.0.0.1:8091}
+      connect-timeout: ${KURE_RUNTIME_CONNECT_TIMEOUT:2s}
+      request-timeout: ${KURE_RUNTIME_REQUEST_TIMEOUT:10m}
+      model-identifier: ${KURE_MODEL_IDENTIFIER:nlpai-lab/KURE-v2}
+      model-revision: ${KURE_MODEL_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+      tokenizer-identifier: ${KURE_TOKENIZER_IDENTIFIER:nlpai-lab/KURE-v2}
+      tokenizer-revision: ${KURE_TOKENIZER_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+      query-length: ${KURE_QUERY_LENGTH:64}
+      max-document-tokens: ${KURE_MAX_DOCUMENT_TOKENS:8192}
+      token-vector-dimension: ${KURE_TOKEN_VECTOR_DIMENSION:128}
+      index-backend: ${KURE_INDEX_BACKEND:PLAID}
+      batch-size: ${KURE_BATCH_SIZE:32}
+
   ai:
     enabled: ${AI_ENABLED:false}
     smoke-test-enabled: ${AI_SMOKE_TEST_ENABLED:false}

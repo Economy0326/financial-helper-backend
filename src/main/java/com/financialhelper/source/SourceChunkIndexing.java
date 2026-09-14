@@ -239,6 +239,44 @@ public class SourceChunkIndexing {
         markProcessing(OffsetDateTime.now(ZoneOffset.UTC));
     }
 
+    /** Start a new attempt, including after a partial READY result. */
+    public void beginAttempt(OffsetDateTime processingAt) {
+        if (indexingStatus != SourceChunkIndexingStatus.PENDING
+                && indexingStatus != SourceChunkIndexingStatus.FAILED
+                && indexingStatus != SourceChunkIndexingStatus.READY) {
+            throw new IllegalStateException(
+                    "Only pending, failed, or prior-ready chunk mappings can start an attempt"
+            );
+        }
+        OffsetDateTime timestamp = requireTimestamp(processingAt);
+        indexingStatus = SourceChunkIndexingStatus.PROCESSING;
+        processedAt = null;
+        failureReason = null;
+        updatedAt = timestamp;
+    }
+
+    /** Allow a failed remote build to invalidate a partial READY result. */
+    public void markFailedAfterAttempt(
+            String failureReason,
+            OffsetDateTime failedAt
+    ) {
+        if (indexingStatus != SourceChunkIndexingStatus.PENDING
+                && indexingStatus != SourceChunkIndexingStatus.PROCESSING
+                && indexingStatus != SourceChunkIndexingStatus.READY) {
+            throw new IllegalStateException(
+                    "Only pending, processing, or prior-ready chunk mappings can fail"
+            );
+        }
+        if (failureReason == null || failureReason.isBlank()) {
+            throw new IllegalArgumentException("failureReason must not be blank");
+        }
+        OffsetDateTime timestamp = requireTimestamp(failedAt);
+        indexingStatus = SourceChunkIndexingStatus.FAILED;
+        this.failureReason = failureReason.trim();
+        processedAt = timestamp;
+        updatedAt = timestamp;
+    }
+
     /**
      * Mapping readiness is gated by human review.  A READY index row remains
      * historical if approval is later revoked; query code must check the
@@ -248,9 +286,11 @@ public class SourceChunkIndexing {
             OffsetDateTime readyAt,
             String indexMetadataJson
     ) {
-        if (!sourceChunk.isApproved()) {
+        if (!sourceChunk.isApproved()
+                || sourceChunk.getSourceDocument().getStatus()
+                != SourceDocumentStatus.ACTIVE) {
             throw new IllegalStateException(
-                    "A source chunk must be approved before its index mapping can be ready"
+                    "A source chunk must be approved and belong to an active document before its index mapping can be ready"
             );
         }
 
