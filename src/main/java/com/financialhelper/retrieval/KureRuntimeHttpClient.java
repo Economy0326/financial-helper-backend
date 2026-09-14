@@ -80,6 +80,42 @@ public class KureRuntimeHttpClient
     }
 
     @Override
+    public KureRuntimeQueryResult query(KureRuntimeQueryRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request must not be null");
+        }
+        try {
+            Map<String, Object> payload = Map.of(
+                    "generationId", request.generationId().toString(),
+                    "query", request.query().trim(),
+                    "topK", request.topK(),
+                    "subset", request.allowedDocumentIds().stream()
+                            .map(UUID::toString)
+                            .sorted()
+                            .toList()
+            );
+            String response = request("POST", "/v1/generations/"
+                    + request.generationId() + "/query", payload);
+            QueryResponse decoded = jsonMapper.readValue(response, QueryResponse.class);
+            UUID generationId = UUID.fromString(decoded.generationId());
+            List<KureRuntimeQueryResult.Hit> hits = decoded.results().stream()
+                    .map(hit -> new KureRuntimeQueryResult.Hit(
+                            UUID.fromString(hit.sourceChunkId()),
+                            hit.rank(),
+                            hit.maxSimScore(),
+                            UUID.fromString(hit.generationId())
+                    ))
+                    .toList();
+            return new KureRuntimeQueryResult(generationId, hits);
+        } catch (JacksonException | IllegalArgumentException exception) {
+            throw new KureRuntimeException(
+                    "Invalid KURE runtime query response",
+                    exception
+            );
+        }
+    }
+
+    @Override
     public int countDocumentTokens(String text) {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("text must not be blank");
@@ -182,6 +218,23 @@ public class KureRuntimeHttpClient
             String generationId,
             List<String> readyDocumentIds,
             Map<String, Object> indexMetadata
+    ) {
+    }
+
+    private record QueryResponse(
+            String generationId,
+            List<QueryHit> results
+    ) {
+        private QueryResponse {
+            results = results == null ? List.of() : results;
+        }
+    }
+
+    private record QueryHit(
+            String sourceChunkId,
+            int rank,
+            double maxSimScore,
+            String generationId
     ) {
     }
 }

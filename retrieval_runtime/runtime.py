@@ -240,6 +240,114 @@ class RuntimeEngine:
             "indexMetadataJson": json.dumps(manifest, ensure_ascii=False, sort_keys=True),
         }
 
+    def query(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run generation-scoped late-interaction retrieval.
+
+        The runtime accepts only a generation id and optional subset of the
+        stable SourceChunk UUIDs supplied by the JVM.  It never resolves a
+        URL or a SourceDocument identifier itself.
+        """
+        try:
+            generation_id = uuid.UUID(str(payload["generationId"]))
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ContractError("generationId must be a UUID") from exc
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ContractError("query must be nonblank")
+        try:
+            top_k = int(payload.get("topK", 10))
+        except (TypeError, ValueError) as exc:
+            raise ContractError("topK must be an integer") from exc
+        if top_k < 1 or top_k > 100:
+            raise ContractError("topK must be between 1 and 100")
+        subset = payload.get("subset")
+        if subset is not None:
+            if not isinstance(subset, list):
+                raise ContractError("subset must be a list of UUIDs")
+            normalized_subset = []
+            for item in subset:
+                try:
+                    normalized_subset.append(str(uuid.UUID(str(item))))
+                except (ValueError, TypeError) as exc:
+                    raise ContractError("subset must contain UUIDs") from exc
+            subset = normalized_subset
+        self._load_dependencies(require_runtime=True)
+        index_folder = self.index_root / str(generation_id)
+        manifest_path = index_folder / "manifest.json"
+        if not manifest_path.exists():
+            raise FileNotFoundError(str(generation_id))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("generationId") != str(generation_id):
+            raise ContractError("generation manifest does not match request")
+        if any(
+            manifest.get(key) != expected
+            for key, expected in (
+                ("modelIdentifier", MODEL_IDENTIFIER),
+                ("modelRevision", MODEL_REVISION),
+                ("tokenizerIdentifier", TOKENIZER_IDENTIFIER),
+                ("tokenizerRevision", TOKENIZER_REVISION),
+            )
+        ):
+            raise ContractError("generation representation does not match runtime")
+        manifest_ids = {
+            str(uuid.UUID(str(item)))
+            for item in manifest.get("documentIds", [])
+        }
+        if subset is not None and not set(subset).issubset(manifest_ids):
+            raise ContractError("subset contains a document outside the generation")
+        from pylate import indexes, retrieve
+
+        index = indexes.PLAID(
+            index_folder=str(index_folder),
+            index_name="index",
+            use_fast=True,
+            nbits=4,
+            seed=42,
+            use_triton=False,
+            show_progress=False,
+            device=os.getenv("KURE_DEVICE", "cpu"),
+        )
+        query_embeddings = self._model.encode(
+            [query.strip()],
+            is_query=True,
+            batch_size=1,
+            show_progress_bar=False,
+        )
+        results = retrieve.ColBERT(index=index).retrieve(
+            queries_embeddings=query_embeddings,
+            k=top_k,
+            subset=subset,
+            device=os.getenv("KURE_DEVICE", "cpu"),
+        )
+        hits = []
+        for rank, result in enumerate(results[0] if results else [], start=1):
+            result_id = str(result["id"])
+            hits.append({
+                "sourceChunkId": result_id,
+                "rank": rank,
+                "maxSimScore": float(result["score"]),
+                "generationId": str(generation_id),
+            })
+        return {
+            "generationId": str(generation_id),
+            "queryLength": QUERY_LENGTH,
+            "results": hits,
+        }
+
+    @staticmethod
+    def _validate_query_payload(payload: dict[str, Any]) -> tuple[uuid.UUID, str]:
+        try:
+            generation_id = uuid.UUID(str(payload["generationId"]))
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ContractError("generationId must be a UUID") from exc
+        query = payload.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise ContractError("query must be nonblank")
+        return generation_id, query
+
     def _load_dependencies(self, require_runtime: bool = False) -> None:
         if self._model is not None and self._tokenizer is not None:
             return
@@ -325,6 +433,14 @@ class Handler(BaseHTTPRequestHandler):
                 if path_id != body_id:
                     raise ContractError("generation path and payload do not match")
                 self._send(HTTPStatus.OK, self.engine.build(payload))
+                return
+            query_suffix = "/query"
+            if self.path.startswith(prefix) and self.path.endswith(query_suffix):
+                path_id = uuid.UUID(self.path[len(prefix):-len(query_suffix)])
+                body_id, _ = self.engine._validate_query_payload(payload)
+                if path_id != body_id:
+                    raise ContractError("generation path and payload do not match")
+                self._send(HTTPStatus.OK, self.engine.query(payload))
                 return
             self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})
         except ContractError as exc:

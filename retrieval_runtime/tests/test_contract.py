@@ -7,6 +7,8 @@ from retrieval_runtime.runtime import (
     MODEL_REVISION,
     TOKEN_VECTOR_DIMENSION,
     _validate_build,
+    ContractError,
+    RuntimeEngine,
 )
 
 
@@ -32,6 +34,10 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(document_id, documents[0]["id"])
         self.assertEqual(128, TOKEN_VECTOR_DIMENSION)
         self.assertEqual("PLAID", INDEX_BACKEND)
+
+    def test_query_contract_rejects_invalid_generation(self):
+        with self.assertRaises(ContractError):
+            RuntimeEngine._validate_query_payload({"generationId": "bad", "query": "카드"})
 
 
 if __name__ == "__main__":

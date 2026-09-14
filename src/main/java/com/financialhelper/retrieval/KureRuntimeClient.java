@@ -1,6 +1,7 @@
 package com.financialhelper.retrieval;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public interface KureRuntimeClient {
@@ -10,6 +11,8 @@ public interface KureRuntimeClient {
     KureRuntimeBuildResult build(KureRuntimeBuildRequest request);
 
     KureRuntimeReadiness readiness(UUID generationId);
+
+    KureRuntimeQueryResult query(KureRuntimeQueryRequest request);
 
     record KureRuntimeMetadata(
             String runtimeVersion,
@@ -73,5 +76,44 @@ public interface KureRuntimeClient {
             int documentCount,
             String indexMetadataJson
     ) {
+    }
+
+    record KureRuntimeQueryRequest(
+            UUID generationId,
+            String query,
+            int topK,
+            Set<UUID> allowedDocumentIds
+    ) {
+        public KureRuntimeQueryRequest {
+            if (generationId == null) {
+                throw new IllegalArgumentException("generationId must not be null");
+            }
+            if (query == null || query.isBlank()) {
+                throw new IllegalArgumentException("query must not be blank");
+            }
+            if (topK < 1 || topK > 100) {
+                throw new IllegalArgumentException("topK must be between 1 and 100");
+            }
+            allowedDocumentIds = allowedDocumentIds == null
+                    ? Set.of()
+                    : Set.copyOf(allowedDocumentIds);
+        }
+    }
+
+    record KureRuntimeQueryResult(
+            UUID generationId,
+            List<Hit> results
+    ) {
+        public KureRuntimeQueryResult {
+            results = results == null ? List.of() : List.copyOf(results);
+        }
+
+        public record Hit(
+                UUID sourceChunkId,
+                int rank,
+                double maxSimScore,
+                UUID generationId
+        ) {
+        }
     }
 }

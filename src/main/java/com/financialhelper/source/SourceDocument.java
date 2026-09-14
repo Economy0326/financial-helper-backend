@@ -101,6 +101,17 @@ public class SourceDocument {
     @Column(name = "published_at")
     private LocalDate publishedAt;
 
+    /**
+     * Optional, explicitly curated applicability window.  It is deliberately
+     * separate from publication/retrieval dates; null means temporal scope
+     * cannot be established from the corpus.
+     */
+    @Column(name = "applicability_start_date")
+    private LocalDate applicabilityStartDate;
+
+    @Column(name = "applicability_end_date")
+    private LocalDate applicabilityEndDate;
+
     @Column(
             name = "retrieved_at",
             nullable = false
@@ -256,8 +267,48 @@ public class SourceDocument {
         return title;
     }
 
+    public String getOrganizationName() {
+        return organizationName;
+    }
+
+    public String getOfficialDomain() {
+        return officialDomain;
+    }
+
+    public String getCanonicalUrl() {
+        return canonicalUrl;
+    }
+
+    public String getResolvedUrl() {
+        return resolvedUrl;
+    }
+
     public LocalDate getPublishedAt() {
         return publishedAt;
+    }
+
+    public LocalDate getApplicabilityStartDate() {
+        return applicabilityStartDate;
+    }
+
+    public LocalDate getApplicabilityEndDate() {
+        return applicabilityEndDate;
+    }
+
+    /** Sets an explicitly reviewed applicability window; null start remains unknown. */
+    public void setApplicabilityWindow(
+            LocalDate applicabilityStartDate,
+            LocalDate applicabilityEndDate
+    ) {
+        if (applicabilityStartDate != null
+                && applicabilityEndDate != null
+                && applicabilityEndDate.isBefore(applicabilityStartDate)) {
+            throw new IllegalArgumentException(
+                    "applicability end date must not precede start date"
+            );
+        }
+        this.applicabilityStartDate = applicabilityStartDate;
+        this.applicabilityEndDate = applicabilityEndDate;
     }
 
     public OffsetDateTime getRetrievedAt() {
