@@ -8,6 +8,8 @@ import com.financialhelper.ai.OpenAiStructuredClient;
 import com.financialhelper.ai.understanding.AiGenerationFailedException;
 import com.financialhelper.ai.understanding.CaseUnderstandingData;
 import com.financialhelper.ai.understanding.CaseUnderstandingService;
+import com.financialhelper.consultation.ConsultationCategory;
+import com.financialhelper.consultation.ConsultationRepository;
 
 import org.springframework.boot.autoconfigure.condition
         .ConditionalOnProperty;
@@ -95,13 +97,19 @@ public class FollowUpService {
 
     private final JsonMapper jsonMapper;
 
+    private final ConsultationRepository consultationRepository;
+
+    private final ProcedureFollowUpService procedureFollowUpService;
+
     public FollowUpService(
             OpenAiStructuredClient openAiStructuredClient,
             OpenAiProperties openAiProperties,
             CaseUnderstandingService caseUnderstandingService,
             FollowUpQuestionBusinessValidator businessValidator,
             FollowUpPersistenceService persistenceService,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            ConsultationRepository consultationRepository,
+            ProcedureFollowUpService procedureFollowUpService
     ) {
         this.openAiStructuredClient =
                 openAiStructuredClient;
@@ -120,12 +128,23 @@ public class FollowUpService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.consultationRepository = consultationRepository;
+        this.procedureFollowUpService = procedureFollowUpService;
     }
 
     public FollowUpStateResponse prepare(
             UUID consultationId,
             String rawToken
     ) {
+
+        // CARD WHAT is owned by the approved Procedure. The existing AI
+        // flow remains the fallback for legacy categories.
+        if (consultationRepository.findById(consultationId)
+                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .orElse(false)) {
+            return procedureFollowUpService.prepareLegacy(consultationId, rawToken);
+        }
 
         // 이미 현재 Revision 질문이 준비됐다면 
         // LLM을 다시 호출하지 않는다.

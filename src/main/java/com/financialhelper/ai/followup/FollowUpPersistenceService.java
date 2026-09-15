@@ -1,6 +1,7 @@
 package com.financialhelper.ai.followup;
 
 import com.financialhelper.ai.understanding.AiInputChangedException;
+import com.financialhelper.procedure.FollowUpQuestionSpec;
 
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationNotFoundException;
@@ -20,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.LocalDate;
 
 import java.util.List;
 import java.util.UUID;
@@ -240,6 +242,52 @@ public class FollowUpPersistenceService {
         );
     }
 
+    /** Stores Backend-owned structured questions without involving the LLM. */
+    @Transactional
+    public List<FollowUpQuestion> saveStructuredQuestionsIfCurrent(
+            UUID consultationId,
+            String rawToken,
+            long expectedCaseInputRevision,
+            List<FollowUpQuestionSpec> specs
+    ) {
+        Consultation consultation = findOwnedConsultation(consultationId, rawToken);
+        ensureInProgress(consultation);
+        ensureFollowUpStep(consultation);
+        if (consultation.getCaseInputRevision() != expectedCaseInputRevision) {
+            throw new AiInputChangedException();
+        }
+        List<FollowUpQuestion> existing = currentQuestions(consultation);
+        if (!existing.isEmpty()) {
+            return existing;
+        }
+        if (specs == null || specs.isEmpty()) {
+            consultation.moveToSummary(OffsetDateTime.now(ZoneOffset.UTC));
+            return List.of();
+        }
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        List<FollowUpQuestion> questions = java.util.stream.IntStream
+                .range(0, specs.size())
+                .mapToObj(index -> {
+                    FollowUpQuestionSpec spec = specs.get(index);
+                    return new FollowUpQuestion(
+                            consultation,
+                            expectedCaseInputRevision,
+                            index + 1,
+                            spec.question(),
+                            spec.description(),
+                            serializeStructuredOptions(spec.options()),
+                            "BACKEND_PROCEDURE",
+                            now,
+                            spec.factKey(),
+                            spec.inputType().name(),
+                            spec.requiredForDecision(),
+                            spec.questionIntent()
+                    );
+                })
+                .toList();
+        return followUpQuestionRepository.saveAll(questions);
+    }
+
     // 추가 질문 없이 Follow-up을 완료 처리하는 경우
     @Transactional
     public FollowUpStateResponse completeWithoutQuestions(
@@ -408,9 +456,26 @@ public class FollowUpPersistenceService {
                                         )
                 )
                 .findFirst()
-                .orElseThrow(
-                        InvalidFollowUpAnswerException::new
-                );
+                .orElseGet(() -> freeTextOption(question, answerValue));
+    }
+
+    private FollowUpStateResponse.Option freeTextOption(
+            FollowUpQuestion question,
+            String answerValue
+    ) {
+        if (answerValue == null || answerValue.isBlank()
+                || (!"DATE".equals(question.getInputType())
+                && !"SHORT_TEXT".equals(question.getInputType()))) {
+            throw new InvalidFollowUpAnswerException();
+        }
+        if ("DATE".equals(question.getInputType())) {
+            try {
+                LocalDate.parse(answerValue);
+            } catch (java.time.format.DateTimeParseException exception) {
+                throw new InvalidFollowUpAnswerException();
+            }
+        }
+        return new FollowUpStateResponse.Option(answerValue, answerValue, "");
     }
 
     // 전체 옵션을 가져옴
@@ -465,6 +530,21 @@ public class FollowUpPersistenceService {
             throw new IllegalStateException(
                     "Failed to serialize follow-up options"
             );
+        }
+    }
+
+    private String serializeStructuredOptions(
+            List<FollowUpQuestionSpec.Option> options
+    ) {
+        try {
+            return jsonMapper.writeValueAsString(
+                    new FollowUpOptionsPayload(options.stream()
+                            .map(option -> new FollowUpOptionsPayload.Option(
+                                    option.value(), option.label(), option.description()))
+                            .toList())
+            );
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Failed to serialize structured follow-up options");
         }
     }
 

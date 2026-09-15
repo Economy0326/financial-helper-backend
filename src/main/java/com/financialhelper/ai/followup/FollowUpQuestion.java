@@ -111,6 +111,31 @@ public class FollowUpQuestion {
     )
     private OffsetDateTime answeredAt;
 
+    // Backend-owned metadata used by deterministic structured follow-up.
+    @Column(
+            name = "fact_key",
+            length = 64
+    )
+    private String factKey;
+
+    @Column(
+            name = "input_type",
+            length = 32
+    )
+    private String inputType;
+
+    @Column(
+            name = "required_for_decision",
+            nullable = false
+    )
+    private boolean requiredForDecision;
+
+    @Column(
+            name = "question_intent",
+            length = 128
+    )
+    private String questionIntent;
+
     // protected -> JPA가 엔티티 생성가능하게, 일반 생성자 사용 금지
     protected FollowUpQuestion() {
     }
@@ -124,6 +149,36 @@ public class FollowUpQuestion {
             String optionsJson,
             String model,
             OffsetDateTime generatedAt
+    ) {
+        this(
+                consultation,
+                caseInputRevision,
+                sequenceNo,
+                questionText,
+                description,
+                optionsJson,
+                model,
+                generatedAt,
+                null,
+                null,
+                false,
+                null
+        );
+    }
+
+    public FollowUpQuestion(
+            Consultation consultation,
+            long caseInputRevision,
+            int sequenceNo,
+            String questionText,
+            String description,
+            String optionsJson,
+            String model,
+            OffsetDateTime generatedAt,
+            String factKey,
+            String inputType,
+            boolean requiredForDecision,
+            String questionIntent
     ) {
         this.consultation =
                 consultation;
@@ -148,6 +203,11 @@ public class FollowUpQuestion {
 
         this.generatedAt =
                 generatedAt;
+
+        this.factKey = factKey;
+        this.inputType = inputType;
+        this.requiredForDecision = requiredForDecision;
+        this.questionIntent = questionIntent;
     }
 
     public UUID getId() {
@@ -196,6 +256,22 @@ public class FollowUpQuestion {
 
     public OffsetDateTime getAnsweredAt() {
         return answeredAt;
+    }
+
+    public String getFactKey() {
+        return factKey;
+    }
+
+    public String getInputType() {
+        return inputType;
+    }
+
+    public boolean isRequiredForDecision() {
+        return requiredForDecision;
+    }
+
+    public String getQuestionIntent() {
+        return questionIntent;
     }
 
     public boolean isAnswered() {

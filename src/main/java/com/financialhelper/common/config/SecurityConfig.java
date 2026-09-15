@@ -76,7 +76,16 @@ public class SecurityConfig {
                     .requestMatchers(
                             HttpMethod.POST,
                             "/api/v1/consultations/*/understanding",
-                            "/api/v1/consultations/*/follow-up/prepare"
+                            "/api/v1/consultations/*/follow-up/prepare",
+                            "/api/v1/consultations/*/procedure-follow-up/prepare",
+                            "/api/v1/consultations/*/financial-action-plan"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*/procedure-follow-up",
+                            "/api/v1/consultations/*/financial-action-plan"
                     )
                     .permitAll()
 
@@ -89,6 +98,12 @@ public class SecurityConfig {
                     .requestMatchers(
                             HttpMethod.PUT,
                             "/api/v1/consultations/*/follow-up/questions/*/answer"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.PUT,
+                            "/api/v1/consultations/*/procedure-follow-up/questions/*/answer"
                     )
                     .permitAll()
 

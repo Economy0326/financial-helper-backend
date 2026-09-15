@@ -93,12 +93,23 @@ public class ConfirmedCaseSnapshotService {
         for (FollowUpQuestion question : questions) {
             if (question.isAnswered() && question.getAnswerValue() != null
                     && !question.getAnswerValue().isBlank()) {
+                String factKey = question.getFactKey() == null
+                        ? "question-" + question.getSequenceNo()
+                        : question.getFactKey();
+                String factType = question.getInputType() == null
+                        ? "FOLLOW_UP" : question.getInputType();
+                String normalizedValue = "UNKNOWN".equalsIgnoreCase(question.getAnswerValue())
+                        ? "UNKNOWN" : question.getAnswerValue();
                 facts.add(new ConfirmedCaseSnapshotData.Fact(
-                        "FOLLOW_UP", "question-" + question.getSequenceNo(),
-                        question.getAnswerValue(), question.getAnswerLabel(),
+                        factType, factKey, normalizedValue, question.getAnswerLabel(),
                         "USER_ANSWERED", question.getId()));
+                if (question.getFactKey() != null && "UNKNOWN".equalsIgnoreCase(normalizedValue)) {
+                    missing.add(question.getFactKey());
+                }
             } else {
-                missing.add("FOLLOW_UP_" + question.getSequenceNo());
+                missing.add(question.getFactKey() == null
+                        ? "FOLLOW_UP_" + question.getSequenceNo()
+                        : question.getFactKey());
             }
         }
 
