@@ -2,7 +2,7 @@ package com.financialhelper.law;
 
 import java.time.LocalDate;
 
-/** Structured law lookup input; raw consultation text never crosses the MCP boundary. */
+/** Structured law lookup input; raw consultation text never crosses the law API boundary. */
 public record LawEvidenceRequest(
         String lawName,
         String articleLocator,

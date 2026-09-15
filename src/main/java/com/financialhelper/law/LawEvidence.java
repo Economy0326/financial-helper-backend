@@ -4,7 +4,7 @@ import java.time.Instant;
 
 /**
  * Validated law response with provenance. It remains pending human review;
- * MCP success alone never makes this an approved evidence record.
+ * Provider success alone never makes this an approved evidence record.
  */
 public record LawEvidence(
         String statuteName,
@@ -17,8 +17,8 @@ public record LawEvidence(
         String sourceUrl,
         String text,
         Instant retrievedAt,
-        String serverVersion,
-        String serverCommit,
+        String providerVersion,
+        String providerRevision,
         String toolName,
         String acquisitionKind,
         String applicabilityBasis,
@@ -40,8 +40,8 @@ public record LawEvidence(
             String sourceUrl,
             String text,
             Instant retrievedAt,
-            String serverVersion,
-            String serverCommit,
+            String providerVersion,
+            String providerRevision,
             String toolName,
             String acquisitionKind,
             String applicabilityBasis,
@@ -58,8 +58,8 @@ public record LawEvidence(
                 sourceUrl,
                 text,
                 retrievedAt,
-                serverVersion,
-                serverCommit,
+                providerVersion,
+                providerRevision,
                 toolName,
                 acquisitionKind,
                 applicabilityBasis,
@@ -76,8 +76,8 @@ public record LawEvidence(
         requireText(effectiveDate, "effectiveDate");
         requireText(text, "text");
         if (retrievedAt == null) throw new IllegalArgumentException("retrievedAt is required");
-        requireText(serverVersion, "serverVersion");
-        requireText(serverCommit, "serverCommit");
+        requireText(providerVersion, "providerVersion");
+        requireText(providerRevision, "providerRevision");
         requireText(toolName, "toolName");
         requireText(acquisitionKind, "acquisitionKind");
         requireText(applicabilityBasis, "applicabilityBasis");
@@ -95,5 +95,15 @@ public record LawEvidence(
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(name + " is required");
         }
+    }
+
+    /** Compatibility alias retained for the Work 6 snapshot contract. */
+    public String serverVersion() {
+        return providerVersion;
+    }
+
+    /** Compatibility alias retained for the Work 6 snapshot contract. */
+    public String serverCommit() {
+        return providerRevision;
     }
 }
