@@ -110,6 +110,14 @@ public class OfficialSourceRetrievalService {
             return response;
         }
 
+        if (isOutOfScopeCardRequest(request)) {
+            OfficialSearchResponse response = new OfficialSearchResponse(
+                    searchId, RetrievalStatus.NO_MATCH, false, List.of(),
+                    List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
+            contexts.put(searchId, new SearchContext(response, Map.of()));
+            return response;
+        }
+
         List<RetrievalCorpusSnapshotService.EligibleChunk> scopedCorpus = corpusSnapshot
                 .readyChunks(generation.getId()).stream()
                 .filter(chunk -> matchesNonTemporalScope(chunk, request))
@@ -166,7 +174,12 @@ public class OfficialSourceRetrievalService {
         try {
             List<SourceChunk> keywordChunks = keywordSearch.searchApproved(
                     request.query().isBlank() ? request.institution() : request.query(),
-                    Math.min(100, request.limit()));
+                    // The keyword repository is intentionally generation
+                    // agnostic.  Fetch its bounded maximum before applying
+                    // the immutable, generation-scoped eligibility set;
+                    // otherwise an older chunk version can consume the
+                    // caller's small limit and hide all eligible chunks.
+                    100);
             List<ReciprocalRankFusion.RankedHit> keywordHits = new ArrayList<>();
             int rank = 0;
             for (SourceChunk chunk : keywordChunks) {
@@ -279,19 +292,18 @@ public class OfficialSourceRetrievalService {
     ) {
         String institution = normalize(request.institution());
         String organization = normalize(chunk.organizationName());
-        String body = normalize(chunk.body());
-        String title = normalize(chunk.title());
         boolean commonSource = contains(organization, "여신금융협회")
                 || contains(organization, "금융위원회")
                 || contains(organization, "금융감독원");
         if (institution != null && !commonSource
                 && !contains(organization, institution)
-                && !contains(body, institution)) {
+        ) {
             return false;
         }
         if (request.productType() != null) {
             String product = normalize(request.productType());
-            if (!contains(body, product) && !contains(title, product)) {
+            if (containsAny(product, CARD_OUT_OF_SCOPE_TERMS)
+                    || !contains(product, "신용카드")) {
                 return false;
             }
         }
@@ -300,6 +312,22 @@ public class OfficialSourceRetrievalService {
         }
         return true;
     }
+
+    private boolean isOutOfScopeCardRequest(OfficialSearchRequest request) {
+        if (request == null || (request.category() != null
+                && !"CARD".equalsIgnoreCase(request.category()))) {
+            return false;
+        }
+        return containsAny(normalize(request.query()), CARD_OUT_OF_SCOPE_TERMS)
+                || (request.productType() != null
+                && (containsAny(normalize(request.productType()), CARD_OUT_OF_SCOPE_TERMS)
+                || !contains(normalize(request.productType()), "신용카드")));
+    }
+
+    private static final List<String> CARD_OUT_OF_SCOPE_TERMS = List.of(
+            "체크카드", "선불카드", "법인카드", "가족카드", "kb비씨", "비씨카드",
+            "카드론", "현금서비스", "해외", "계좌이체", "송금", "보이스피싱"
+    );
 
     private boolean isTemporallyApplicable(
             RetrievalCorpusSnapshotService.EligibleChunk chunk,
@@ -372,6 +400,10 @@ public class OfficialSourceRetrievalService {
 
     private static boolean contains(String value, String needle) {
         return needle != null && !needle.isBlank() && value.contains(needle);
+    }
+
+    private static boolean containsAny(String value, List<String> needles) {
+        return needles.stream().anyMatch(needle -> contains(value, needle));
     }
 
     private void trimContexts() {

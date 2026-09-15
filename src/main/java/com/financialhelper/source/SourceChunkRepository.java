@@ -64,6 +64,7 @@ public interface SourceChunkRepository
             select chunk
             from SourceChunk chunk
             join fetch chunk.sourceDocument document
+            join fetch document.sourceRegistry
             where chunk.reviewStatus = com.financialhelper.source.SourceChunkReviewStatus.APPROVED
               and document.status = com.financialhelper.source.SourceDocumentStatus.ACTIVE
             order by document.id, chunk.sequence

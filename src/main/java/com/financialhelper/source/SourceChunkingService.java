@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -20,11 +21,19 @@ import java.util.regex.Pattern;
 public class SourceChunkingService {
 
     private static final Pattern ARTICLE_HEADING = Pattern.compile(
-            "^제\\s*[0-9]+조(?:의[0-9]+)?(?:\\s|$).*"
+            "^제\\s*[0-9]+조(?:의[0-9]+)?(?:\\s|\\(|$).*"
+    );
+
+    private static final Pattern PAGE_MARKER = Pattern.compile(
+            "\\[PAGE\\s+(\\d+)\\]"
     );
 
     private static final Pattern SECTION_HEADING = Pattern.compile(
             "^(?:제\\s*[0-9]+\\s*(?:장|절|관|편)|부칙|별표)(?:\\s|$).*"
+    );
+
+    private static final Pattern ARTICLE_REFERENCE = Pattern.compile(
+            "^(제\\s*[0-9]+조(?:의[0-9]+)?(?:\\([^\\r\\n]*?\\))?)"
     );
 
     private final SourceChunkPersistenceService persistenceService;
@@ -93,7 +102,11 @@ public class SourceChunkingService {
                                         body,
                                         unit.parentSection(),
                                         unit.articleReference(),
-                                        null,
+                                        pageReference(
+                                                normalizedContent,
+                                                segment.startOffset(),
+                                                segment.endOffset()
+                                        ),
                                         "normalized-content:utf16:"
                                                 + segment.startOffset()
                                                 + "-"
@@ -120,7 +133,7 @@ public class SourceChunkingService {
         try {
             return jsonMapper.writeValueAsString(
                     Map.of(
-                            "strategy", "structure-first-v1",
+                            "strategy", properties.configVersion(),
                             "targetTokens", properties.targetTokens(),
                             "maxTokens", properties.maxTokens(),
                             "overlapTokens", properties.overlapTokens(),
@@ -147,7 +160,7 @@ public class SourceChunkingService {
         try {
             return jsonMapper.writeValueAsString(
                     Map.of(
-                            "chunker", "structure-first-v1",
+                            "chunker", properties.configVersion(),
                             "tokenCount", tokenCount,
                             "tokenizerIdentifier", tokenizer.identifier(),
                             "tokenizerRevision", tokenizer.revision(),
@@ -220,7 +233,7 @@ public class SourceChunkingService {
                     unitStart = line.startOffset();
                 }
                 unitEnd = line.endOffset();
-                articleReference = line.text();
+                articleReference = normalizedArticleReference(line.text());
 
                 continue;
             }
@@ -243,6 +256,24 @@ public class SourceChunkingService {
         }
 
         return units;
+    }
+
+    /**
+     * HWP paragraphs can contain an entire article clause on the same line as
+     * its heading.  Keep the full line in the chunk body, but keep the
+     * article locator bounded to the schema's 255-character column.
+     */
+    private String normalizedArticleReference(String line) {
+        if (line.length() <= 255) {
+            return line;
+        }
+        Matcher matcher = ARTICLE_REFERENCE.matcher(line);
+        if (!matcher.find()) {
+            throw new SourceChunkingException(
+                    "article reference exceeds the configured locator length"
+            );
+        }
+        return matcher.group(1);
     }
 
     private List<Segment> split(
@@ -325,6 +356,31 @@ public class SourceChunkingService {
             );
         }
         return count;
+    }
+
+    /** Reads only explicit page markers emitted by a document parser. */
+    private String pageReference(String content, int startOffset, int endOffset) {
+        int firstPage = -1;
+        int lastPage = -1;
+        var matcher = PAGE_MARKER.matcher(content);
+        while (matcher.find() && matcher.start() < endOffset) {
+            int page = Integer.parseInt(matcher.group(1));
+            if (matcher.end() <= startOffset) {
+                firstPage = page;
+                lastPage = page;
+                continue;
+            }
+            if (firstPage < 0) {
+                firstPage = page;
+            }
+            lastPage = page;
+        }
+        if (firstPage < 0) {
+            return null;
+        }
+        return firstPage == lastPage
+                ? "p." + firstPage
+                : "p." + firstPage + "-" + lastPage;
     }
 
     private List<Line> lines(String content) {

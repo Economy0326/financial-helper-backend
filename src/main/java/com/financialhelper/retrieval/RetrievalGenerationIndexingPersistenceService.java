@@ -16,6 +16,10 @@ import com.financialhelper.source.SourceHashing;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Comparator;
@@ -31,6 +35,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class RetrievalGenerationIndexingPersistenceService {
+
+    private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
     private final RetrievalGenerationRepository generationRepository;
     private final SourceChunkRepository chunkRepository;
@@ -81,7 +87,15 @@ public class RetrievalGenerationIndexingPersistenceService {
             );
         }
 
-        List<SourceChunk> approvedChunks = chunkRepository.findAllApprovedActive();
+        Set<String> sourceKeys = sourceKeys(generation.getMetadataJson());
+        List<SourceChunk> approvedChunks = chunkRepository.findAllApprovedActive().stream()
+                .filter(chunk -> generation.getChunkConfigVersion()
+                        .equals(chunk.getChunkConfigVersion()))
+                .filter(chunk -> sourceKeys.isEmpty()
+                        || sourceKeys.contains(chunk.getSourceDocument()
+                        .getSourceRegistry().getSourceKey()))
+                .sorted(Comparator.comparing(chunk -> chunk.getId().toString()))
+                .toList();
         if (approvedChunks.isEmpty()) {
             throw new IllegalStateException(
                     "At least one approved chunk in an active document is required"
@@ -268,6 +282,35 @@ public class RetrievalGenerationIndexingPersistenceService {
                 ))
                 .collect(Collectors.joining("\n"));
         return SourceHashing.sha256(material);
+    }
+
+    private static Set<String> sourceKeys(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) {
+            return Set.of();
+        }
+        try {
+            JsonNode root = JSON_MAPPER.readTree(metadataJson);
+            JsonNode values = root == null ? null : root.get("sourceKeys");
+            if (values == null) {
+                return Set.of();
+            }
+            if (!values.isArray() || values.isEmpty()) {
+                throw new IllegalStateException(
+                        "retrieval generation sourceKeys must be a non-empty array");
+            }
+            Set<String> result = new HashSet<>();
+            for (JsonNode value : values) {
+                if (value == null || !value.isString() || value.asString().isBlank()) {
+                    throw new IllegalStateException(
+                            "retrieval generation sourceKeys must contain nonblank strings");
+                }
+                result.add(value.asString());
+            }
+            return Set.copyOf(result);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException(
+                    "retrieval generation metadata is invalid", exception);
+        }
     }
 
     private static OffsetDateTime now() {

@@ -12,6 +12,10 @@ import org.springframework.test.context.ActiveProfiles;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -19,6 +23,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest
 @ActiveProfiles("test")
 class SourceFoundationPersistenceIntegrationTest {
+
+    private final String fixtureToken = UUID.randomUUID().toString();
+    private final Set<UUID> ownedDocumentIds = new HashSet<>();
+    private final Set<UUID> ownedChunkIds = new HashSet<>();
+    private final Set<UUID> ownedGenerationIds = new HashSet<>();
+    private final Set<UUID> ownedIndexingIds = new HashSet<>();
+    private final Set<String> ownedConfigVersions = new HashSet<>();
+    private Set<String> configVersionsBeforeTest = Set.of();
+    private UUID fixtureSourceRegistryId;
+    private String fixtureSourceKey;
 
     private static final OffsetDateTime BASE_TIME =
             OffsetDateTime.of(
@@ -52,6 +66,9 @@ class SourceFoundationPersistenceIntegrationTest {
             retrievalGenerationPersistenceService;
 
     @Autowired
+    private RetrievalGenerationRepository retrievalGenerationRepository;
+
+    @Autowired
     private SourceChunkIndexingPersistenceService
             sourceChunkIndexingPersistenceService;
 
@@ -59,16 +76,59 @@ class SourceFoundationPersistenceIntegrationTest {
     private SourceChunkIndexingRepository sourceChunkIndexingRepository;
 
     @Autowired
+    private SourceChunkConfigurationRepository sourceChunkConfigurationRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
+    void captureFixtureBaseline() {
+        configVersionsBeforeTest = sourceChunkConfigurationRepository.findAll().stream()
+                .map(SourceChunkConfiguration::getConfigVersion)
+                .collect(Collectors.toUnmodifiableSet());
+        fixtureSourceRegistryId = UUID.randomUUID();
+        fixtureSourceKey = "test-fsc-" + fixtureToken.replace("-", "");
+        jdbcTemplate.update(
+                """
+                INSERT INTO source_registry (
+                    id, source_key, organization_name, official_domain,
+                    canonical_url, acquisition_type, enabled, created_at,
+                    updated_at, content_selector
+                ) VALUES (?, ?, ?, ?, ?, ?, TRUE, CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP, NULL)
+                """,
+                fixtureSourceRegistryId,
+                fixtureSourceKey,
+                "금융위원회",
+                "fsc.go.kr",
+                "https://www.fsc.go.kr/no010101/86271?fixture=" + fixtureToken,
+                SourceAcquisitionType.HTML.name()
+        );
+    }
+
     @AfterEach
-    void cleanFoundationRows() {
-        jdbcTemplate.update("DELETE FROM source_chunk_indexing");
-        jdbcTemplate.update("DELETE FROM source_chunk");
-        jdbcTemplate.update("DELETE FROM retrieval_generation");
-        jdbcTemplate.update("DELETE FROM source_chunk_configuration");
-        sourceDocumentRepository.deleteAll();
+    void cleanOwnedRows() {
+        // Do not clear production-like corpus rows.  Every test records only
+        // rows it created and removes those rows in dependency order.
+        if (!ownedIndexingIds.isEmpty()) {
+            sourceChunkIndexingRepository.deleteAllByIdInBatch(ownedIndexingIds);
+        }
+        if (!ownedChunkIds.isEmpty()) {
+            sourceChunkRepository.deleteAllByIdInBatch(ownedChunkIds);
+        }
+        if (!ownedGenerationIds.isEmpty()) {
+            retrievalGenerationRepository.deleteAllByIdInBatch(ownedGenerationIds);
+        }
+        if (!ownedDocumentIds.isEmpty()) {
+            sourceDocumentRepository.deleteAllByIdInBatch(ownedDocumentIds);
+        }
+        ownedConfigVersions.removeAll(configVersionsBeforeTest);
+        if (!ownedConfigVersions.isEmpty()) {
+            sourceChunkConfigurationRepository.deleteAllByIdInBatch(ownedConfigVersions);
+        }
+        if (fixtureSourceRegistryId != null) {
+            sourceRegistryRepository.deleteById(fixtureSourceRegistryId);
+        }
     }
 
     @Test
@@ -87,6 +147,7 @@ class SourceFoundationPersistenceIntegrationTest {
                 document,
                 definition
         );
+        rememberChunk(first, definition.chunkConfigVersion());
         SourceChunk retry = sourceChunkPersistenceService.saveIfAbsent(
                 document,
                 new SourceChunkData.Definition(
@@ -103,9 +164,10 @@ class SourceFoundationPersistenceIntegrationTest {
                         "{}"
                 )
         );
+        rememberChunk(retry, "chunk-v1");
 
         assertThat(retry.getId()).isEqualTo(first.getId());
-        assertThat(sourceChunkRepository.count()).isOne();
+        assertThat(ownedChunkIds).hasSize(1);
 
         assertThatThrownBy(() ->
                 sourceChunkPersistenceService.saveIfAbsent(
@@ -131,10 +193,11 @@ class SourceFoundationPersistenceIntegrationTest {
                                 0
                         )
                 );
+        rememberChunk(differentConfiguration, "chunk-v2");
 
         assertThat(differentConfiguration.getId())
                 .isNotEqualTo(first.getId());
-        assertThat(sourceChunkRepository.count()).isEqualTo(2);
+        assertThat(ownedChunkIds).hasSize(2);
     }
 
     @Test
@@ -144,6 +207,7 @@ class SourceFoundationPersistenceIntegrationTest {
                 firstDocument,
                 chunkDefinition("chunk-v1", "{}", 0, "버전 하나", 0)
         );
+        rememberChunk(firstChunk, "chunk-v1");
         firstChunk.approve(BASE_TIME);
         sourceChunkRepository.save(firstChunk);
 
@@ -152,6 +216,7 @@ class SourceFoundationPersistenceIntegrationTest {
                 secondDocument,
                 chunkDefinition("chunk-v1", "{}", 0, "버전 둘", 0)
         );
+        rememberChunk(secondChunk, "chunk-v1");
 
         assertThat(firstDocument.getDocumentVersion()).isOne();
         assertThat(secondDocument.getDocumentVersion()).isEqualTo(2);
@@ -168,15 +233,17 @@ class SourceFoundationPersistenceIntegrationTest {
                 document,
                 chunkDefinition("chunk-v1", "{}", 0, "검토된 원문", 0)
         );
+        rememberChunk(chunk, "chunk-v1");
         chunk.approve(BASE_TIME);
         sourceChunkRepository.save(chunk);
 
         RetrievalGenerationData.Definition generationDefinition =
-                generationDefinition("generation-v1");
+                generationDefinition(fixtureKey("generation-v1"));
         RetrievalGeneration generation =
                 retrievalGenerationPersistenceService.getOrCreate(
                         generationDefinition
                 );
+        rememberGeneration(generation);
         RetrievalGeneration retryGeneration =
                 retrievalGenerationPersistenceService.getOrCreate(
                         generationDefinition
@@ -188,6 +255,7 @@ class SourceFoundationPersistenceIntegrationTest {
                         chunk,
                         generation
                 );
+        rememberIndexing(mapping);
         SourceChunkIndexing retryMapping =
                 sourceChunkIndexingPersistenceService.getOrCreate(
                         chunk,
@@ -195,7 +263,7 @@ class SourceFoundationPersistenceIntegrationTest {
                 );
         assertThat(retryMapping.getId()).isEqualTo(mapping.getId());
         assertThat(mapping.getExternalDocumentId()).isEqualTo(chunk.getId());
-        assertThat(sourceChunkIndexingRepository.count()).isOne();
+        assertThat(ownedIndexingIds).hasSize(1);
 
         generation = retrievalGenerationPersistenceService.markProcessing(
                 generation
@@ -221,10 +289,12 @@ class SourceFoundationPersistenceIntegrationTest {
                 document,
                 chunkDefinition("chunk-v1", "{}", 0, "가", 0)
         );
+        rememberChunk(firstChunk, "chunk-v1");
         SourceChunk secondChunk = sourceChunkPersistenceService.saveIfAbsent(
                 document,
                 chunkDefinition("chunk-v1", "{}", 1, "나", 1)
         );
+        rememberChunk(secondChunk, "chunk-v1");
         firstChunk.approve(BASE_TIME);
         secondChunk.approve(BASE_TIME);
         sourceChunkRepository.save(firstChunk);
@@ -232,13 +302,15 @@ class SourceFoundationPersistenceIntegrationTest {
 
         RetrievalGeneration generation =
                 retrievalGenerationPersistenceService.getOrCreate(
-                        generationDefinition("generation-freeze")
+                        generationDefinition(fixtureKey("generation-freeze"))
                 );
+        rememberGeneration(generation);
         SourceChunkIndexing firstMapping =
                 sourceChunkIndexingPersistenceService.getOrCreate(
                         firstChunk,
                         generation
                 );
+        rememberIndexing(firstMapping);
         generation = retrievalGenerationPersistenceService.markProcessing(
                 generation
         );
@@ -294,13 +366,14 @@ class SourceFoundationPersistenceIntegrationTest {
 
     @Test
     void generationDefinitionCannotBeOverwrittenBySameKey() {
-        retrievalGenerationPersistenceService.getOrCreate(
-                generationDefinition("immutable-generation")
+        RetrievalGeneration generation = retrievalGenerationPersistenceService.getOrCreate(
+                generationDefinition(fixtureKey("immutable-generation"))
         );
+        rememberGeneration(generation);
 
         RetrievalGenerationData.Definition changed =
                 new RetrievalGenerationData.Definition(
-                        "immutable-generation",
+                        fixtureKey("immutable-generation"),
                         "representation-v1",
                         "different-model",
                         "revision-1",
@@ -318,24 +391,26 @@ class SourceFoundationPersistenceIntegrationTest {
 
     private SourceDocument createDocument(String normalizedContent) {
         SourceRegistry source = sourceRegistryRepository
-                .findBySourceKeyAndEnabledTrue("fsc-2026-alert")
+                .findBySourceKeyAndEnabledTrue(fixtureSourceKey)
                 .orElseThrow();
         OffsetDateTime retrievedAt = BASE_TIME.plusNanos(
                 sourceDocumentRepository.count()
         );
-        byte[] raw = normalizedContent.getBytes(StandardCharsets.UTF_8);
+        String fixtureContent = normalizedContent + "\nfixture=" + fixtureToken;
+        Set<UUID> before = documentIds(source.getId());
+        byte[] raw = fixtureContent.getBytes(StandardCharsets.UTF_8);
         SourceIngestionData.Parsed parsed = new SourceIngestionData.Parsed(
                 source.getCanonicalUrl(),
-                "test source",
+                "test source " + fixtureToken,
                 null,
                 retrievedAt,
                 "text/html;charset=UTF-8",
                 null,
                 null,
                 SourceHashing.sha256(raw),
-                SourceHashing.sha256(normalizedContent),
+                SourceHashing.sha256(fixtureContent),
                 raw,
-                normalizedContent
+                fixtureContent
         );
 
         sourceDocumentWriter.saveIfCurrent(
@@ -343,12 +418,39 @@ class SourceFoundationPersistenceIntegrationTest {
                 parsed
         );
 
-        return sourceDocumentRepository
+        SourceDocument document = sourceDocumentRepository
                 .findBySourceRegistry_IdAndStatus(
                         source.getId(),
                         SourceDocumentStatus.ACTIVE
                 )
                 .orElseThrow();
+        Set<UUID> created = documentIds(source.getId());
+        created.removeAll(before);
+        ownedDocumentIds.addAll(created);
+        return document;
+    }
+
+    private Set<UUID> documentIds(UUID sourceRegistryId) {
+        return new HashSet<>(jdbcTemplate.queryForList(
+                "SELECT id FROM source_document WHERE source_registry_id = ?",
+                UUID.class,
+                sourceRegistryId
+        ));
+    }
+
+    private void rememberChunk(SourceChunk chunk, String configVersion) {
+        ownedChunkIds.add(chunk.getId());
+        if (!configVersionsBeforeTest.contains(configVersion)) {
+            ownedConfigVersions.add(configVersion);
+        }
+    }
+
+    private void rememberGeneration(RetrievalGeneration generation) {
+        ownedGenerationIds.add(generation.getId());
+    }
+
+    private void rememberIndexing(SourceChunkIndexing indexing) {
+        ownedIndexingIds.add(indexing.getId());
     }
 
     private SourceChunkData.Definition chunkDefinition(
@@ -387,5 +489,9 @@ class SourceFoundationPersistenceIntegrationTest {
                 "{}",
                 "{}"
         );
+    }
+
+    private String fixtureKey(String suffix) {
+        return "test-" + fixtureToken + "-" + suffix;
     }
 }

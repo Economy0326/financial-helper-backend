@@ -10,6 +10,10 @@ spring:
     default: local
 
 app:
+  card-corpus:
+    # Human-approved CARD activation is explicit and opt-in.
+    run-on-startup: ${CARD_CORPUS_RUN_ON_STARTUP:false}
+
   guest-session:
     ttl: ${GUEST_SESSION_TTL:PT24H}
 
@@ -32,7 +36,7 @@ app:
       target-tokens: ${RETRIEVAL_CHUNK_TARGET_TOKENS:500}
       max-tokens: ${RETRIEVAL_CHUNK_MAX_TOKENS:600}
       overlap-tokens: ${RETRIEVAL_CHUNK_OVERLAP_TOKENS:0}
-      config-version: ${RETRIEVAL_CHUNK_CONFIG_VERSION:structure-first-v1}
+      config-version: ${RETRIEVAL_CHUNK_CONFIG_VERSION:structure-first-v2}
       tokenizer-identifier: ${RETRIEVAL_TOKENIZER_IDENTIFIER:nlpai-lab/KURE-v2}
       tokenizer-revision: ${RETRIEVAL_TOKENIZER_REVISION:3431f86d399d666083890dbb882aced6708873bc}
 

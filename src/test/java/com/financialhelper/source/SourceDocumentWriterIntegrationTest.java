@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions
         .assertThat;
@@ -22,6 +23,9 @@ import static org.assertj.core.api.Assertions
 @SpringBootTest
 @ActiveProfiles("test")
 class SourceDocumentWriterIntegrationTest {
+
+    private String fixtureSourceKey;
+    private UUID fixtureSourceId;
 
     @Autowired
     private SourceRegistryRepository
@@ -40,10 +44,38 @@ class SourceDocumentWriterIntegrationTest {
             jdbcTemplate;
 
     @BeforeEach
-    void cleanDocuments() {
+    void createFixture() {
+        fixtureSourceKey = "test-writer-" + UUID.randomUUID();
+        fixtureSourceId = UUID.randomUUID();
+        jdbcTemplate.update(
+                """
+                INSERT INTO source_registry (
+                    id, source_key, organization_name, official_domain,
+                    canonical_url, acquisition_type, enabled, created_at, updated_at
+                ) VALUES (?, ?, '금융위원회', 'fsc.go.kr', ?, 'HTML', TRUE,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                fixtureSourceId,
+                fixtureSourceKey,
+                "https://fsc.go.kr/test-writer/" + fixtureSourceId
+        );
+    }
 
-        sourceDocumentRepository
-                .deleteAll();
+    @org.junit.jupiter.api.AfterEach
+    void deleteFixture() {
+        jdbcTemplate.update(
+                "DELETE FROM source_chunk_indexing WHERE source_chunk_id IN "
+                        + "(SELECT id FROM source_chunk WHERE source_document_id IN "
+                        + "(SELECT id FROM source_document WHERE source_registry_id = ?))",
+                fixtureSourceId
+        );
+        jdbcTemplate.update(
+                "DELETE FROM source_chunk WHERE source_document_id IN "
+                        + "(SELECT id FROM source_document WHERE source_registry_id = ?)",
+                fixtureSourceId
+        );
+        jdbcTemplate.update("DELETE FROM source_document WHERE source_registry_id = ?", fixtureSourceId);
+        jdbcTemplate.update("DELETE FROM source_registry WHERE id = ?", fixtureSourceId);
     }
 
     // 정규화 본문이 같으면 새 버전을 만들지 않고 기존 버전을 재사용하는지 확인
@@ -52,9 +84,7 @@ class SourceDocumentWriterIntegrationTest {
 
         SourceRegistry source =
                 sourceRegistryRepository
-                        .findBySourceKeyAndEnabledTrue(
-                                "fsc-2026-alert"
-                        )
+                        .findBySourceKeyAndEnabledTrue(fixtureSourceKey)
                         .orElseThrow();
 
         SourceIngestionData.Snapshot snapshot =
@@ -122,7 +152,9 @@ class SourceDocumentWriterIntegrationTest {
                 );
 
         assertThat(
-                sourceDocumentRepository.count()
+                sourceDocumentRepository
+                        .findAllBySourceRegistry_IdOrderByDocumentVersionAsc(source.getId())
+                        .size()
         )
                 .isEqualTo(1);
 
@@ -154,7 +186,7 @@ class SourceDocumentWriterIntegrationTest {
         SourceRegistry source =
                 sourceRegistryRepository
                         .findBySourceKeyAndEnabledTrue(
-                                "police-response"
+                                fixtureSourceKey
                         )
                         .orElseThrow();
 
@@ -251,7 +283,7 @@ class SourceDocumentWriterIntegrationTest {
         SourceRegistry source =
                 sourceRegistryRepository
                         .findBySourceKeyAndEnabledTrue(
-                                "fsc-2026-alert"
+                                fixtureSourceKey
                         )
                         .orElseThrow();
 
@@ -312,7 +344,9 @@ class SourceDocumentWriterIntegrationTest {
 
             // source 정의가 바뀌었기 때문에 문서는 저장되면 안 됨
             assertThat(
-                    sourceDocumentRepository.count()
+                    sourceDocumentRepository
+                            .findAllBySourceRegistry_IdOrderByDocumentVersionAsc(source.getId())
+                            .size()
             )
                     .isZero();
 

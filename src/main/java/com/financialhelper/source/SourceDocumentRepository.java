@@ -3,6 +3,7 @@ package com.financialhelper.source;
 import jakarta.persistence.LockModeType;
 
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -31,6 +32,7 @@ public interface SourceDocumentRepository
     );
 
     // 해당 SourceRegistry에 속한 문서 중 해당 상태에 맞는 SourceDocument 찾기
+    @EntityGraph(attributePaths = "sourceRegistry")
     Optional<SourceDocument>
     findBySourceRegistry_IdAndStatus(
             UUID sourceRegistryId,

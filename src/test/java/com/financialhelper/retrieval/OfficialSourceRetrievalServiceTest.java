@@ -160,6 +160,39 @@ class OfficialSourceRetrievalServiceTest {
     }
 
     @Test
+    void institution_scope_does_not_match_another_institution_mentioned_in_body() {
+        UUID generationId = UUID.randomUUID();
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(
+                new RetrievalCorpusSnapshotService.EligibleChunk(
+                        UUID.randomUUID(), "신한카드와 KB국민카드의 교환 정보", UUID.randomUUID(), 1,
+                        LocalDate.of(2025, 1, 1), null,
+                        "{}", "㈜KB국민카드", "약관", "분실", "제40조", "p.29", "loc", "url")));
+
+        OfficialSearchResponse response = service.search(new OfficialSearchRequest(
+                "신한카드 분실", "CARD", "신한카드", "신용카드", null, List.of(), 10));
+
+        assertThat(response.status()).isEqualTo(RetrievalStatus.NO_MATCH);
+        assertThat(response.coverageGaps()).containsExactly("NO_APPROVED_READY_CORPUS_FOR_SCOPE");
+    }
+
+    @Test
+    void card_scope_rejects_explicitly_out_of_scope_product_or_incident_terms() {
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+
+        OfficialSearchResponse response = service.search(new OfficialSearchRequest(
+                "해외 카드 부정사용", "CARD", "KB국민카드", "신용카드", null, List.of(), 10));
+
+        assertThat(response.status()).isEqualTo(RetrievalStatus.NO_MATCH);
+        assertThat(response.coverageGaps()).containsExactly("CARD_SCOPE_OUT_OF_SCOPE");
+    }
+
+    @Test
     void passage_expansion_keeps_parent_article_and_exception_chunks_in_one_version() {
         UUID generationId = UUID.randomUUID();
         UUID documentId = UUID.randomUUID();

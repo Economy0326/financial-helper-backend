@@ -8,9 +8,11 @@ are loaded lazily so a backend can start with the runtime disabled.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import shutil
+import threading
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -112,6 +114,7 @@ class RuntimeEngine:
         self._model: Any = None
         self._tokenizer: Any = None
         self._dependency_error: str | None = None
+        self._dependency_lock = threading.Lock()
 
     def metadata(self) -> dict[str, Any]:
         self._load_dependencies()
@@ -156,9 +159,23 @@ class RuntimeEngine:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             existing_ids = manifest.get("documentIds", [])
             requested_ids = [doc["id"] for doc in documents]
-            if manifest.get("corpusSnapshotSha256") == payload["corpusSnapshotSha256"] and existing_ids == requested_ids:
-                return {"generationId": str(generation_id), "readyDocumentIds": requested_ids, "indexMetadata": manifest}
-            raise ContractError("generation artifact already exists with a different definition")
+            # Mapping order is a persistence concern; the immutable corpus
+            # snapshot and stable UUID membership define the artifact.
+            matches_definition = (
+                manifest.get("corpusSnapshotSha256")
+                == payload["corpusSnapshotSha256"]
+                and len(existing_ids) == len(requested_ids)
+                and set(existing_ids) == set(requested_ids)
+            )
+            if matches_definition:
+                if self._artifact_is_ready(final_dir, manifest):
+                    return {"generationId": str(generation_id), "readyDocumentIds": requested_ids, "indexMetadata": manifest}
+                # A previous process may have been interrupted after writing
+                # the manifest but before the PLAID files were complete.  Do
+                # not promote that partial definition as idempotently ready.
+                shutil.rmtree(final_dir)
+            else:
+                raise ContractError("generation artifact already exists with a different definition")
 
         texts = [doc["text"] for doc in documents]
         for text in texts:
@@ -167,6 +184,7 @@ class RuntimeEngine:
         if staging.exists():
             shutil.rmtree(staging)
         staging.mkdir(parents=True)
+        index = None
         try:
             from pylate import indexes
 
@@ -217,6 +235,14 @@ class RuntimeEngine:
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                 encoding="utf-8",
             )
+            # FastPlaid keeps memory-mapped tensors open after construction.
+            # Release them before the generation directory is atomically
+            # renamed; Windows otherwise rejects the move with WinError 32.
+            close = getattr(getattr(index, "_index", None), "close", None)
+            if callable(close):
+                close()
+            del index
+            gc.collect()
             staging.replace(final_dir)
             return {
                 "generationId": str(generation_id),
@@ -224,9 +250,39 @@ class RuntimeEngine:
                 "indexMetadata": metadata,
             }
         except Exception:
+            close = getattr(getattr(index, "_index", None), "close", None)
+            if callable(close):
+                close()
+            del index
+            gc.collect()
             if staging.exists():
                 shutil.rmtree(staging)
             raise
+
+    @staticmethod
+    def _artifact_is_ready(final_dir: Path, manifest: dict[str, Any]) -> bool:
+        """Check the immutable files required by fast-plaid's disk loader."""
+        index_path = final_dir / "index" / "fast_plaid_index"
+        required = {
+            "metadata.json",
+            "centroids.npy",
+            "avg_residual.npy",
+            "bucket_cutoffs.npy",
+            "bucket_weights.npy",
+            "merged_codes.npy",
+            "merged_residuals.npy",
+        }
+        if not index_path.is_dir() or any(not (index_path / name).is_file() for name in required):
+            return False
+        try:
+            index_metadata = json.loads((index_path / "metadata.json").read_text(encoding="utf-8"))
+            num_chunks = int(index_metadata["num_chunks"])
+            document_count = int(index_metadata["num_documents"])
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+            return False
+        if num_chunks < 1 or document_count != int(manifest.get("documentCount", -1)):
+            return False
+        return all((index_path / f"doclens.{chunk}.json").is_file() for chunk in range(num_chunks))
 
     def readiness(self, generation_id: uuid.UUID) -> dict[str, Any]:
         manifest_path = self.index_root / str(generation_id) / "manifest.json"
@@ -351,29 +407,41 @@ class RuntimeEngine:
     def _load_dependencies(self, require_runtime: bool = False) -> None:
         if self._model is not None and self._tokenizer is not None:
             return
-        try:
-            from pylate import models
-            from transformers import AutoTokenizer
+        with self._dependency_lock:
+            if self._model is not None and self._tokenizer is not None:
+                return
+            try:
+                from pylate import models
+                from transformers import AutoTokenizer
 
-            self._model = models.ColBERT(
-                model_name_or_path=MODEL_IDENTIFIER,
-                revision=MODEL_REVISION,
-                query_prefix="",
-                document_prefix="",
-                query_length=QUERY_LENGTH,
-                document_length=MAX_DOCUMENT_TOKENS,
-                do_query_expansion=QUERY_EXPANSION,
-                device=os.getenv("KURE_DEVICE", "cpu"),
-            )
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                MODEL_IDENTIFIER,
-                revision=TOKENIZER_REVISION,
-            )
-            self._dependency_error = None
-        except Exception as exc:  # dependencies/weights may intentionally be absent
-            self._dependency_error = f"{type(exc).__name__}: {exc}"
-            if require_runtime:
-                raise RuntimeError("KURE runtime dependencies are unavailable") from exc
+                # Production keeps the pinned Hub identifier/revision.  A local
+                # directory is an explicit offline option for environments where
+                # that exact revision is already cached; URLs are rejected so the
+                # runtime cannot be redirected to an arbitrary source.
+                model_source = os.getenv("KURE_MODEL_PATH") or MODEL_IDENTIFIER
+                model_revision = None if os.getenv("KURE_MODEL_PATH") else MODEL_REVISION
+                if "://" in model_source:
+                    raise ValueError("KURE_MODEL_PATH must be a local model directory")
+
+                self._model = models.ColBERT(
+                    model_name_or_path=model_source,
+                    revision=model_revision,
+                    query_prefix="",
+                    document_prefix="",
+                    query_length=QUERY_LENGTH,
+                    document_length=MAX_DOCUMENT_TOKENS,
+                    do_query_expansion=QUERY_EXPANSION,
+                    device=os.getenv("KURE_DEVICE", "cpu"),
+                )
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    model_source,
+                    revision=model_revision,
+                )
+                self._dependency_error = None
+            except Exception as exc:  # dependencies/weights may intentionally be absent
+                self._dependency_error = f"{type(exc).__name__}: {exc}"
+                if require_runtime:
+                    raise RuntimeError("KURE runtime dependencies are unavailable") from exc
 
     @staticmethod
     def _package_version(module_name: str) -> str | None:
@@ -386,14 +454,20 @@ class RuntimeEngine:
 
 class Handler(BaseHTTPRequestHandler):
     engine: RuntimeEngine
+    protocol_version = "HTTP/1.1"
 
     def _send(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        # The JVM client may keep an HTTP/1.1 connection in its pool.  Close
+        # each short JSON request explicitly so a server-side close cannot be
+        # mistaken for a reusable connection and surfaced as an EOF retry.
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
+        self.close_connection = True
 
     def _json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))

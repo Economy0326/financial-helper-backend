@@ -74,7 +74,10 @@ public class HttpSourceContentFetcher
                             )
                             .header(
                                     "Accept",
-                                    "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
+                                    "text/html,application/xhtml+xml;q=0.9,"
+                                            + "application/pdf,application/x-hwp,"
+                                            + "application/vnd.hancom.hwp,"
+                                            + "application/octet-stream;q=0.5"
                             )
                             .GET()
                             .build();

@@ -11,6 +11,10 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -18,6 +22,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest
 @ActiveProfiles("test")
 class ActiveRetrievalGenerationIntegrationTest {
+
+    private final Set<UUID> ownedGenerationIds = new HashSet<>();
+    private UUID originalActiveGenerationId;
+    private String fixtureToken;
 
     @Autowired
     private RetrievalGenerationRepository generationRepository;
@@ -29,10 +37,32 @@ class ActiveRetrievalGenerationIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
+    void captureActiveGeneration() {
+        fixtureToken = UUID.randomUUID().toString();
+        List<UUID> activeIds = jdbcTemplate.query(
+                "SELECT retrieval_generation_id FROM active_retrieval_generation WHERE singleton_key = TRUE",
+                (resultSet, rowNumber) -> resultSet.getObject(1, UUID.class)
+        );
+        originalActiveGenerationId = activeIds.isEmpty() ? null : activeIds.getFirst();
+    }
+
     @AfterEach
-    void cleanRows() {
-        jdbcTemplate.update("DELETE FROM active_retrieval_generation");
-        jdbcTemplate.update("DELETE FROM retrieval_generation");
+    void cleanupOwnedRows() {
+        // Restore the production-like pointer before removing only the
+        // generations created by this test.
+        if (originalActiveGenerationId == null) {
+            jdbcTemplate.update("DELETE FROM active_retrieval_generation");
+        } else {
+            jdbcTemplate.update(
+                    "UPDATE active_retrieval_generation SET retrieval_generation_id = ?, switched_at = CURRENT_TIMESTAMP "
+                            + "WHERE singleton_key = TRUE",
+                    originalActiveGenerationId
+            );
+        }
+        for (UUID generationId : ownedGenerationIds) {
+            jdbcTemplate.update("DELETE FROM retrieval_generation WHERE id = ?", generationId);
+        }
+        ownedGenerationIds.clear();
     }
 
     @Test
@@ -40,6 +70,7 @@ class ActiveRetrievalGenerationIntegrationTest {
         RetrievalGeneration pending = generationRepository.saveAndFlush(
                 new RetrievalGeneration(definition("pending"), now())
         );
+        ownedGenerationIds.add(pending.getId());
         assertThatThrownBy(() -> activeService.activate(pending.getId()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("READY");
@@ -68,6 +99,7 @@ class ActiveRetrievalGenerationIntegrationTest {
         RetrievalGeneration generation = generationRepository.saveAndFlush(
                 new RetrievalGeneration(definition(key), now())
         );
+        ownedGenerationIds.add(generation.getId());
         generation.markProcessing(now());
         generation.markReady(1, now());
         return generationRepository.saveAndFlush(generation);
@@ -75,7 +107,7 @@ class ActiveRetrievalGenerationIntegrationTest {
 
     private RetrievalGenerationData.Definition definition(String key) {
         return new RetrievalGenerationData.Definition(
-                key,
+                "test-active-" + fixtureToken + "-" + key,
                 "kure-v2-plaid-v1",
                 "nlpai-lab/KURE-v2",
                 "3431f86d399d666083890dbb882aced6708873bc",

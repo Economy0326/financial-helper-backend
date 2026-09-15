@@ -12,7 +12,7 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 
 @Component
-public class HtmlSourceDocumentParser {
+public class HtmlSourceDocumentParser implements SourceDocumentParser {
 
     // 본문이 너무 짧으면 안됨
     private static final int
@@ -36,13 +36,10 @@ public class HtmlSourceDocumentParser {
             SourceIngestionData.Fetched fetched
     ) {
 
-        if (
-                source.acquisitionType()
-                        != SourceAcquisitionType.HTML
-        ) {
+        if (!supports(source.acquisitionType())) {
             throw new SourceIngestionException(
                     "SOURCE_TYPE_UNSUPPORTED",
-                    "Only HTML acquisition is supported in V2-1"
+                    "HTML parser cannot parse this acquisition type"
             );
         }
 
@@ -120,6 +117,11 @@ public class HtmlSourceDocumentParser {
 
                 normalizedContent
         );
+    }
+
+    @Override
+    public boolean supports(SourceAcquisitionType acquisitionType) {
+        return acquisitionType == SourceAcquisitionType.HTML;
     }
 
     private Document parseDocument(

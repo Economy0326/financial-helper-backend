@@ -26,8 +26,8 @@ public class SourceIngestionService {
     private final SourceContentFetcher
             sourceContentFetcher;
 
-    private final HtmlSourceDocumentParser
-            htmlSourceDocumentParser;
+    private final List<SourceDocumentParser>
+            documentParsers;
 
     private final SourceDocumentWriter
             sourceDocumentWriter;
@@ -36,7 +36,7 @@ public class SourceIngestionService {
             SourceRegistryRepository sourceRegistryRepository,
             OfficialSourceDomainRepository officialSourceDomainRepository,
             SourceContentFetcher sourceContentFetcher,
-            HtmlSourceDocumentParser htmlSourceDocumentParser,
+            List<SourceDocumentParser> documentParsers,
             SourceDocumentWriter sourceDocumentWriter
     ) {
         this.sourceRegistryRepository =
@@ -48,8 +48,8 @@ public class SourceIngestionService {
         this.sourceContentFetcher =
                 sourceContentFetcher;
 
-        this.htmlSourceDocumentParser =
-                htmlSourceDocumentParser;
+        this.documentParsers =
+                documentParsers == null ? List.of() : List.copyOf(documentParsers);
 
         this.sourceDocumentWriter =
                 sourceDocumentWriter;
@@ -150,12 +150,16 @@ public class SourceIngestionService {
                         snapshot
                 );
 
-        // 가져온 HTML을 실제 근거로 사용할 수 있는 normalized content로 변환
-        SourceIngestionData.Parsed parsed =
-                htmlSourceDocumentParser.parse(
-                        snapshot,
-                        fetched
-                );
+        // 수집 형식에 맞는 명시적 parser만 선택한다. PDF를 HTML로 우회하지 않는다.
+        SourceDocumentParser parser = documentParsers.stream()
+                .filter(candidate -> candidate.supports(snapshot.acquisitionType()))
+                .findFirst()
+                .orElseThrow(() -> new SourceIngestionException(
+                        "SOURCE_TYPE_UNSUPPORTED",
+                        "No parser is registered for acquisition type "
+                                + snapshot.acquisitionType()
+                ));
+        SourceIngestionData.Parsed parsed = parser.parse(snapshot, fetched);
 
         // 새로운 write transaction 안에서 SourceRegistry를 다시 확인하고 저장
         return sourceDocumentWriter
