@@ -55,6 +55,18 @@ app:
       index-backend: ${KURE_INDEX_BACKEND:PLAID}
       batch-size: ${KURE_BATCH_SIZE:32}
 
+  law-mcp:
+    # External korean-law-mcp v4.9.1 is opt-in and never decides financial actions.
+    enabled: ${LAW_MCP_ENABLED:false}
+    endpoint: ${LAW_MCP_ENDPOINT:http://127.0.0.1:8000/mcp}
+    connect-timeout: ${LAW_MCP_CONNECT_TIMEOUT:2s}
+    request-timeout: ${LAW_MCP_REQUEST_TIMEOUT:30s}
+    law-oc: ${LAW_OC:}
+    expected-server-version: ${LAW_MCP_SERVER_VERSION:4.9.1}
+    pinned-repository: ${LAW_MCP_REPOSITORY:https://github.com/chrisryugj/korean-law-mcp}
+    pinned-tag: ${LAW_MCP_TAG:v4.9.1}
+    pinned-commit: ${LAW_MCP_COMMIT:860cfcbce9c01c664766ec1badca8d4468b87488}
+
   ai:
     enabled: ${AI_ENABLED:false}
     smoke-test-enabled: ${AI_SMOKE_TEST_ENABLED:false}
