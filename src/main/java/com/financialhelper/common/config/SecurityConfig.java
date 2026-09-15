@@ -1,5 +1,7 @@
 package com.financialhelper.common.config;
 
+import com.financialhelper.account.AccountSessionAuthenticationFilter;
+import com.financialhelper.account.RateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -10,6 +12,8 @@ import org.springframework.security.config.annotation.web
         .builders.HttpSecurity;
 
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf
         .CookieCsrfTokenRepository;
 
@@ -18,7 +22,9 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http
+            HttpSecurity http,
+            AccountSessionAuthenticationFilter accountSessionAuthenticationFilter,
+            RateLimitFilter rateLimitFilter
     ) throws Exception {
 
         CookieCsrfTokenRepository csrfTokenRepository =
@@ -35,11 +41,21 @@ public class SecurityConfig {
                         )
                 )
 
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                .addFilterBefore(rateLimitFilter, AnonymousAuthenticationFilter.class)
+                .addFilterBefore(accountSessionAuthenticationFilter, RateLimitFilter.class)
+
                 .authorizeHttpRequests(authorize -> authorize
 
                     .requestMatchers(
-                            "/health"
+                            "/health", "/health/readiness", "/ready"
                     )
+                    .permitAll()
+
+                    .requestMatchers("/api/v1/auth/**")
                     .permitAll()
 
                     .requestMatchers(

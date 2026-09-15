@@ -10,6 +10,13 @@ spring:
     open-in-view: false
 
 app:
+  auth:
+    general-consultation-required: false
+    kakao:
+      enabled: false
+    limits:
+      rate-limit-enabled: false
+      global-ai-budget-enabled: false
   guest-session:
     ttl: PT24H
     cookie:

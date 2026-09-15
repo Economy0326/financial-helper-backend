@@ -1,9 +1,15 @@
 package com.financialhelper.consultation;
 
+import com.financialhelper.account.Account;
+import com.financialhelper.account.AccountAuthenticationException;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.account.AccountSessionService;
+import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
 import com.financialhelper.guest.GuestSessionService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -19,13 +25,28 @@ public class ConsultationService {
 
     private final ConsultationRepository consultationRepository;
     private final GuestSessionService guestSessionService;
+    private final AccountSessionService accountSessionService;
+    private final AccountProperties accountProperties;
 
+    @Autowired
+    public ConsultationService(
+            ConsultationRepository consultationRepository,
+            GuestSessionService guestSessionService,
+            AccountSessionService accountSessionService,
+            AccountProperties accountProperties
+    ) {
+        this.consultationRepository = consultationRepository;
+        this.guestSessionService = guestSessionService;
+        this.accountSessionService = accountSessionService;
+        this.accountProperties = accountProperties;
+    }
+
+    /** Compatibility constructor for existing unit tests and non-web callers. */
     public ConsultationService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService
     ) {
-        this.consultationRepository = consultationRepository;
-        this.guestSessionService = guestSessionService;
+        this(consultationRepository, guestSessionService, null, null);
     }
 
     private static final Set<ConsultationStep>
@@ -49,6 +70,11 @@ public class ConsultationService {
     public ConsultationStartResult startConsultation(
             String rawToken
     ) {
+        Account account = accountSessionService == null
+                ? null : accountSessionService.currentAccount().orElse(null);
+        if (accountProperties != null && accountProperties.generalConsultationRequired() && account == null) {
+            throw AccountAuthenticationException.required();
+        }
         GuestSessionResolution sessionResolution =
                 guestSessionService
                         .resolveOrCreate(
@@ -66,6 +92,9 @@ public class ConsultationService {
                         );
 
         if (activeConsultation.isPresent()) {
+            if (account != null) {
+                activeConsultation.get().bindAccount(account);
+            }
             return new ConsultationStartResult(
                     ConsultationCreateResponse.from(
                             activeConsultation.get()
@@ -84,6 +113,10 @@ public class ConsultationService {
                         guestSession,
                         now
                 );
+        if (account != null) {
+            guestSession.bindAccount(account);
+            consultation.bindAccount(account);
+        }
 
         Consultation savedConsultation =
                 consultationRepository.save(
@@ -166,6 +199,10 @@ public class ConsultationService {
 
         ensureInProgress(consultation);
 
+        if (accountSessionService != null) {
+            accountSessionService.currentAccount().ifPresent(consultation::bindAccount);
+        }
+
         // 현재 단계에서 Category 수정이 가능한가
         if (!CATEGORY_EDITABLE_STEPS.contains(
                 consultation.getCurrentStep()
@@ -213,6 +250,11 @@ public class ConsultationService {
 
         if (consultation.getCategory() == null) {
             throw new InvalidConsultationStateException();
+        }
+
+        if (accountProperties != null && request.situationText().length()
+                > accountProperties.limits().maxSituationCharacters()) {
+            throw new InputLimitException("situation");
         }
 
         consultation.updateSituation(

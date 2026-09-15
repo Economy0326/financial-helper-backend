@@ -3,6 +3,8 @@ package com.financialhelper.ai.analysis;
 import com.financialhelper.ai.AiOutputContractException;
 import com.financialhelper.ai.AiProviderException;
 import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.account.InputLimitException;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
@@ -102,6 +104,7 @@ public class AnalysisWorker {
     private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
 
     private final GroundedOutputValidator groundedOutputValidator;
+    private final AccountProperties accountProperties;
 
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
@@ -109,7 +112,8 @@ public class AnalysisWorker {
             AnalysisAiBusinessValidator businessValidator,
             JsonMapper jsonMapper,
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
-            GroundedOutputValidator groundedOutputValidator
+            GroundedOutputValidator groundedOutputValidator,
+            AccountProperties accountProperties
     ) {
         this.persistenceService =
                 persistenceService;
@@ -126,6 +130,7 @@ public class AnalysisWorker {
         this.evidenceSnapshotService = evidenceSnapshotService;
 
         this.groundedOutputValidator = groundedOutputValidator;
+        this.accountProperties = accountProperties;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -178,6 +183,10 @@ public class AnalysisWorker {
                     result,
                     evidenceSnapshot
             );
+
+        } catch (InputLimitException exception) {
+            log.warn("Analysis job input exceeded configured limit. jobId={}", jobId);
+            persistenceService.fail(jobId, "AI_INPUT_TOO_LARGE");
 
         } catch (
                 AiProviderException
@@ -236,10 +245,11 @@ public class AnalysisWorker {
                             , evidenceSnapshot
                     );
 
-            return jsonMapper
-                    .writeValueAsString(
-                            input
-                    );
+            String serialized = jsonMapper.writeValueAsString(input);
+            if (serialized.length() > accountProperties.limits().maxAiInputCharacters()) {
+                throw new InputLimitException("ai");
+            }
+            return serialized;
 
         } catch (JacksonException exception) {
 

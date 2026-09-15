@@ -3,6 +3,9 @@ package com.financialhelper.ai.analysis;
 import com.financialhelper.ai.OpenAiProperties;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.account.AccountAiQuotaService;
+import com.financialhelper.account.GlobalAiBudgetGuard;
+import com.financialhelper.account.AccountProperties;
 
 import com.financialhelper.ai.summary
         .ConsultationSummary;
@@ -59,6 +62,9 @@ public class AnalysisPersistenceService {
 
     private final AnalysisEvidenceSnapshotService
             evidenceSnapshotService;
+    private final AccountAiQuotaService accountAiQuotaService;
+    private final GlobalAiBudgetGuard globalAiBudgetGuard;
+    private final AccountProperties accountProperties;
 
     public AnalysisPersistenceService(
             ConsultationRepository consultationRepository,
@@ -68,7 +74,10 @@ public class AnalysisPersistenceService {
             OpenAiProperties openAiProperties,
             JsonMapper jsonMapper,
             AnalysisProperties analysisProperties,
-            AnalysisEvidenceSnapshotService evidenceSnapshotService
+            AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            AccountAiQuotaService accountAiQuotaService,
+            GlobalAiBudgetGuard globalAiBudgetGuard,
+            AccountProperties accountProperties
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -92,6 +101,9 @@ public class AnalysisPersistenceService {
                 analysisProperties;
 
         this.evidenceSnapshotService = evidenceSnapshotService;
+        this.accountAiQuotaService = accountAiQuotaService;
+        this.globalAiBudgetGuard = globalAiBudgetGuard;
+        this.accountProperties = accountProperties;
     }
 
     @Transactional
@@ -157,6 +169,19 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        // Summary가 Confirm인 경우에만 새로운 AI 사용량을 예약한다.
+        if (summary.getConfirmedAt() == null) {
+            throw new InvalidConsultationStateException();
+        }
+
+        if (analysisJobRepository.sumAttemptCountByConsultationId(consultationId)
+                >= accountAiAttemptsLimit()) {
+            throw new AnalysisRetryLimitExceededException();
+        }
+
+        accountAiQuotaService.reserveIfAuthenticated();
+        globalAiBudgetGuard.reserveRequestUnit();
+
         OffsetDateTime now =
                 OffsetDateTime.now(
                         ZoneOffset.UTC
@@ -174,11 +199,6 @@ public class AnalysisPersistenceService {
                                 now
                         )
                 );
-
-        // Summary가 Confirm인 것은 이미 확인 완료
-        if (summary.getConfirmedAt() == null) {
-            throw new InvalidConsultationStateException();
-        }
 
         consultation.startAnalysis(now);
 
@@ -277,6 +297,9 @@ public class AnalysisPersistenceService {
                         ZoneOffset.UTC
                 );
 
+        accountAiQuotaService.reserveIfAuthenticated();
+        globalAiBudgetGuard.reserveRequestUnit();
+
         job.queueRetry(
                 openAiProperties.model(),
                 now
@@ -370,6 +393,14 @@ public class AnalysisPersistenceService {
     ) {
 
         complete(snapshot, result, null);
+    }
+
+    private int accountAiAttemptsLimit() {
+        // The existing per-job max-attempt policy remains authoritative. The
+        // account-level guard is supplied by AccountProperties through the
+        // quota service; this fallback keeps legacy callers bounded by the
+        // existing configured retry limit.
+        return Math.max(accountProperties.limits().consultationAiAttempts(), 1);
     }
 
     @Transactional

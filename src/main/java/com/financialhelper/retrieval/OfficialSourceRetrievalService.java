@@ -7,10 +7,16 @@ import com.financialhelper.source.SourceChunk;
 import com.financialhelper.source.SourceChunkRepository;
 import com.financialhelper.source.SourceChunkReviewStatus;
 import com.financialhelper.source.SourceDocumentStatus;
+import com.financialhelper.source.RetrievalGenerationRepository;
+import com.financialhelper.account.Account;
+import com.financialhelper.account.AccountSessionService;
+import com.financialhelper.consultation.Consultation;
+import com.financialhelper.consultation.ConsultationRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -24,6 +30,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,7 +49,13 @@ public class OfficialSourceRetrievalService {
     private final KureRuntimeClient kureRuntime;
     private final SourceChunkRepository sourceChunkRepository;
     private final ConfirmedCaseSnapshotService confirmedCaseSnapshotService;
-    private final Map<UUID, SearchContext> contexts = new ConcurrentHashMap<>();
+    private final Map<UUID, SearchContext> legacyContexts = new ConcurrentHashMap<>();
+    private final PersistentSearchContextRepository persistentContextRepository;
+    private final ConsultationRepository consultationRepository;
+    private final AccountSessionService accountSessionService;
+    private final RetrievalGenerationRepository retrievalGenerationRepository;
+    private final JsonMapper jsonMapper;
+    private final java.time.Duration contextTtl;
 
     public OfficialSourceRetrievalService(
             ActiveRetrievalGenerationPersistenceService activeGeneration,
@@ -52,7 +65,7 @@ public class OfficialSourceRetrievalService {
             SourceChunkRepository sourceChunkRepository
     ) {
         this(activeGeneration, corpusSnapshot, keywordSearch, kureRuntime,
-                sourceChunkRepository, null);
+                sourceChunkRepository, null, null, null, null, null, null, java.time.Duration.ofMinutes(10));
     }
 
     @Autowired
@@ -62,7 +75,13 @@ public class OfficialSourceRetrievalService {
             SourceKeywordSearchService keywordSearch,
             KureRuntimeClient kureRuntime,
             SourceChunkRepository sourceChunkRepository,
-            ConfirmedCaseSnapshotService confirmedCaseSnapshotService
+            ConfirmedCaseSnapshotService confirmedCaseSnapshotService,
+            PersistentSearchContextRepository persistentContextRepository,
+            ConsultationRepository consultationRepository,
+            AccountSessionService accountSessionService,
+            RetrievalGenerationRepository retrievalGenerationRepository,
+            JsonMapper jsonMapper,
+            @Value("${app.retrieval.search-context-ttl:PT10M}") java.time.Duration contextTtl
     ) {
         this.activeGeneration = activeGeneration;
         this.corpusSnapshot = corpusSnapshot;
@@ -70,6 +89,12 @@ public class OfficialSourceRetrievalService {
         this.kureRuntime = kureRuntime;
         this.sourceChunkRepository = sourceChunkRepository;
         this.confirmedCaseSnapshotService = confirmedCaseSnapshotService;
+        this.persistentContextRepository = persistentContextRepository;
+        this.consultationRepository = consultationRepository;
+        this.accountSessionService = accountSessionService;
+        this.retrievalGenerationRepository = retrievalGenerationRepository;
+        this.jsonMapper = jsonMapper;
+        this.contextTtl = contextTtl;
     }
 
     public OfficialSearchResponse retrieve(OfficialSearchRequest request) {
@@ -85,7 +110,13 @@ public class OfficialSourceRetrievalService {
         OfficialSearchRequest enriched = new OfficialSearchRequest(
                 request.query(), request.category(), request.institution(), request.productType(),
                 request.incidentDate(), snapshot.facts(), request.limit());
-        return search(enriched);
+        OfficialSearchResponse response = search(enriched);
+        if (persistentContextRepository != null) {
+            persistentContextRepository.deleteById(response.searchId());
+        }
+        persistContext(response, consultationId, snapshot.caseInputRevision(),
+                snapshot.followUpAnswerRevision());
+        return response;
     }
 
     public OfficialSearchResponse search(OfficialSearchRequest request) {
@@ -97,7 +128,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NEEDS_CLARIFICATION, false,
                     List.of("INSTITUTION"), List.of(), List.of());
-            contexts.put(searchId, new SearchContext(response, Map.of()));
+            remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -106,7 +137,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("NO_ACTIVE_READY_GENERATION"), List.of());
-            contexts.put(searchId, new SearchContext(response, Map.of()));
+            remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -114,7 +145,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
-            contexts.put(searchId, new SearchContext(response, Map.of()));
+            remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -135,7 +166,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     gaps, List.of());
-            contexts.put(searchId, new SearchContext(response, Map.of()));
+            remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -240,8 +271,7 @@ public class OfficialSourceRetrievalService {
         }
         OfficialSearchResponse response = new OfficialSearchResponse(
                 searchId, status, degraded, List.of(), gaps, candidates);
-        contexts.put(searchId, new SearchContext(response, candidateById));
-        trimContexts();
+        remember(searchId, response, candidateById, null, 0L, 0L);
         return response;
     }
 
@@ -251,8 +281,21 @@ public class OfficialSourceRetrievalService {
         if (searchId == null || candidateIds == null || candidateIds.isEmpty()) {
             throw new IllegalArgumentException("searchId and candidateIds are required");
         }
-        SearchContext context = contexts.get(searchId);
-        if (context == null) {
+        SearchContext context = loadContext(searchId, null);
+        return expand(context, candidateIds);
+    }
+
+    /** Ownership-aware variant used by public consultation flows. */
+    @Transactional(readOnly = true)
+    public List<SourcePassage> getPassages(UUID consultationId, UUID searchId,
+                                           Collection<UUID> candidateIds) {
+        if (consultationId == null) throw new IllegalArgumentException("consultationId is required");
+        SearchContext context = loadContext(searchId, consultationId);
+        return expand(context, candidateIds);
+    }
+
+    private List<SourcePassage> expand(SearchContext context, Collection<UUID> candidateIds) {
+        if (context == null || candidateIds == null || candidateIds.isEmpty()) {
             throw new UnknownRetrievalCandidateException();
         }
         Set<UUID> requested = new HashSet<>(candidateIds);
@@ -268,20 +311,16 @@ public class OfficialSourceRetrievalService {
                     .findAllBySourceDocument_IdOrderBySequenceAsc(candidate.sourceDocumentId()).stream()
                     .filter(chunk -> chunk.getReviewStatus() == SourceChunkReviewStatus.APPROVED)
                     .filter(chunk -> chunk.getSourceDocument().getStatus() == SourceDocumentStatus.ACTIVE)
-                    .filter(chunk -> sameExpansionUnit(chunk, candidate)
-                            || referencedIds.contains(chunk.getId()))
-                    .sorted(Comparator.comparingInt(SourceChunk::getSequence))
-                    .toList();
+                    .filter(chunk -> sameExpansionUnit(chunk, candidate) || referencedIds.contains(chunk.getId()))
+                    .sorted(Comparator.comparingInt(SourceChunk::getSequence)).toList();
             if (chunks.stream().noneMatch(chunk -> chunk.getId().equals(candidate.sourceChunkId()))) {
                 throw new UnknownRetrievalCandidateException();
             }
             String text = chunks.stream().map(SourceChunk::getBody)
                     .reduce((left, right) -> left + "\n" + right).orElse(candidate.body());
-            passages.add(new SourcePassage(
-                    UUID.randomUUID(), candidateId, candidate.sourceDocumentId(),
-                    candidate.documentVersion(), chunks.stream().map(SourceChunk::getId).toList(),
-                    text, candidate.articleReference(), candidate.pageReference(),
-                    candidate.locator(), candidate.canonicalUrl()));
+            passages.add(new SourcePassage(UUID.randomUUID(), candidateId, candidate.sourceDocumentId(),
+                    candidate.documentVersion(), chunks.stream().map(SourceChunk::getId).toList(), text,
+                    candidate.articleReference(), candidate.pageReference(), candidate.locator(), candidate.canonicalUrl()));
         }
         return List.copyOf(passages);
     }
@@ -407,14 +446,100 @@ public class OfficialSourceRetrievalService {
     }
 
     private void trimContexts() {
-        if (contexts.size() <= 1000) {
+        if (legacyContexts.size() <= 1000) {
             return;
         }
-        contexts.entrySet().stream()
+        legacyContexts.entrySet().stream()
                 .sorted(Comparator.comparing(entry -> entry.getValue().createdAt))
-                .limit(contexts.size() - 1000L)
+                .limit(legacyContexts.size() - 1000L)
                 .map(Map.Entry::getKey)
-                .forEach(contexts::remove);
+                .forEach(legacyContexts::remove);
+    }
+
+    private void remember(UUID searchId, OfficialSearchResponse response,
+                          Map<UUID, OfficialEvidenceCandidate> candidates,
+                          UUID consultationId, long caseRevision, long answerRevision) {
+        if (persistentContextRepository == null || jsonMapper == null) {
+            legacyContexts.put(searchId, new SearchContext(response, candidates));
+            trimContexts();
+            return;
+        }
+        try {
+            Consultation consultation = consultationId == null || consultationRepository == null
+                    ? null : consultationRepository.findById(consultationId).orElse(null);
+            Account account = accountSessionService == null
+                    ? null : accountSessionService.currentAccount().orElse(null);
+            if (account == null && consultation != null) {
+                account = consultation.getAccount();
+            }
+            com.financialhelper.source.RetrievalGeneration generation = candidates.values().stream()
+                    .findFirst()
+                    .map(candidate -> retrievalGenerationRepository == null ? null
+                            : retrievalGenerationRepository.findById(candidate.retrievalGenerationId()).orElse(null))
+                    .orElse(null);
+            OffsetDateTime created = OffsetDateTime.now(ZoneOffset.UTC);
+            persistentContextRepository.save(new PersistentSearchContext(
+                    searchId, consultation, account, caseRevision, answerRevision, generation,
+                    jsonMapper.writeValueAsString(response), jsonMapper.writeValueAsString(response.candidates()),
+                    created, created.plus(contextTtl)));
+        } catch (RuntimeException exception) {
+            // A persistence failure must never expose an unbound context in production.
+            // The in-memory fallback is limited to constructor-based unit tests.
+            if (consultationId == null) {
+                legacyContexts.put(searchId, new SearchContext(response, candidates));
+            } else {
+                throw new IllegalStateException("search context persistence failed", exception);
+            }
+        }
+    }
+
+    private void persistContext(OfficialSearchResponse response, UUID consultationId,
+                                long caseRevision, long answerRevision) {
+        Map<UUID, OfficialEvidenceCandidate> candidates = new HashMap<>();
+        response.candidates().forEach(candidate -> candidates.put(candidate.candidateId(), candidate));
+        remember(response.searchId(), response, candidates, consultationId, caseRevision, answerRevision);
+    }
+
+    private SearchContext loadContext(UUID searchId, UUID consultationId) {
+        if (persistentContextRepository != null && jsonMapper != null) {
+            Optional<PersistentSearchContext> stored = consultationId == null
+                    ? persistentContextRepository.findByIdAndExpiresAtAfter(
+                    searchId, OffsetDateTime.now(ZoneOffset.UTC))
+                    : persistentContextRepository.findByIdAndConsultation_IdAndExpiresAtAfter(
+                    searchId, consultationId, OffsetDateTime.now(ZoneOffset.UTC));
+            if (stored.isPresent()) {
+                PersistentSearchContext context = stored.get();
+                if (consultationId != null && context.getConsultation() != null) {
+                    Consultation consultation = context.getConsultation();
+                    if (consultation.getCaseInputRevision() != context.getCaseInputRevision()
+                            || consultation.getFollowUpAnswerRevision() != context.getFollowUpAnswerRevision()) {
+                        throw new UnknownRetrievalCandidateException();
+                    }
+                    if (context.getAccount() != null) {
+                        UUID currentAccountId = accountSessionService == null
+                                ? null : accountSessionService.currentAccountId().orElse(null);
+                        if (currentAccountId == null || !currentAccountId.equals(context.getAccount().getId())) {
+                            throw new UnknownRetrievalCandidateException();
+                        }
+                    }
+                }
+                try {
+                    JsonNode root = jsonMapper.readTree(context.getCandidatesJson());
+                    Map<UUID, OfficialEvidenceCandidate> candidates = new HashMap<>();
+                    if (root != null && root.isArray()) {
+                        for (JsonNode node : root) {
+                            OfficialEvidenceCandidate candidate = jsonMapper.treeToValue(
+                                    node, OfficialEvidenceCandidate.class);
+                            candidates.put(candidate.candidateId(), candidate);
+                        }
+                    }
+                    return new SearchContext(null, candidates, context.getCreatedAt());
+                } catch (RuntimeException ignored) {
+                    throw new UnknownRetrievalCandidateException();
+                }
+            }
+        }
+        return legacyContexts.get(searchId);
     }
 
     private record SearchContext(

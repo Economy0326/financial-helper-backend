@@ -10,6 +10,36 @@ spring:
     default: local
 
 app:
+  auth:
+    general-consultation-required: ${GENERAL_CONSULTATION_LOGIN_REQUIRED:true}
+    session-ttl: ${ACCOUNT_SESSION_TTL:PT12H}
+    cookie-name: ${ACCOUNT_COOKIE_NAME:financial_helper_account}
+    cookie-secure: ${ACCOUNT_COOKIE_SECURE:false}
+    cookie-same-site: ${ACCOUNT_COOKIE_SAME_SITE:Lax}
+    kakao:
+      enabled: ${KAKAO_LOGIN_ENABLED:false}
+      client-id: ${KAKAO_CLIENT_ID:}
+      client-secret: ${KAKAO_CLIENT_SECRET:}
+      redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:8080/api/v1/auth/kakao/callback}
+      frontend-success-uri: ${KAKAO_FRONTEND_SUCCESS_URI:http://localhost:3000/consultation/problem-category}
+      authorize-url: ${KAKAO_AUTHORIZE_URL:https://kauth.kakao.com/oauth/authorize}
+      token-url: ${KAKAO_TOKEN_URL:https://kauth.kakao.com/oauth/token}
+      user-info-url: ${KAKAO_USER_INFO_URL:https://kapi.kakao.com/v2/user/me}
+      timeout: ${KAKAO_TIMEOUT:10s}
+    limits:
+      max-situation-characters: ${MAX_SITUATION_CHARACTERS:1000}
+      max-follow-up-characters: ${MAX_FOLLOW_UP_CHARACTERS:64}
+      max-ai-input-characters: ${MAX_AI_INPUT_CHARACTERS:12000}
+      max-request-bytes: ${MAX_REQUEST_BYTES:262144}
+      ai-attempts-per-window: ${AI_ATTEMPTS_PER_WINDOW:10}
+      ai-quota-window: ${AI_QUOTA_WINDOW:PT1H}
+      consultation-ai-attempts: ${CONSULTATION_AI_ATTEMPTS:3}
+      rate-limit-requests: ${RATE_LIMIT_REQUESTS:60}
+      rate-limit-window: ${RATE_LIMIT_WINDOW:PT1M}
+      rate-limit-enabled: ${RATE_LIMIT_ENABLED:true}
+      global-ai-budget-enabled: ${GLOBAL_AI_BUDGET_ENABLED:false}
+      global-ai-budget-units: ${GLOBAL_AI_BUDGET_UNITS:1000}
+
   card-corpus:
     # Human-approved CARD activation is explicit and opt-in.
     run-on-startup: ${CARD_CORPUS_RUN_ON_STARTUP:false}
@@ -32,6 +62,7 @@ app:
     user-agent: ${SOURCE_INGESTION_USER_AGENT:FinancialHelperSourceIngestion/1.0}
 
   retrieval:
+    search-context-ttl: ${RETRIEVAL_SEARCH_CONTEXT_TTL:PT10M}
     chunking:
       target-tokens: ${RETRIEVAL_CHUNK_TARGET_TOKENS:500}
       max-tokens: ${RETRIEVAL_CHUNK_MAX_TOKENS:600}

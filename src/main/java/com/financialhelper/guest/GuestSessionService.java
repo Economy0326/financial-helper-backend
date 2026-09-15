@@ -1,5 +1,8 @@
 package com.financialhelper.guest;
 
+import com.financialhelper.account.Account;
+import com.financialhelper.account.AccountOwnershipException;
+import com.financialhelper.account.AccountSessionService;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationStatus;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,17 +21,20 @@ public class GuestSessionService {
     private final ConsultationRepository consultationRepository;
     private final GuestSessionTokenService tokenService;
     private final Duration sessionTtl;
+    private final AccountSessionService accountSessionService;
 
     public GuestSessionService(
             GuestSessionRepository guestSessionRepository,
             ConsultationRepository consultationRepository,
             GuestSessionTokenService tokenService,
-            @Value("${app.guest-session.ttl}") Duration sessionTtl
+            @Value("${app.guest-session.ttl}") Duration sessionTtl,
+            AccountSessionService accountSessionService
     ) {
         this.guestSessionRepository = guestSessionRepository;
         this.consultationRepository = consultationRepository;
         this.tokenService = tokenService;
         this.sessionTtl = sessionTtl;
+        this.accountSessionService = accountSessionService;
     }
 
     // 유효한 Guest Session을 조회하고,
@@ -42,7 +48,10 @@ public class GuestSessionService {
         }
 
         return findValidSessionInternal(rawToken)
-            .map(GuestSessionResolution::existing)
+            .map(session -> {
+                bindIfAuthenticated(session);
+                return GuestSessionResolution.existing(session);
+            })
             .orElseGet(this::createNewSession);
     }
 
@@ -57,6 +66,7 @@ public class GuestSessionService {
         }
 
         return findValidSessionInternal(rawToken)
+                .map(this::requireAccountOwnership)
                 .orElseThrow(
                         GuestSessionExpiredException::new
                 );
@@ -67,7 +77,8 @@ public class GuestSessionService {
     public Optional<GuestSession> findValidSession(
             String rawToken
     ) {
-        return findValidSessionInternal(rawToken);
+        return findValidSessionInternal(rawToken)
+                .map(this::requireAccountOwnership);
     }
 
     // Guest Session과 진행 중 Consultation 존재 여부를 조회해
@@ -77,7 +88,8 @@ public class GuestSessionService {
             String rawToken
     ) {
         Optional<GuestSession> guestSession =
-                findValidSessionInternal(rawToken);
+                findValidSessionInternal(rawToken)
+                        .map(this::requireAccountOwnership);
 
         if (guestSession.isEmpty()) {
             return new SessionResponse(
@@ -116,6 +128,8 @@ public class GuestSessionService {
                         now.plus(sessionTtl)
                 );
 
+        bindIfAuthenticated(guestSession);
+
         GuestSession savedSession =
                 guestSessionRepository.save(
                         guestSession
@@ -125,6 +139,29 @@ public class GuestSessionService {
                 savedSession,
                 rawToken
         );
+    }
+
+    private void bindIfAuthenticated(GuestSession session) {
+        accountSessionService.currentAccount().ifPresent(account -> {
+            try {
+                session.bindAccount(account);
+            } catch (IllegalStateException exception) {
+                throw new AccountOwnershipException();
+            }
+        });
+    }
+
+    private GuestSession requireAccountOwnership(GuestSession session) {
+        Account owner = session.getAccount();
+        if (owner == null) {
+            return session;
+        }
+        Account current = accountSessionService.currentAccount()
+                .orElseThrow(AccountOwnershipException::new);
+        if (!owner.getId().equals(current.getId())) {
+            throw new AccountOwnershipException();
+        }
+        return session;
     }
 
     // Raw Token을 Hash한 뒤 만료되지 않은 Guest Session을 조회

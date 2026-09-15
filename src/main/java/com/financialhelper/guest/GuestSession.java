@@ -1,10 +1,15 @@
 package com.financialhelper.guest;
 
+import com.financialhelper.account.Account;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
@@ -29,6 +34,10 @@ public class GuestSession {
 
     @Column(name = "expires_at", nullable = false)
     private OffsetDateTime expiresAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "account_id")
+    private Account account;
 
     protected GuestSession() {
     }
@@ -57,5 +66,16 @@ public class GuestSession {
 
     public OffsetDateTime getExpiresAt() {
         return expiresAt;
+    }
+
+    public Account getAccount() {
+        return account;
+    }
+
+    public void bindAccount(Account account) {
+        if (this.account != null && !this.account.getId().equals(account.getId())) {
+            throw new IllegalStateException("guest session is already bound to another account");
+        }
+        this.account = account;
     }
 }
