@@ -25,6 +25,10 @@ public class AnalysisAiBusinessValidator {
             );
         }
 
+        if (result.evidenceCitations == null) {
+            result.evidenceCitations = java.util.List.of();
+        }
+
         validateIssues(result);
         validateAdditionalInformation(result);
 

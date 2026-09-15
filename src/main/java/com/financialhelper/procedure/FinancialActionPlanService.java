@@ -77,7 +77,28 @@ public class FinancialActionPlanService {
         if (consultation.getCategory() != ConsultationCategory.CARD) {
             throw new IllegalStateException("CARD procedure is unavailable for this consultation category");
         }
-        ConfirmedCaseSnapshotData snapshotData = snapshotService.capture(consultationId);
+        return buildForConsultation(consultation);
+    }
+
+    /**
+     * Internal orchestration entry point used after the consultation has
+     * already passed its guest-owned state transition.  It deliberately does
+     * not accept a user token because the analysis worker has no request
+     * credentials; callers must keep this method behind the analysis state
+     * machine.
+     */
+    @Transactional
+    public FinancialActionPlanData buildForCurrent(UUID consultationId) {
+        Consultation consultation = consultationRepository.findById(consultationId)
+                .orElseThrow(ConsultationNotFoundException::new);
+        if (consultation.getCategory() != ConsultationCategory.CARD) {
+            throw new IllegalStateException("CARD procedure is unavailable for this consultation category");
+        }
+        return buildForConsultation(consultation);
+    }
+
+    private FinancialActionPlanData buildForConsultation(Consultation consultation) {
+        ConfirmedCaseSnapshotData snapshotData = snapshotService.capture(consultation.getId());
         ConfirmedCaseSnapshot snapshot = snapshotRepository.findById(snapshotData.id())
                 .orElseThrow(() -> new IllegalStateException("confirmed case snapshot is unavailable"));
         ProcedureVersionData procedure = procedureVersionService.requireApprovedCard();

@@ -26,6 +26,10 @@ public class ConsultationReportBusinessValidator {
             );
         }
 
+        if (result.evidenceCitations == null) {
+            result.evidenceCitations = java.util.List.of();
+        }
+
         validateActionSteps(result);
         validateUniqueIssues(result);
         validateUniqueDocuments(result);

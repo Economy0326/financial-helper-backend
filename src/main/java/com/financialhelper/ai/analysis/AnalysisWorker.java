@@ -3,6 +3,10 @@ package com.financialhelper.ai.analysis;
 import com.financialhelper.ai.AiOutputContractException;
 import com.financialhelper.ai.AiProviderException;
 import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
+import com.financialhelper.ai.grounded.GroundedOutputValidator;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
 
 import org.slf4j.Logger;
@@ -52,9 +56,9 @@ public class AnalysisWorker {
             3. 법적 승패, 배상 가능성,
                금융기관 위법 여부를 단정하지 않는다.
 
-            4. 아직 공식 금융자료 Retrieval이 제공되지 않았으므로
-               법령, 판례, 공식 기관 지침,
-               URL 또는 출처를 임의 생성하지 않는다.
+            4. CARD 입력에서는 제공된 evidence snapshot의
+               evidenceId와 locator만 인용한다.
+               법령, URL 또는 출처를 임의 생성하지 않는다.
 
             5. READY_FOR_REPORT는 현재 정보만으로
                행동 중심 AI V1 리포트를 만들 수 있을 때 사용한다.
@@ -79,6 +83,9 @@ public class AnalysisWorker {
 
             11. 출력은 반드시 제공된
                 Structured Output Schema를 따른다.
+
+            12. CARD 입력에서는 실제로 사용한
+                snapshot evidenceId와 locator를 모두 명시한다.
             """;
 
     private final AnalysisPersistenceService
@@ -92,11 +99,17 @@ public class AnalysisWorker {
 
     private final JsonMapper jsonMapper;
 
+    private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
+
+    private final GroundedOutputValidator groundedOutputValidator;
+
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
             OpenAiStructuredClient openAiStructuredClient,
             AnalysisAiBusinessValidator businessValidator,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            GroundedOutputValidator groundedOutputValidator
     ) {
         this.persistenceService =
                 persistenceService;
@@ -109,6 +122,10 @@ public class AnalysisWorker {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.evidenceSnapshotService = evidenceSnapshotService;
+
+        this.groundedOutputValidator = groundedOutputValidator;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -133,13 +150,16 @@ public class AnalysisWorker {
 
         try {
 
+            AnalysisEvidenceSnapshotData evidenceSnapshot =
+                    evidenceSnapshotService.prepare(snapshot);
+
             AnalysisAiResult result =
                     openAiStructuredClient
                             .generateStructured(
                                     INSTRUCTIONS,
                                     buildModelInput(
                                             snapshot
-                                    ),
+                                    , evidenceSnapshot),
                                     AnalysisAiResult.class
                             );
 
@@ -149,14 +169,20 @@ public class AnalysisWorker {
                                     result
                             );
 
+            if (evidenceSnapshot != null) {
+                groundedOutputValidator.validateAnalysis(result, evidenceSnapshot);
+            }
+
             persistenceService.complete(
                     snapshot,
-                    result
+                    result,
+                    evidenceSnapshot
             );
 
         } catch (
                 AiProviderException
                 | AiOutputContractException
+                | GroundedEvidenceUnavailableException
                         exception
         ) {
 
@@ -194,7 +220,8 @@ public class AnalysisWorker {
     }
 
     private String buildModelInput(
-            AnalysisData.Snapshot snapshot
+            AnalysisData.Snapshot snapshot,
+            AnalysisEvidenceSnapshotData evidenceSnapshot
     ) {
 
         try {
@@ -206,6 +233,7 @@ public class AnalysisWorker {
 
                             snapshot
                                     .confirmedSummary()
+                            , evidenceSnapshot
                     );
 
             return jsonMapper
@@ -223,7 +251,8 @@ public class AnalysisWorker {
 
     private record AnalysisPromptInput(
             String consultationCategory,
-            ConsultationSummaryAiResult confirmedSummary
+            ConsultationSummaryAiResult confirmedSummary,
+            AnalysisEvidenceSnapshotData evidenceSnapshot
     ) {
     }
 }

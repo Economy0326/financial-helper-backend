@@ -4,6 +4,8 @@ import com.financialhelper.ai.analysis.AnalysisAiResult;
 import com.financialhelper.ai.analysis.AnalysisJob;
 import com.financialhelper.ai.analysis.AnalysisJobRepository;
 import com.financialhelper.ai.analysis.AnalysisJobStatus;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 
 import com.financialhelper.ai.summary.ConsultationSummary;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
@@ -51,13 +53,16 @@ public class ConsultationReportPersistenceService {
 
     private final JsonMapper jsonMapper;
 
+    private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
+
     public ConsultationReportPersistenceService(
             ConsultationRepository consultationRepository,
             ConsultationSummaryRepository summaryRepository,
             AnalysisJobRepository analysisJobRepository,
             ConsultationReportRepository reportRepository,
             GuestSessionService guestSessionService,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            AnalysisEvidenceSnapshotService evidenceSnapshotService
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -76,6 +81,8 @@ public class ConsultationReportPersistenceService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.evidenceSnapshotService = evidenceSnapshotService;
     }
 
     // 같은 revision의 Report가 이미 저장되어 있는지 조회
@@ -172,6 +179,14 @@ public class ConsultationReportPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        AnalysisEvidenceSnapshotData groundedEvidence = null;
+        if (consultation.getCategory() == com.financialhelper.consultation.ConsultationCategory.CARD) {
+            groundedEvidence = evidenceSnapshotService.loadForJob(
+                    analysisJob.getId(), consultation.getCaseInputRevision(),
+                    consultation.getFollowUpAnswerRevision());
+            evidenceSnapshotService.assertCurrentForReport(groundedEvidence);
+        }
+
         return new ConsultationReportData.Snapshot(
                 consultation.getId(),
                 guestSession.getId(),
@@ -186,7 +201,8 @@ public class ConsultationReportPersistenceService {
 
                 deserializeAnalysis(
                         analysisJob.getResultJson()
-                )
+                ),
+                groundedEvidence
         );
     }
 
@@ -249,6 +265,12 @@ public class ConsultationReportPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        UUID evidenceSnapshotId = null;
+        if (snapshot.groundedEvidence() != null) {
+            evidenceSnapshotService.assertCurrentForReport(snapshot.groundedEvidence());
+            evidenceSnapshotId = snapshot.groundedEvidence().id();
+        }
+
         OffsetDateTime now =
                 OffsetDateTime.now(
                         ZoneOffset.UTC
@@ -263,7 +285,8 @@ public class ConsultationReportPersistenceService {
                                 consultation.getFollowUpAnswerRevision(),
                                 model,
                                 serialize(result),
-                                now
+                                now,
+                                evidenceSnapshotId
                         )
                 );
 
@@ -406,9 +429,10 @@ public class ConsultationReportPersistenceService {
                 report.getFollowUpAnswerRevision(),
                 report.getModel(),
                 deserializeReport(
-                        report.getResultJson()
+                report.getResultJson()
                 ),
-                report.getGeneratedAt()
+                report.getGeneratedAt(),
+                report.getAnalysisEvidenceSnapshotId()
         );
     }
 }

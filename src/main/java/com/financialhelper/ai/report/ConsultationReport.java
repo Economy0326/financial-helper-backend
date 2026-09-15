@@ -96,6 +96,9 @@ public class ConsultationReport {
     )
     private OffsetDateTime generatedAt;
 
+    @Column(name = "analysis_evidence_snapshot_id")
+    private UUID analysisEvidenceSnapshotId;
+
     protected ConsultationReport() {
     }
 
@@ -108,6 +111,20 @@ public class ConsultationReport {
             String resultJson,
             OffsetDateTime generatedAt
     ) {
+        this(consultation, analysisJob, caseInputRevision, followUpAnswerRevision,
+                model, resultJson, generatedAt, null);
+    }
+
+    public ConsultationReport(
+            Consultation consultation,
+            AnalysisJob analysisJob,
+            long caseInputRevision,
+            long followUpAnswerRevision,
+            String model,
+            String resultJson,
+            OffsetDateTime generatedAt,
+            UUID analysisEvidenceSnapshotId
+    ) {
         this.consultation = consultation;
         this.analysisJob = analysisJob;
         this.caseInputRevision = caseInputRevision;
@@ -116,6 +133,7 @@ public class ConsultationReport {
         this.model = model;
         this.resultJson = resultJson;
         this.generatedAt = generatedAt;
+        this.analysisEvidenceSnapshotId = analysisEvidenceSnapshotId;
     }
 
     public UUID getId() {
@@ -148,5 +166,9 @@ public class ConsultationReport {
 
     public OffsetDateTime getGeneratedAt() {
         return generatedAt;
+    }
+
+    public UUID getAnalysisEvidenceSnapshotId() {
+        return analysisEvidenceSnapshotId;
     }
 }

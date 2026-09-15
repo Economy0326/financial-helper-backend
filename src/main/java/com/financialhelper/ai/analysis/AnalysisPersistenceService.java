@@ -1,6 +1,8 @@
 package com.financialhelper.ai.analysis;
 
 import com.financialhelper.ai.OpenAiProperties;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 
 import com.financialhelper.ai.summary
         .ConsultationSummary;
@@ -55,6 +57,9 @@ public class AnalysisPersistenceService {
     private final AnalysisProperties
         analysisProperties;
 
+    private final AnalysisEvidenceSnapshotService
+            evidenceSnapshotService;
+
     public AnalysisPersistenceService(
             ConsultationRepository consultationRepository,
             ConsultationSummaryRepository summaryRepository,
@@ -62,7 +67,8 @@ public class AnalysisPersistenceService {
             GuestSessionService guestSessionService,
             OpenAiProperties openAiProperties,
             JsonMapper jsonMapper,
-            AnalysisProperties analysisProperties
+            AnalysisProperties analysisProperties,
+            AnalysisEvidenceSnapshotService evidenceSnapshotService
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -84,6 +90,8 @@ public class AnalysisPersistenceService {
 
         this.analysisProperties =
                 analysisProperties;
+
+        this.evidenceSnapshotService = evidenceSnapshotService;
     }
 
     @Transactional
@@ -360,6 +368,20 @@ public class AnalysisPersistenceService {
             AnalysisData.Snapshot snapshot,
             AnalysisAiResult result
     ) {
+
+        complete(snapshot, result, null);
+    }
+
+    @Transactional
+    public void complete(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result,
+            AnalysisEvidenceSnapshotData evidenceSnapshot
+    ) {
+
+        if (evidenceSnapshot != null) {
+            evidenceSnapshotService.assertCurrent(evidenceSnapshot);
+        }
 
         AnalysisJob job =
                 analysisJobRepository

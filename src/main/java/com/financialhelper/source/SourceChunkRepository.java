@@ -28,6 +28,9 @@ public interface SourceChunkRepository
             UUID sourceDocumentId
     );
 
+    @Query("select chunk from SourceChunk chunk join fetch chunk.sourceDocument where chunk.id = :id")
+    Optional<SourceChunk> findWithDocumentById(@Param("id") UUID id);
+
     /**
      * Parameter-safe PostgreSQL full-text lookup for approved chunks in the
      * active document corpus.  The simple configuration is intentionally
