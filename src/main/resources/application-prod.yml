@@ -21,6 +21,8 @@ app:
     cookie-secure: true
     kakao:
       enabled: ${KAKAO_LOGIN_ENABLED:true}
+    naver:
+      enabled: ${NAVER_LOGIN_ENABLED:true}
   guest-session:
     cookie:
       secure: true

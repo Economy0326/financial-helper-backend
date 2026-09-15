@@ -14,4 +14,9 @@ public interface ConsultationReportRepository
             long caseInputRevision,
             long followUpAnswerRevision
     );
+
+    Optional<ConsultationReport> findFirstByConsultation_IdOrderByGeneratedAtDesc(UUID consultationId);
+
+    Optional<ConsultationReport> findByConsultation_IdAndConsultation_Account_Id(
+            UUID consultationId, UUID accountId);
 }

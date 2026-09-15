@@ -49,7 +49,7 @@ public class GuestSessionService {
 
         return findValidSessionInternal(rawToken)
             .map(session -> {
-                bindIfAuthenticated(session);
+                requireAccountOwnership(session);
                 return GuestSessionResolution.existing(session);
             })
             .orElseGet(this::createNewSession);
@@ -96,20 +96,25 @@ public class GuestSessionService {
                     // Guest는 존재
                     true,
                     // 이어갈 상담은 없음
-                    false
+                    false,
+                    accountSessionService.isAuthenticated(),
+                    accountSessionService.currentAccountId().orElse(null),
+                    accountSessionService.currentAccount().map(account -> account.getProvider().name()).orElse(null)
             );
         }
 
-        boolean hasActiveConsultation =
-                consultationRepository
-                        .existsByGuestSession_IdAndStatusIn(
-                                guestSession.get().getId(),
-                                ConsultationStatus.resumableStatuses()
-                        );
+        boolean hasActiveConsultation = accountSessionService.isAuthenticated()
+                ? consultationRepository.findFirstByAccount_IdAndStatusInOrderByUpdatedAtDesc(
+                        accountSessionService.currentAccountId().orElseThrow(), ConsultationStatus.resumableStatuses()).isPresent()
+                : consultationRepository.existsByGuestSession_IdAndStatusIn(
+                        guestSession.get().getId(), ConsultationStatus.resumableStatuses());
 
         return new SessionResponse(
                 true,
-                hasActiveConsultation
+                hasActiveConsultation,
+                accountSessionService.isAuthenticated(),
+                accountSessionService.currentAccountId().orElse(null),
+                accountSessionService.currentAccount().map(account -> account.getProvider().name()).orElse(null)
         );
     }
 
@@ -128,8 +133,6 @@ public class GuestSessionService {
                         now.plus(sessionTtl)
                 );
 
-        bindIfAuthenticated(guestSession);
-
         GuestSession savedSession =
                 guestSessionRepository.save(
                         guestSession
@@ -139,16 +142,6 @@ public class GuestSessionService {
                 savedSession,
                 rawToken
         );
-    }
-
-    private void bindIfAuthenticated(GuestSession session) {
-        accountSessionService.currentAccount().ifPresent(account -> {
-            try {
-                session.bindAccount(account);
-            } catch (IllegalStateException exception) {
-                throw new AccountOwnershipException();
-            }
-        });
     }
 
     private GuestSession requireAccountOwnership(GuestSession session) {

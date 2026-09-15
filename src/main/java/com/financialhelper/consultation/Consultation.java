@@ -277,13 +277,21 @@ public class Consultation {
     ) {
 
         this.status =
-                ConsultationStatus.IN_PROGRESS;
+                ConsultationStatus.COMPLETED;
 
         this.currentStep =
                 ConsultationStep.REPORT;
 
         this.updatedAt =
                 updatedAt;
+    }
+
+    public void abandon(OffsetDateTime updatedAt) {
+        if (!ConsultationStatus.activeStatuses().contains(this.status)) {
+            throw new IllegalStateException("Only active consultation can be abandoned");
+        }
+        this.status = ConsultationStatus.ABANDONED;
+        this.updatedAt = updatedAt;
     }
 
 

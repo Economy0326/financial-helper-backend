@@ -29,15 +29,17 @@ public class AccountAuthController {
     private final AccountSessionService sessionService;
     private final GuestSessionTokenService tokenService;
     private final KakaoOAuthClient kakaoClient;
+    private final NaverOAuthClient naverClient;
 
     public AccountAuthController(AccountProperties properties, OAuthLoginStateRepository stateRepository,
                                  AccountSessionService sessionService, GuestSessionTokenService tokenService,
-                                 KakaoOAuthClient kakaoClient) {
+                                 KakaoOAuthClient kakaoClient, NaverOAuthClient naverClient) {
         this.properties = properties;
         this.stateRepository = stateRepository;
         this.sessionService = sessionService;
         this.tokenService = tokenService;
         this.kakaoClient = kakaoClient;
+        this.naverClient = naverClient;
     }
 
     @GetMapping("/kakao/start")
@@ -80,6 +82,46 @@ public class AccountAuthController {
         return ResponseEntity.status(302).location(URI.create(properties.kakao().frontendSuccessUri())).build();
     }
 
+    @GetMapping("/naver/start")
+    public ResponseEntity<Void> startNaver(HttpServletResponse response) {
+        AccountProperties.Naver naver = properties.naver();
+        if (!naver.enabled() || naver.clientId() == null || naver.clientId().isBlank()) {
+            throw AccountAuthenticationException.unavailable();
+        }
+        String state = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        stateRepository.save(new OAuthLoginState(AccountProvider.NAVER, tokenService.hashToken(state), now, now.plusMinutes(10)));
+        response.addHeader(HttpHeaders.SET_COOKIE, stateCookie(state, false, "/api/v1/auth/naver").toString());
+        String location = naver.authorizeUrl()
+                + "?response_type=code&client_id=" + encode(naver.clientId())
+                + "&redirect_uri=" + encode(naver.redirectUri())
+                + "&state=" + encode(state);
+        return ResponseEntity.status(302).location(URI.create(location)).build();
+    }
+
+    @GetMapping("/naver/callback")
+    public ResponseEntity<Void> callbackNaver(@RequestParam(required = false) String code,
+                                              @RequestParam(required = false) String state,
+                                              @RequestParam(required = false) String error,
+                                              @CookieValue(name = STATE_COOKIE, required = false) String stateCookie,
+                                              HttpServletResponse response) {
+        if (error != null || code == null || state == null || stateCookie == null || !state.equals(stateCookie)) {
+            throw AccountAuthenticationException.invalidCallback();
+        }
+        String stateHash = tokenService.hashToken(state);
+        OAuthLoginState loginState = stateRepository.findByStateHashAndExpiresAtAfter(
+                        stateHash, OffsetDateTime.now(ZoneOffset.UTC))
+                .filter(value -> value.getProvider() == AccountProvider.NAVER)
+                .orElseThrow(AccountAuthenticationException::invalidCallback);
+        stateRepository.delete(loginState);
+        NaverOAuthClient.NaverIdentity identity = naverClient.authenticate(code, state);
+        AccountSessionService.LoginSession login = sessionService.createSession(
+                AccountProvider.NAVER, identity.subject(), identity.displayName());
+        response.addHeader(HttpHeaders.SET_COOKIE, sessionCookie(login.rawToken(), false).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, stateCookie("", true, "/api/v1/auth/naver").toString());
+        return ResponseEntity.status(302).location(URI.create(properties.naver().frontendSuccessUri())).build();
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(HttpServletRequest request,
                                        HttpServletResponse response) {
@@ -105,10 +147,14 @@ public class AccountAuthController {
     }
 
     private ResponseCookie stateCookie(String value, boolean clear) {
+        return stateCookie(value, clear, "/api/v1/auth/kakao");
+    }
+
+    private ResponseCookie stateCookie(String value, boolean clear, String path) {
         java.time.Duration maxAge = clear ? java.time.Duration.ZERO : java.time.Duration.ofMinutes(10);
         return ResponseCookie.from(STATE_COOKIE, value)
                 .httpOnly(true).secure(properties.cookieSecure())
-                .sameSite(properties.cookieSameSite()).path("/api/v1/auth/kakao")
+                .sameSite(properties.cookieSameSite()).path(path)
                 .maxAge(maxAge).build();
     }
 

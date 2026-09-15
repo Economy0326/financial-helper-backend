@@ -43,11 +43,18 @@ public class ReadinessService {
         result.put("kakao", accountProperties.kakao().enabled()
                 ? (kakaoConfigured ? "CONFIGURED" : "MISSING")
                 : "DISABLED");
+        boolean naverConfigured = !blank(accountProperties.naver().clientId())
+                && !blank(accountProperties.naver().clientSecret())
+                && !blank(accountProperties.naver().redirectUri());
+        result.put("naver", accountProperties.naver().enabled()
+                ? (naverConfigured ? "CONFIGURED" : "MISSING")
+                : "DISABLED");
         boolean ready = database
                 && (!lawProperties.enabled() || !blank(lawProperties.lawOc()))
                 && (!kureProperties.enabled() || !blank(kureProperties.endpoint()))
                 && !blank(openAiProperties.apiKey())
-                && (!accountProperties.kakao().enabled() || kakaoConfigured);
+                && (!accountProperties.kakao().enabled() || kakaoConfigured)
+                && (!accountProperties.naver().enabled() || naverConfigured);
         return new ReadinessResult(ready ? "READY" : "NOT_READY", Map.copyOf(result));
     }
 

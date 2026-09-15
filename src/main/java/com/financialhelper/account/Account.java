@@ -9,9 +9,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.FetchType;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.List;
 
 @Entity
 @Table(name = "account", uniqueConstraints = @UniqueConstraint(
@@ -43,6 +46,9 @@ public class Account {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @OneToMany(mappedBy = "account", fetch = FetchType.LAZY)
+    private List<AccountIdentity> identities = new java.util.ArrayList<>();
+
     protected Account() { }
 
     public Account(AccountProvider provider, String providerSubject,
@@ -65,6 +71,7 @@ public class Account {
     public AccountStatus getStatus() { return status; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public List<AccountIdentity> getIdentities() { return List.copyOf(identities); }
 
     public void refreshDisplayName(String value, OffsetDateTime now) {
         if (value != null && !value.isBlank()) {

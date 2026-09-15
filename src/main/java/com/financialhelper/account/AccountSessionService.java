@@ -16,15 +16,18 @@ import java.util.UUID;
 @Service
 public class AccountSessionService {
     private final AccountRepository accountRepository;
+    private final AccountIdentityRepository identityRepository;
     private final AccountSessionRepository sessionRepository;
     private final GuestSessionTokenService tokenService;
     private final AccountProperties properties;
 
     public AccountSessionService(AccountRepository accountRepository,
+                                 AccountIdentityRepository identityRepository,
                                  AccountSessionRepository sessionRepository,
                                  GuestSessionTokenService tokenService,
                                  AccountProperties properties) {
         this.accountRepository = accountRepository;
+        this.identityRepository = identityRepository;
         this.sessionRepository = sessionRepository;
         this.tokenService = tokenService;
         this.properties = properties;
@@ -41,11 +44,27 @@ public class AccountSessionService {
 
     @Transactional
     public LoginSession createSession(AccountProvider provider, String subject, String displayName) {
-        Account account = accountRepository.findByProviderAndProviderSubject(provider, subject)
-                .map(existing -> { existing.refreshDisplayName(displayName, now()); return existing; })
-                .orElseGet(() -> accountRepository.save(new Account(provider, subject, displayName, now())));
+        OffsetDateTime current = now();
+        Account account = identityRepository.findByProviderAndProviderSubject(provider, subject)
+                .map(identity -> {
+                    identity.touch(current);
+                    Account existing = identity.getAccount();
+                    existing.refreshDisplayName(displayName, current);
+                    return existing;
+                })
+                .orElseGet(() -> accountRepository.findByProviderAndProviderSubject(provider, subject)
+                        .map(existing -> {
+                            existing.refreshDisplayName(displayName, current);
+                            identityRepository.save(new AccountIdentity(existing, provider, subject, current));
+                            return existing;
+                        })
+                        .orElseGet(() -> {
+                            Account created = accountRepository.save(new Account(provider, subject, displayName, current));
+                            identityRepository.save(new AccountIdentity(created, provider, subject, current));
+                            return created;
+                        }));
         String raw = tokenService.generateRawToken();
-        sessionRepository.save(new AccountSession(account, tokenService.hashToken(raw), now(), now().plus(properties.sessionTtl())));
+        sessionRepository.save(new AccountSession(account, tokenService.hashToken(raw), current, current.plus(properties.sessionTtl())));
         return new LoginSession(raw, account);
     }
 

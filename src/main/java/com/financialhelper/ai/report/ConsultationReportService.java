@@ -209,6 +209,10 @@ public class ConsultationReportService {
                 );
     }
 
+    public ConsultationReportStateResponse getStateForAccount(UUID consultationId) {
+        return persistenceService.getStateForAccount(consultationId);
+    }
+
     private String buildModelInput(
             ConsultationReportData.Snapshot snapshot
     ) {

@@ -13,6 +13,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import java.util.List;
 import java.util.UUID;
+import com.financialhelper.account.AccountConsultationQuotaExceededException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -42,7 +43,9 @@ public class ApiExceptionHandler {
                                 exception.getCode(),
                                 exception.getMessage(),
                                 List.of(),
-                                requestId
+                                requestId,
+                                exception instanceof AccountConsultationQuotaExceededException quota
+                                        ? quota.getNextAvailableAt() : null
                         )
                 );
 
@@ -86,7 +89,8 @@ public class ApiExceptionHandler {
                                 "VALIDATION_ERROR",
                                 "입력 내용을 확인해 주세요.",
                                 fieldErrors,
-                                requestId
+                                requestId,
+                                null
                         )
                 );
 
@@ -115,7 +119,8 @@ public class ApiExceptionHandler {
                                 "VALIDATION_ERROR",
                                 "입력 내용을 확인해 주세요.",
                                 List.of(),
-                                requestId
+                                requestId,
+                                null
                         )
                 );
 
@@ -145,7 +150,8 @@ public class ApiExceptionHandler {
                                 "VALIDATION_ERROR",
                                 "입력 내용을 확인해 주세요.",
                                 List.of(),
-                                requestId
+                                requestId,
+                                null
                         )
                 );
 
@@ -175,7 +181,8 @@ public class ApiExceptionHandler {
                                 "INTERNAL_SERVER_ERROR",
                                 "일시적인 오류가 발생했습니다.",
                                 List.of(),
-                                requestId
+                                requestId,
+                                null
                         )
                 );
 

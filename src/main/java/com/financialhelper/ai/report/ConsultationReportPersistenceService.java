@@ -18,6 +18,8 @@ import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationStatus;
 import com.financialhelper.consultation.ConsultationStep;
 import com.financialhelper.consultation.InvalidConsultationStateException;
+import com.financialhelper.account.Account;
+import com.financialhelper.account.AccountSessionService;
 
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionService;
@@ -54,6 +56,7 @@ public class ConsultationReportPersistenceService {
     private final JsonMapper jsonMapper;
 
     private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
+    private final AccountSessionService accountSessionService;
 
     public ConsultationReportPersistenceService(
             ConsultationRepository consultationRepository,
@@ -62,7 +65,8 @@ public class ConsultationReportPersistenceService {
             ConsultationReportRepository reportRepository,
             GuestSessionService guestSessionService,
             JsonMapper jsonMapper,
-            AnalysisEvidenceSnapshotService evidenceSnapshotService
+            AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            AccountSessionService accountSessionService
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -83,6 +87,7 @@ public class ConsultationReportPersistenceService {
                 jsonMapper;
 
         this.evidenceSnapshotService = evidenceSnapshotService;
+        this.accountSessionService = accountSessionService;
     }
 
     // 같은 revision의 Report가 이미 저장되어 있는지 조회
@@ -324,6 +329,16 @@ public class ConsultationReportPersistenceService {
                 .orElseGet(
                         ConsultationReportStateResponse::notPrepared
                 );
+    }
+
+    @Transactional(readOnly = true)
+    public ConsultationReportStateResponse getStateForAccount(UUID consultationId) {
+        Account account = accountSessionService.currentAccount()
+                .orElseThrow(com.financialhelper.account.AccountAuthenticationException::required);
+        return reportRepository.findByConsultation_IdAndConsultation_Account_Id(consultationId, account.getId())
+                .map(this::toDocument)
+                .map(ConsultationReportStateResponse::ready)
+                .orElseGet(ConsultationReportStateResponse::notPrepared);
     }
 
     private Consultation findOwnedConsultation(

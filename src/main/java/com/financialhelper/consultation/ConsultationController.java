@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.UUID;
 
@@ -41,11 +42,12 @@ public class ConsultationController {
                     required = false
             )
             String rawToken,
+            @RequestParam(name = "new", defaultValue = "false") boolean startNew,
             HttpServletResponse servletResponse
     ) {
         ConsultationStartResult result =
                 consultationService
-                        .startConsultation(rawToken);
+                        .startConsultation(rawToken, startNew);
 
         result.getRawTokenToSet()
                 .ifPresent(token ->

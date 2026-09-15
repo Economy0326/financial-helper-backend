@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.util.Collection;
 import java.util.Optional;
@@ -33,6 +35,20 @@ public interface ConsultationRepository
             Collection<ConsultationStatus> statuses
     );
 
+    Optional<Consultation> findFirstByAccount_IdAndStatusInOrderByUpdatedAtDesc(
+            UUID accountId, Collection<ConsultationStatus> statuses);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select consultation from Consultation consultation
+            where consultation.account.id = :accountId
+              and consultation.status in :statuses
+            order by consultation.updatedAt desc
+            """)
+    Optional<Consultation> findActiveForUpdateByAccountId(
+            @Param("accountId") UUID accountId,
+            @Param("statuses") Collection<ConsultationStatus> statuses);
+
     // PESSIMISTIC_WRITE를 걸어 같은 ROW에 대한 동시 수정/중복 상태 전이를 막음 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query(
@@ -51,6 +67,15 @@ public interface ConsultationRepository
             @Param("guestSessionId")
             UUID guestSessionId
     );
+
+    @Query("""
+            select consultation from Consultation consultation
+            where consultation.account.id = :accountId
+              and exists (select report.id from ConsultationReport report where report.consultation.id = consultation.id)
+            order by consultation.updatedAt desc
+            """)
+    Page<Consultation> findHistoryByAccountId(
+            @Param("accountId") UUID accountId, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query(

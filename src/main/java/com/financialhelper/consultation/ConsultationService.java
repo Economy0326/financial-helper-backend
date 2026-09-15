@@ -4,6 +4,8 @@ import com.financialhelper.account.Account;
 import com.financialhelper.account.AccountAuthenticationException;
 import com.financialhelper.account.AccountProperties;
 import com.financialhelper.account.AccountSessionService;
+import com.financialhelper.account.AccountConsultationQuotaService;
+import com.financialhelper.account.AccountRepository;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
@@ -27,18 +29,35 @@ public class ConsultationService {
     private final GuestSessionService guestSessionService;
     private final AccountSessionService accountSessionService;
     private final AccountProperties accountProperties;
+    private final AccountConsultationQuotaService consultationQuotaService;
+    private final AccountRepository accountRepository;
 
     @Autowired
     public ConsultationService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService,
             AccountSessionService accountSessionService,
-            AccountProperties accountProperties
+            AccountProperties accountProperties,
+            AccountConsultationQuotaService consultationQuotaService,
+            AccountRepository accountRepository
     ) {
         this.consultationRepository = consultationRepository;
         this.guestSessionService = guestSessionService;
         this.accountSessionService = accountSessionService;
         this.accountProperties = accountProperties;
+        this.consultationQuotaService = consultationQuotaService;
+        this.accountRepository = accountRepository;
+    }
+
+    /** Compatibility constructor for existing unit tests and non-web callers. */
+    public ConsultationService(
+            ConsultationRepository consultationRepository,
+            GuestSessionService guestSessionService,
+            AccountSessionService accountSessionService,
+            AccountProperties accountProperties
+    ) {
+        this(consultationRepository, guestSessionService, accountSessionService,
+                accountProperties, null, null);
     }
 
     /** Compatibility constructor for existing unit tests and non-web callers. */
@@ -46,7 +65,7 @@ public class ConsultationService {
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService
     ) {
-        this(consultationRepository, guestSessionService, null, null);
+        this(consultationRepository, guestSessionService, null, null, null, null);
     }
 
     private static final Set<ConsultationStep>
@@ -70,6 +89,16 @@ public class ConsultationService {
     public ConsultationStartResult startConsultation(
             String rawToken
     ) {
+        return startConsultation(rawToken, false);
+    }
+
+    // Default start resumes the account's active consultation. Explicit new starts
+    // close the active consultation and consume one rolling-window start quota.
+    @Transactional
+    public ConsultationStartResult startConsultation(
+            String rawToken,
+            boolean startNew
+    ) {
         Account account = accountSessionService == null
                 ? null : accountSessionService.currentAccount().orElse(null);
         if (accountProperties != null && accountProperties.generalConsultationRequired() && account == null) {
@@ -84,6 +113,24 @@ public class ConsultationService {
         GuestSession guestSession =
                 sessionResolution.getGuestSession();
 
+        if (account != null && accountRepository != null) {
+            accountRepository.findForUpdate(account.getId());
+            Optional<Consultation> accountActive = consultationRepository
+                    .findActiveForUpdateByAccountId(account.getId(), ConsultationStatus.activeStatuses());
+            if (accountActive.isPresent()) {
+                Consultation active = accountActive.get();
+                if (!startNew) {
+                    if (sessionResolution.getRawTokenToSet().isPresent()) {
+                        guestSession.bindAccount(account);
+                    }
+                    active.bindAccount(account);
+                    return new ConsultationStartResult(ConsultationCreateResponse.from(active),
+                            sessionResolution.getRawTokenToSet().orElse(null));
+                }
+                active.abandon(OffsetDateTime.now(ZoneOffset.UTC));
+            }
+        }
+
         Optional<Consultation> activeConsultation =
                 consultationRepository
                         .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
@@ -91,10 +138,9 @@ public class ConsultationService {
                                 ConsultationStatus.activeStatuses()
                         );
 
-        if (activeConsultation.isPresent()) {
-            if (account != null) {
-                activeConsultation.get().bindAccount(account);
-            }
+        if (activeConsultation.isPresent()
+                && (account == null || (activeConsultation.get().getAccount() != null
+                && activeConsultation.get().getAccount().getId().equals(account.getId())))) {
             return new ConsultationStartResult(
                     ConsultationCreateResponse.from(
                             activeConsultation.get()
@@ -112,9 +158,11 @@ public class ConsultationService {
                 new Consultation(
                         guestSession,
                         now
-                );
+        );
         if (account != null) {
-            guestSession.bindAccount(account);
+            if (sessionResolution.getRawTokenToSet().isPresent()) {
+                guestSession.bindAccount(account);
+            }
             consultation.bindAccount(account);
         }
 
@@ -122,6 +170,10 @@ public class ConsultationService {
                 consultationRepository.save(
                         consultation
                 );
+
+        if (account != null && consultationQuotaService != null) {
+            consultationQuotaService.recordNewConsultation(account, savedConsultation, now);
+        }
 
         return new ConsultationStartResult(
                 ConsultationCreateResponse.from(
@@ -138,19 +190,21 @@ public class ConsultationService {
     public ActiveConsultationResponse getActiveConsultation(
             String rawToken
     ) {
-        GuestSession guestSession =
-                guestSessionService
-                        .requireValidSession(rawToken);
-
-        Consultation consultation =
-                consultationRepository
-                        .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
-                                guestSession.getId(),
-                                ConsultationStatus.resumableStatuses()
-                        )
-                        .orElseThrow(
-                                ConsultationNotFoundException::new
-                        );
+        Account account = accountSessionService == null ? null
+                : accountSessionService.currentAccount().orElse(null);
+        Consultation consultation;
+        if (account != null) {
+            consultation = consultationRepository
+                    .findFirstByAccount_IdAndStatusInOrderByUpdatedAtDesc(
+                            account.getId(), ConsultationStatus.resumableStatuses())
+                    .orElseThrow(ConsultationNotFoundException::new);
+        } else {
+            GuestSession guestSession = guestSessionService.requireValidSession(rawToken);
+            consultation = consultationRepository
+                    .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
+                            guestSession.getId(), ConsultationStatus.resumableStatuses())
+                    .orElseThrow(ConsultationNotFoundException::new);
+        }
 
         return ActiveConsultationResponse.from(
                 consultation
@@ -198,10 +252,6 @@ public class ConsultationService {
                 );
 
         ensureInProgress(consultation);
-
-        if (accountSessionService != null) {
-            accountSessionService.currentAccount().ifPresent(consultation::bindAccount);
-        }
 
         // 현재 단계에서 Category 수정이 가능한가
         if (!CATEGORY_EDITABLE_STEPS.contains(
