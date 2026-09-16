@@ -528,8 +528,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default=os.getenv("KURE_RUNTIME_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("KURE_RUNTIME_PORT", "8091")))
+    # Render private services provide PORT and require a listener on all
+    # interfaces. Explicit CLI arguments still take precedence for local QA.
+    parser.add_argument("--host", default=os.getenv("KURE_RUNTIME_HOST", "0.0.0.0"))
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("PORT", os.getenv("KURE_RUNTIME_PORT", "8091"))),
+    )
     parser.add_argument("--index-root", default=os.getenv("KURE_INDEX_ROOT", "var/retrieval-indexes"))
     parser.add_argument("--batch-size", type=int, default=int(os.getenv("KURE_BATCH_SIZE", str(DEFAULT_BATCH_SIZE))))
     args = parser.parse_args()

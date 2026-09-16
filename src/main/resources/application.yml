@@ -9,6 +9,11 @@ spring:
   profiles:
     default: local
 
+server:
+  # Render supplies PORT. The local fallback keeps the existing 8080 workflow.
+  port: ${PORT:8080}
+  address: ${SERVER_ADDRESS:0.0.0.0}
+
 app:
   auth:
     general-consultation-required: ${GENERAL_CONSULTATION_LOGIN_REQUIRED:true}
