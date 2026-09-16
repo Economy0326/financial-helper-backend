@@ -304,6 +304,13 @@ public class AnalysisWorker {
                     );
 
             String serialized = jsonMapper.writeValueAsString(input);
+            log.info(
+                    "Analysis prompt prepared caseRevision={} followUpRevision={} inputCharacters={} limit={}",
+                    snapshot.caseInputRevision(),
+                    snapshot.followUpAnswerRevision(),
+                    serialized.length(),
+                    accountProperties.limits().maxAiInputCharacters()
+            );
             if (serialized.length() > accountProperties.limits().maxAiInputCharacters()) {
                 throw new InputLimitException("ai");
             }

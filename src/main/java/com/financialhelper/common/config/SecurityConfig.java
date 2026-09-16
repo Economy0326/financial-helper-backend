@@ -16,6 +16,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf
         .CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf
+        .CsrfTokenRequestAttributeHandler;
 
 @Configuration
 public class SecurityConfig {
@@ -27,11 +29,15 @@ public class SecurityConfig {
             RateLimitFilter rateLimitFilter
     ) throws Exception {
 
+        // The browser client reads the double-submit token to mirror it in
+        // X-XSRF-TOKEN. It is not an authentication credential, and keeping
+        // it readable is required for the configured cookie/header contract.
         CookieCsrfTokenRepository csrfTokenRepository =
-                new CookieCsrfTokenRepository();
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+        CsrfTokenRequestAttributeHandler csrfRequestHandler =
+                new CsrfTokenRequestAttributeHandler();
 
         csrfTokenRepository.setCookiePath("/");
-
         http
                 .cors(Customizer.withDefaults())
 
@@ -39,6 +45,7 @@ public class SecurityConfig {
                         .csrfTokenRepository(
                                 csrfTokenRepository
                         )
+                        .csrfTokenRequestHandler(csrfRequestHandler)
                 )
 
                 .sessionManagement(session -> session
