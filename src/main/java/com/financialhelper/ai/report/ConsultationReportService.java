@@ -5,11 +5,11 @@ import com.financialhelper.ai.AiProviderException;
 import com.financialhelper.ai.OpenAiProperties;
 import com.financialhelper.ai.OpenAiStructuredClient;
 
-import com.financialhelper.ai.analysis.AnalysisAiResult;
-import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.GroundedAiInputProjection;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
 import com.financialhelper.ai.grounded.GroundedOutputValidator;
-import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.account.InputLimitException;
 
 import com.financialhelper.ai.understanding.AiGenerationFailedException;
 
@@ -17,6 +17,9 @@ import org.springframework.boot.autoconfigure.condition
         .ConditionalOnProperty;
 
 import org.springframework.stereotype.Service;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
@@ -31,6 +34,8 @@ import java.util.UUID;
         havingValue = "true"
 )
 public class ConsultationReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ConsultationReportService.class);
 
     private static final String INSTRUCTIONS =
             """
@@ -95,6 +100,7 @@ public class ConsultationReportService {
     private final JsonMapper jsonMapper;
 
     private final GroundedOutputValidator groundedOutputValidator;
+    private final AccountProperties accountProperties;
 
     public ConsultationReportService(
             OpenAiStructuredClient openAiStructuredClient,
@@ -102,7 +108,8 @@ public class ConsultationReportService {
             ConsultationReportBusinessValidator businessValidator,
             ConsultationReportPersistenceService persistenceService,
             JsonMapper jsonMapper,
-            GroundedOutputValidator groundedOutputValidator
+            GroundedOutputValidator groundedOutputValidator,
+            AccountProperties accountProperties
     ) {
         this.openAiStructuredClient =
                 openAiStructuredClient;
@@ -120,6 +127,7 @@ public class ConsultationReportService {
                 jsonMapper;
 
         this.groundedOutputValidator = groundedOutputValidator;
+        this.accountProperties = accountProperties;
     }
 
     public ConsultationReportStateResponse prepare(
@@ -152,13 +160,13 @@ public class ConsultationReportService {
 
         try {
 
+            String modelInput = buildModelInput(snapshot);
+
             result =
                     openAiStructuredClient
                             .generateStructured(
                                     INSTRUCTIONS,
-                                    buildModelInput(
-                                            snapshot
-                                    ),
+                                    modelInput,
                                     ConsultationReportAiResult.class
                             );
 
@@ -179,6 +187,7 @@ public class ConsultationReportService {
                 AiProviderException
                 | AiOutputContractException
                 | GroundedEvidenceUnavailableException
+                | InputLimitException
                         exception
         ) {
 
@@ -219,18 +228,29 @@ public class ConsultationReportService {
 
         try {
 
-            ReportPromptInput input =
-                    new ReportPromptInput(
+            GroundedAiInputProjection.ReportInput input =
+                    GroundedAiInputProjection.forReport(
                             snapshot.category().name(),
                             snapshot.summary(),
                             snapshot.analysis(),
                             snapshot.groundedEvidence()
                     );
 
-            return jsonMapper
+            String serialized = jsonMapper
                     .writeValueAsString(
                             input
                     );
+            log.info(
+                    "Report prompt prepared caseRevision={} followUpRevision={} inputCharacters={} limit={}",
+                    snapshot.caseInputRevision(),
+                    snapshot.followUpAnswerRevision(),
+                    serialized.length(),
+                    accountProperties.limits().maxAiInputCharacters()
+            );
+            if (serialized.length() > accountProperties.limits().maxAiInputCharacters()) {
+                throw new InputLimitException("ai");
+            }
+            return serialized;
 
         } catch (JacksonException exception) {
 
@@ -240,11 +260,4 @@ public class ConsultationReportService {
         }
     }
 
-    private record ReportPromptInput(
-            String consultationCategory,
-            ConsultationSummaryAiResult confirmedSummary,
-            AnalysisAiResult analysisResult,
-            AnalysisEvidenceSnapshotData evidenceSnapshot
-    ) {
-    }
 }

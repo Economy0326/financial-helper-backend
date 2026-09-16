@@ -7,9 +7,9 @@ import com.financialhelper.account.AccountProperties;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.ai.grounded.GroundedAiInputProjection;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
 import com.financialhelper.ai.grounded.GroundedOutputValidator;
-import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
 import com.financialhelper.procedure.FinancialActionPlanData;
 import com.financialhelper.procedure.FinancialActionPlanService;
 import com.financialhelper.procedure.PlanStatus;
@@ -293,14 +293,11 @@ public class AnalysisWorker {
 
         try {
 
-            AnalysisPromptInput input =
-                    new AnalysisPromptInput(
-                            snapshot.category()
-                                    .name(),
-
-                            snapshot
-                                    .confirmedSummary()
-                            , evidenceSnapshot
+            GroundedAiInputProjection.AnalysisInput input =
+                    GroundedAiInputProjection.forAnalysis(
+                            snapshot.category().name(),
+                            snapshot.confirmedSummary(),
+                            evidenceSnapshot
                     );
 
             String serialized = jsonMapper.writeValueAsString(input);
@@ -324,10 +321,4 @@ public class AnalysisWorker {
         }
     }
 
-    private record AnalysisPromptInput(
-            String consultationCategory,
-            ConsultationSummaryAiResult confirmedSummary,
-            AnalysisEvidenceSnapshotData evidenceSnapshot
-    ) {
-    }
 }
