@@ -18,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
@@ -89,6 +90,20 @@ class ProcedureFollowUpApiIntegrationTest {
                 .contentType("application/json")
                 .content("{\"answer\":\"FALSE\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.question.factKey").value("incidentDate"));
+                .andExpect(jsonPath("$.question.factKey").value("incidentDate"))
+                .andExpect(jsonPath("$.question.inputType").value("DATE"));
+
+        FollowUpQuestion dateQuestion = questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision())
+                .get(1);
+
+        mockMvc.perform(put(
+                        "/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), dateQuestion.getId())
+                .cookie(cookie).with(csrf())
+                .contentType("application/json")
+                .content("{\"answer\":\"" + LocalDate.now(ZoneOffset.UTC).plusDays(1) + "\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

@@ -280,6 +280,16 @@ public class ConsultationService {
             String rawToken,
             UpdateConsultationSituationRequest request
     ) {
+        return updateSituation(consultationId, rawToken, request, false);
+    }
+
+    @Transactional
+    public UpdateConsultationSituationResponse updateSituation(
+            UUID consultationId,
+            String rawToken,
+            UpdateConsultationSituationRequest request,
+            boolean editFromSummary
+    ) {
         GuestSession guestSession =
                 guestSessionService
                         .requireValidSession(rawToken);
@@ -292,9 +302,11 @@ public class ConsultationService {
 
         ensureInProgress(consultation);
 
-        if (!SITUATION_EDITABLE_STEPS.contains(
-                consultation.getCurrentStep()
-        )) {
+        boolean normalEdit = SITUATION_EDITABLE_STEPS.contains(
+                consultation.getCurrentStep());
+        boolean explicitSummaryEdit = editFromSummary
+                && consultation.getCurrentStep() == ConsultationStep.SUMMARY;
+        if (!normalEdit && !explicitSummaryEdit) {
             throw new InvalidConsultationStateException();
         }
 

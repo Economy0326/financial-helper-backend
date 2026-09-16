@@ -34,6 +34,13 @@ public class StructuredFollowUpService {
         List<String> missing = new ArrayList<>();
         List<FollowUpQuestionSpec> questions = new ArrayList<>();
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
+            if (!isRelevant(required.key(), facts)) {
+                // The approved procedure may list a fact for the positive CARD
+                // branch. Once the user explicitly says there is no
+                // unauthorized payment, transaction details cannot affect any
+                // supported action and must not be asked as a dead-end question.
+                continue;
+            }
             if (!required.requiredForDecision() || facts.hasKnownValue(required.key())) {
                 continue;
             }
@@ -47,6 +54,14 @@ public class StructuredFollowUpService {
         return new StructuredFollowUpData(
                 procedure.scenario(), procedure.institution(), procedure.productType(),
                 caseInputRevision, missing, questions);
+    }
+
+    private boolean isRelevant(String factKey, CardCaseFacts facts) {
+        if ("transactionType".equals(factKey)
+                && "FALSE".equalsIgnoreCase(facts.value("unauthorizedPayment"))) {
+            return false;
+        }
+        return true;
     }
 
     public StructuredFollowUpData specifyFromValues(

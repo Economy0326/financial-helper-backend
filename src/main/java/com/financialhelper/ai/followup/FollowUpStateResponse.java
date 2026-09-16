@@ -44,6 +44,7 @@ public record FollowUpStateResponse(
 
                 new Question(
                         followUpQuestion.getId(),
+                        followUpQuestion.getInputType(),
                         followUpQuestion
                                 .getQuestionText(),
                         followUpQuestion
@@ -63,6 +64,7 @@ public record FollowUpStateResponse(
 
     public record Question(
             UUID id,
+            String inputType,
             String question,
             String description,
             List<Option> options

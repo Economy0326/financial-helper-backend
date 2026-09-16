@@ -470,7 +470,10 @@ public class FollowUpPersistenceService {
         }
         if ("DATE".equals(question.getInputType())) {
             try {
-                LocalDate.parse(answerValue);
+                LocalDate date = LocalDate.parse(answerValue);
+                if (date.isAfter(LocalDate.now(ZoneOffset.UTC))) {
+                    throw new InvalidFollowUpAnswerException();
+                }
             } catch (java.time.format.DateTimeParseException exception) {
                 throw new InvalidFollowUpAnswerException();
             }

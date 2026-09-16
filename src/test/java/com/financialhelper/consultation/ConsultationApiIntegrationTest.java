@@ -1,5 +1,6 @@
 package com.financialhelper.consultation;
 
+import com.jayway.jsonpath.JsonPath;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionCookie;
 import com.financialhelper.guest.GuestSessionRepository;
@@ -15,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -126,6 +128,60 @@ class ConsultationApiIntegrationTest {
                                 "$.hasActiveConsultation"
                         ).value(false)
                 );
+    }
+
+    // 브라우저가 Session bootstrap에서 받은 쿠키/헤더로 첫 write를 수행하는 경로
+    @Test
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.BEFORE_METHOD)
+    void firstWriteSucceedsWithSessionCsrfBootstrap()
+            throws Exception {
+
+        MvcResult sessionResult =
+                mockMvc.perform(
+                                get("/api/v1/session")
+                        )
+                        .andExpect(status().isOk())
+                        .andReturn();
+
+        String csrfHeader =
+                sessionResult.getResponse()
+                        .getHeader("X-XSRF-TOKEN");
+        Cookie csrfCookie =
+                sessionResult.getResponse()
+                        .getCookie("XSRF-TOKEN");
+
+        assertThat(csrfHeader).isNotBlank();
+        assertThat(csrfCookie).isNotNull();
+
+        MvcResult consultationResult =
+                mockMvc.perform(
+                                post("/api/v1/consultations")
+                                        .cookie(csrfCookie)
+                                        .header("X-XSRF-TOKEN", csrfHeader)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                        )
+                        .andExpect(status().isOk())
+                        .andReturn();
+
+        String consultationId =
+                JsonPath.read(
+                        consultationResult.getResponse().getContentAsString(),
+                        "$.consultationId"
+                );
+        Cookie guestCookie =
+                consultationResult.getResponse()
+                        .getCookie(GuestSessionCookie.NAME);
+
+        assertThat(guestCookie).isNotNull();
+
+        mockMvc.perform(
+                        put("/api/v1/consultations/{id}/category", consultationId)
+                                .cookie(csrfCookie, guestCookie)
+                                .header("X-XSRF-TOKEN", csrfHeader)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"category\":\"CARD\"}")
+                )
+                .andExpect(status().isOk());
     }
 
     // 첫 Consultation 생성
@@ -269,6 +325,32 @@ class ConsultationApiIntegrationTest {
                 .isEqualTo(
                         ConsultationStep.FOLLOW_UP
                 );
+    }
+
+    @Test
+    void explicitSummaryEditReopensSituationAndAdvancesCaseRevision()
+            throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createConsultation(guest.session());
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        consultation.updateCategory(ConsultationCategory.CARD, now);
+        consultation.updateSituation("처음 입력한 상황", now.plusSeconds(1));
+        consultation.moveToSummary(now.plusSeconds(2));
+        consultationRepository.saveAndFlush(consultation);
+        long previousRevision = consultation.getCaseInputRevision();
+
+        mockMvc.perform(
+                        put("/api/v1/consultations/{id}/situation?edit=true", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"situationText\":\"수정한 상황\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentStep").value("FOLLOW_UP"));
+
+        Consultation saved = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(saved.getSituationText()).isEqualTo("수정한 상황");
+        assertThat(saved.getCaseInputRevision()).isEqualTo(previousRevision + 1);
     }
 
     // Guest Ownership

@@ -48,6 +48,29 @@ class StructuredFollowUpServiceTest {
         assertThat(result.questions()).isEmpty();
     }
 
+    @Test
+    void skipsTransactionTypeWhenUnauthorizedPaymentIsExplicitlyFalse() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        ProcedureVersionData procedure = procedure(List.of(
+                new ProcedureVersionData.RequiredFact("unauthorizedPayment", "BOOLEAN", true),
+                new ProcedureVersionData.RequiredFact("transactionType", "ENUM", true),
+                new ProcedureVersionData.RequiredFact("incidentDate", "DATE", true)
+        ));
+        when(procedureService.requireApprovedCard()).thenReturn(procedure);
+
+        StructuredFollowUpData result = new StructuredFollowUpService(procedureService)
+                .specifyFromValues(Map.of("unauthorizedPayment", "FALSE"), 4);
+
+        assertThat(result.missingFacts()).containsExactly("incidentDate");
+        assertThat(result.questions()).singleElement()
+                .satisfies(question -> {
+                    assertThat(question.factKey()).isEqualTo("incidentDate");
+                    assertThat(question.inputType()).isEqualTo(FollowUpInputType.DATE);
+                    assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::value)
+                            .containsExactly("UNKNOWN");
+                });
+    }
+
     private ProcedureVersionData procedure(List<ProcedureVersionData.RequiredFact> requiredFacts) {
         return new ProcedureVersionData(
                 java.util.UUID.randomUUID(),
