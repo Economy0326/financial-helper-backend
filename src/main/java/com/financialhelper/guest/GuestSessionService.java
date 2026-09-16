@@ -89,7 +89,12 @@ public class GuestSessionService {
     ) {
         Optional<GuestSession> guestSession =
                 findValidSessionInternal(rawToken)
-                        .map(this::requireAccountOwnership);
+                        // /session is an authentication/CSRF bootstrap endpoint.
+                        // A stale guest cookie bound to another account must not
+                        // turn this state check into ACCOUNT_OWNERSHIP_REQUIRED.
+                        // Ownership-protected consultation operations still use
+                        // requireAccountOwnership through the methods above.
+                        .filter(this::isUsableForSessionState);
 
         if (guestSession.isEmpty()) {
             return new SessionResponse(
@@ -155,6 +160,17 @@ public class GuestSessionService {
             throw new AccountOwnershipException();
         }
         return session;
+    }
+
+    private boolean isUsableForSessionState(GuestSession session) {
+        Account owner = session.getAccount();
+        if (owner == null) {
+            return true;
+        }
+
+        return accountSessionService.currentAccount()
+                .map(current -> owner.getId().equals(current.getId()))
+                .orElse(false);
     }
 
     // Raw Token을 Hash한 뒤 만료되지 않은 Guest Session을 조회
