@@ -8,7 +8,8 @@ public record AnalysisStateResponse(
         int informationSupplementCount,
         boolean canSupplementInformation,
         List<AdditionalInformation>
-                additionalInformationNeeded
+                additionalInformationNeeded,
+        List<SafeAction> safeActions
 ) {
 
     public static AnalysisStateResponse notStarted(
@@ -20,6 +21,7 @@ public record AnalysisStateResponse(
                 0,
                 informationSupplementCount,
                 informationSupplementCount < 1,
+                List.of(),
                 List.of()
         );
     }
@@ -27,7 +29,8 @@ public record AnalysisStateResponse(
     public static AnalysisStateResponse from(
             AnalysisJob job,
             AnalysisAiResult result,
-            int informationSupplementCount
+            int informationSupplementCount,
+            List<SafeAction> safeActions
     ) {
 
         List<AdditionalInformation> information =
@@ -51,13 +54,21 @@ public record AnalysisStateResponse(
                 job.getAttemptCount(),
                 informationSupplementCount,
                 informationSupplementCount < 1,
-                information
+                information,
+                safeActions == null ? List.of() : safeActions
         );
     }
 
     public record AdditionalInformation(
             String topic,
             String reason
+    ) {
+    }
+
+    public record SafeAction(
+            String actionId,
+            String title,
+            String description
     ) {
     }
 }

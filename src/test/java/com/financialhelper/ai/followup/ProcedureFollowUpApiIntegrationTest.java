@@ -106,4 +106,62 @@ class ProcedureFollowUpApiIntegrationTest {
                 .content("{\"answer\":\"" + LocalDate.now(ZoneOffset.UTC).plusDays(1) + "\"}"))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    void unknownProductReceivesOneClarificationThenMovesOn() throws Exception {
+        String rawToken = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(
+                tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("카드를 잃어버렸어요.", now.plusSeconds(2));
+        consultation = consultationRepository.saveAndFlush(consultation);
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
+
+        mockMvc.perform(post(
+                        "/api/v1/consultations/{id}/follow-up/prepare", consultation.getId())
+                .cookie(cookie).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.question.inputType").value("INSTITUTION_SELECT"));
+
+        FollowUpQuestion institution = questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision()).getFirst();
+        mockMvc.perform(put(
+                        "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
+                        consultation.getId(), institution.getId())
+                .cookie(cookie).with(csrf())
+                .contentType("application/json")
+                .content("{\"answer\":\"KB_KOOKMIN_CARD\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.question.inputType").value("ENUM_SELECT"));
+
+        FollowUpQuestion product = questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision()).get(1);
+        mockMvc.perform(put(
+                        "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
+                        consultation.getId(), product.getId())
+                .cookie(cookie).with(csrf())
+                .contentType("application/json")
+                .content("{\"answer\":\"UNKNOWN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.question.inputType").value("ENUM_SELECT"));
+
+        FollowUpQuestion clarification = questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision()).get(2);
+        org.assertj.core.api.Assertions.assertThat(clarification.getQuestionIntent())
+                .isEqualTo("CLARIFY_PRODUCT");
+
+        mockMvc.perform(put(
+                        "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
+                        consultation.getId(), clarification.getId())
+                .cookie(cookie).with(csrf())
+                .contentType("application/json")
+                .content("{\"answer\":\"UNKNOWN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.question.inputType").value("YES_NO_UNKNOWN"));
+    }
 }

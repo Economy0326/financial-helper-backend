@@ -245,6 +245,12 @@ public class FollowUpService {
             Integer questionNumber
     ) {
 
+        if (consultationRepository.findById(consultationId)
+                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .orElse(false)) {
+            return procedureFollowUpService.getLegacyState(consultationId, rawToken, questionNumber);
+        }
+
         return persistenceService
                 .getState(
                         consultationId,
@@ -259,6 +265,13 @@ public class FollowUpService {
             String rawToken,
             UpdateFollowUpAnswerRequest request
     ) {
+
+        if (consultationRepository.findById(consultationId)
+                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .orElse(false)) {
+            procedureFollowUpService.answer(consultationId, questionId, rawToken, request);
+            return procedureFollowUpService.getLegacyState(consultationId, rawToken);
+        }
 
         return persistenceService
                 .saveAnswer(

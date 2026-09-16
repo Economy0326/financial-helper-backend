@@ -33,6 +33,9 @@ import java.util.UUID;
  */
 @Service
 public class FinancialActionPlanService {
+    private static final Set<String> BLOCKING_FACTS = Set.of(
+            "institution", "productType", "cardLost", "unauthorizedPayment",
+            "transactionType", "domestic");
     private final ConsultationRepository consultationRepository;
     private final GuestSessionService guestSessionService;
     private final ConfirmedCaseSnapshotServiceAdapter snapshotService;
@@ -154,11 +157,19 @@ public class FinancialActionPlanService {
                 unresolved.add(required.key());
             }
         }
-        if (!coverageGaps.isEmpty()) {
+        if (hasBlockingUnresolved(unresolved)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
-                    List.of(), unresolved, coverageGaps, warnings);
+                    List.of(), unresolved, coverageGaps,
+                    List.of("BLOCKING_INFORMATION_REQUIRED"));
         }
-        if (!unresolved.isEmpty()) {
+        // If no action can be determined yet, do not spend evidence resolution
+        // work or manufacture a partial result from an UNKNOWN condition.
+        if (!unresolved.isEmpty() && !hasDefinitelyTrueAction(procedure, facts)) {
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
+                    List.of(), unresolved, coverageGaps,
+                    List.of("ADDITIONAL_INFORMATION_REQUIRED"));
+        }
+        if (!coverageGaps.isEmpty()) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps, warnings);
         }
@@ -214,7 +225,8 @@ public class FinancialActionPlanService {
             }
         }
         if (!unresolved.isEmpty()) {
-            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
+            warnings.add("PARTIAL_GUIDANCE_ONLY");
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, actions, documents,
                     resolution.bindings(), unresolved, coverageGaps, warnings);
         }
         return data(snapshot, procedure, PlanStatus.READY, actions, documents,
@@ -300,6 +312,19 @@ public class FinancialActionPlanService {
         } else if (ConditionEvaluator.evaluate(expression, facts) == ConditionResult.UNKNOWN) {
             target.add(expression.factKey());
         }
+    }
+
+    private boolean hasBlockingUnresolved(Set<String> unresolved) {
+        return unresolved.stream().anyMatch(BLOCKING_FACTS::contains);
+    }
+
+    private boolean hasDefinitelyTrueAction(
+            ProcedureVersionData procedure,
+            CardCaseFacts facts
+    ) {
+        return procedure.conditionRules().stream()
+                .anyMatch(rule -> ConditionEvaluator.evaluate(rule.expression(), facts)
+                        == ConditionResult.TRUE);
     }
 
     private FinancialActionPlanData data(

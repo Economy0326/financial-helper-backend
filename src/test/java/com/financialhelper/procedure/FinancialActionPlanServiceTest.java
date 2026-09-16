@@ -124,6 +124,33 @@ class FinancialActionPlanServiceTest {
     }
 
     @Test
+    void nonBlockingUnknownKeepsDefinitelyTrueActionAsPartialGuidance() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+        FinancialActionPlanService service = service(procedureService, resolver);
+
+        FinancialActionPlanData result = service.buildFromSnapshot(
+                snapshot(), procedure(true), new CardCaseFacts(Map.of(
+                        "institution", ProcedureVersionService.KB_INSTITUTION,
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "TRUE",
+                        "unauthorizedPayment", "TRUE",
+                        "transactionType", "CREDIT_SALE",
+                        "domestic", "TRUE",
+                        "reported", "FALSE")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("report-loss");
+        assertThat(result.unresolvedFacts()).contains("incidentDate");
+        assertThat(result.warnings()).contains("PARTIAL_GUIDANCE_ONLY");
+    }
+
+    @Test
     void overseasTransactionIsOutsideTheInitialCardSlice() {
         ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
         FinancialActionPlanService service = service(procedureService, mock(EvidenceBindingResolver.class));

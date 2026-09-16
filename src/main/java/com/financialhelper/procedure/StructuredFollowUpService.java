@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Determines WHAT must be asked; a language model may only render HOW later. */
 @Service
@@ -24,13 +25,38 @@ public class StructuredFollowUpService {
     }
 
     public StructuredFollowUpData specify(
+            ConfirmedCaseSnapshotData snapshot,
+            Set<String> clarificationAskedKeys
+    ) {
+        ProcedureVersionData procedure = procedureVersionService.requireApprovedCard();
+        CardCaseFacts facts = CardCaseFactExtractor.fromSnapshot(snapshot);
+        return specify(procedure, facts, snapshot == null ? 0 : snapshot.caseInputRevision(),
+                clarificationAskedKeys);
+    }
+
+    public StructuredFollowUpData specify(
             ProcedureVersionData procedure,
             CardCaseFacts facts,
             long caseInputRevision
     ) {
+        return specify(procedure, facts, caseInputRevision, Set.of());
+    }
+
+    /**
+     * Selects the next question from the current facts. Clarification keys are
+     * supplied by persistence so an UNKNOWN answer cannot create a loop.
+     */
+    public StructuredFollowUpData specify(
+            ProcedureVersionData procedure,
+            CardCaseFacts facts,
+            long caseInputRevision,
+            Set<String> clarificationAskedKeys
+    ) {
         if (procedure == null || !procedure.status().equals(ProcedureStatus.APPROVED)) {
             throw new IllegalStateException("approved procedure is required");
         }
+        Set<String> clarificationAsked = clarificationAskedKeys == null
+                ? Set.of() : Set.copyOf(clarificationAskedKeys);
         List<String> missing = new ArrayList<>();
         List<FollowUpQuestionSpec> questions = new ArrayList<>();
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
@@ -46,9 +72,14 @@ public class StructuredFollowUpService {
             }
             missing.add(required.key());
             // UNKNOWN is an explicit user answer. Keep it as a missing fact for
-            // deterministic planning, but do not ask the same question again.
+            // deterministic planning. Only blocking facts get one useful,
+            // deterministic clarification and never the original question again.
             if (facts.value(required.key()) == null) {
                 questions.add(specFor(required));
+            } else if ("UNKNOWN".equalsIgnoreCase(facts.value(required.key()))
+                    && !clarificationAsked.contains(required.key())
+                    && clarificationSupported(required.key())) {
+                questions.add(clarificationSpecFor(required));
             }
         }
         return new StructuredFollowUpData(
@@ -70,6 +101,42 @@ public class StructuredFollowUpService {
     ) {
         return specify(procedureVersionService.requireApprovedCard(),
                 CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision);
+    }
+
+    public StructuredFollowUpData specifyFromValues(
+            Map<String, String> explicitValues,
+            long caseInputRevision,
+            Set<String> clarificationAskedKeys
+    ) {
+        return specify(procedureVersionService.requireApprovedCard(),
+                CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision,
+                clarificationAskedKeys);
+    }
+
+    private boolean clarificationSupported(String factKey) {
+        return "institution".equals(factKey) || "productType".equals(factKey);
+    }
+
+    private FollowUpQuestionSpec clarificationSpecFor(ProcedureVersionData.RequiredFact fact) {
+        return switch (fact.key()) {
+            case "institution" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.INSTITUTION_SELECT,
+                    List.of(
+                            option("KB_KOOKMIN_CARD", "KB국민카드", "KB국민카드에서 발급한 카드예요."),
+                            option("OTHER", "다른 카드사", "다른 카드사라면 이 절차를 적용하지 않아요."),
+                            option("UNKNOWN", "그래도 모르겠어요", "카드사를 확인하기 어려워요.")
+                    ), "카드 앞면이나 앱에서 카드사를 확인할 수 있나요?",
+                    "확인할 수 있으면 해당 카드사를 선택해 주세요.", true, "CLARIFY_INSTITUTION", false);
+            case "productType" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.ENUM_SELECT,
+                    List.of(
+                            option("PERSONAL_CREDIT_CARD", "신용카드", "개인 본인 명의의 신용카드예요."),
+                            option("CHECK_CARD", "체크카드", "체크카드는 이 절차의 범위 밖이에요."),
+                            option("UNKNOWN", "그래도 모르겠어요", "카드 종류를 확인하기 어려워요.")
+                    ), "카드 앞면이나 앱에서 '신용' 또는 '체크' 표시를 확인할 수 있나요?",
+                    "확인할 수 있으면 해당 카드 종류를 선택해 주세요.", true, "CLARIFY_PRODUCT", false);
+            default -> throw new IllegalArgumentException("unsupported clarification fact: " + fact.key());
+        };
     }
 
     private FollowUpQuestionSpec specFor(ProcedureVersionData.RequiredFact fact) {

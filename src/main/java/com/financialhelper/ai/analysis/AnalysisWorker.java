@@ -10,6 +10,9 @@ import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
 import com.financialhelper.ai.grounded.GroundedOutputValidator;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
+import com.financialhelper.procedure.FinancialActionPlanData;
+import com.financialhelper.procedure.FinancialActionPlanService;
+import com.financialhelper.procedure.PlanStatus;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,6 +108,7 @@ public class AnalysisWorker {
 
     private final GroundedOutputValidator groundedOutputValidator;
     private final AccountProperties accountProperties;
+    private final FinancialActionPlanService actionPlanService;
 
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
@@ -113,7 +117,8 @@ public class AnalysisWorker {
             JsonMapper jsonMapper,
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
             GroundedOutputValidator groundedOutputValidator,
-            AccountProperties accountProperties
+            AccountProperties accountProperties,
+            FinancialActionPlanService actionPlanService
     ) {
         this.persistenceService =
                 persistenceService;
@@ -131,6 +136,7 @@ public class AnalysisWorker {
 
         this.groundedOutputValidator = groundedOutputValidator;
         this.accountProperties = accountProperties;
+        this.actionPlanService = actionPlanService;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -154,6 +160,15 @@ public class AnalysisWorker {
                 snapshotOptional.get();
 
         try {
+
+            if (snapshot.category() == com.financialhelper.consultation.ConsultationCategory.CARD) {
+                FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
+                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION
+                        && plan.coverageGaps().isEmpty()) {
+                    persistenceService.complete(snapshot, partialResult(plan));
+                    return;
+                }
+            }
 
             AnalysisEvidenceSnapshotData evidenceSnapshot =
                     evidenceSnapshotService.prepare(snapshot);
@@ -226,6 +241,49 @@ public class AnalysisWorker {
                     "INTERNAL_ERROR"
             );
         }
+    }
+
+    private AnalysisAiResult partialResult(FinancialActionPlanData plan) {
+        AnalysisAiResult result = new AnalysisAiResult();
+        result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
+        result.analysisSummary = "현재 확인된 내용으로 안내할 수 있는 부분만 먼저 정리했습니다.";
+        result.keyIssues = plan.actions().isEmpty()
+                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 카드별 행동을 아직 확정할 수 없습니다."))
+                : plan.actions().stream()
+                        .map(action -> issue(action.title(), action.description()))
+                        .toList();
+        result.additionalInformationNeeded = plan.unresolvedFacts().stream()
+                .map(fact -> {
+                    AnalysisAiResult.AdditionalInformation information =
+                            new AnalysisAiResult.AdditionalInformation();
+                    information.topic = factLabel(fact);
+                    information.reason = "이 정보가 확인되면 해당 조건에 맞는 안내를 더 정확히 정리할 수 있어요.";
+                    return information;
+                })
+                .toList();
+        result.evidenceCitations = java.util.List.of();
+        return result;
+    }
+
+    private AnalysisAiResult.KeyIssue issue(String title, String explanation) {
+        AnalysisAiResult.KeyIssue issue = new AnalysisAiResult.KeyIssue();
+        issue.title = title;
+        issue.explanation = explanation;
+        return issue;
+    }
+
+    private String factLabel(String fact) {
+        return switch (fact) {
+            case "institution" -> "카드 발급사";
+            case "productType" -> "카드 종류";
+            case "cardLost" -> "분실·도난 여부";
+            case "unauthorizedPayment" -> "본인이 하지 않은 결제 여부";
+            case "transactionType" -> "거래 유형";
+            case "domestic" -> "국내 거래 여부";
+            case "reported" -> "분실·도난 신고 여부";
+            case "incidentDate" -> "사고 발생 날짜";
+            default -> fact;
+        };
     }
 
     private String buildModelInput(

@@ -260,11 +260,36 @@ public class FollowUpPersistenceService {
         if (!existing.isEmpty()) {
             return existing;
         }
+        return appendStructuredQuestionsIfCurrent(
+                consultationId, rawToken, expectedCaseInputRevision, specs);
+    }
+
+    /** Appends only the next backend-selected question to the current revision. */
+    @Transactional
+    public List<FollowUpQuestion> appendStructuredQuestionsIfCurrent(
+            UUID consultationId,
+            String rawToken,
+            long expectedCaseInputRevision,
+            List<FollowUpQuestionSpec> specs
+    ) {
+        Consultation consultation = findOwnedConsultation(consultationId, rawToken);
+        ensureInProgress(consultation);
+        ensureFollowUpStep(consultation);
+        if (consultation.getCaseInputRevision() != expectedCaseInputRevision) {
+            throw new AiInputChangedException();
+        }
+        List<FollowUpQuestion> existing = currentQuestions(consultation);
+        if (existing.stream().anyMatch(question -> !question.isAnswered())) {
+            return existing;
+        }
         if (specs == null || specs.isEmpty()) {
-            consultation.moveToSummary(OffsetDateTime.now(ZoneOffset.UTC));
-            return List.of();
+            return existing;
         }
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        int nextSequence = existing.stream()
+                .mapToInt(FollowUpQuestion::getSequenceNo)
+                .max()
+                .orElse(0) + 1;
         List<FollowUpQuestion> questions = java.util.stream.IntStream
                 .range(0, specs.size())
                 .mapToObj(index -> {
@@ -272,7 +297,7 @@ public class FollowUpPersistenceService {
                     return new FollowUpQuestion(
                             consultation,
                             expectedCaseInputRevision,
-                            index + 1,
+                            nextSequence + index,
                             spec.question(),
                             spec.description(),
                             serializeStructuredOptions(spec.options()),
@@ -334,6 +359,21 @@ public class FollowUpPersistenceService {
             UUID questionId,
             String rawToken,
             String answerValue
+    ) {
+        return saveAnswer(consultationId, questionId, rawToken, answerValue, false);
+    }
+
+    /**
+     * Saves an answer without closing the consultation when the procedure
+     * service still needs to select the next question.
+     */
+    @Transactional
+    public FollowUpStateResponse saveAnswer(
+            UUID consultationId,
+            UUID questionId,
+            String rawToken,
+            String answerValue,
+            boolean deferCompletion
     ) {
 
         Consultation consultation =
@@ -411,6 +451,17 @@ public class FollowUpPersistenceService {
                     .recordFollowUpAnswerChanged(
                             now
                     );
+            if (deferCompletion) {
+                // A changed earlier answer can invalidate every later branch.
+                // Remove only current-revision dependent questions; the next
+                // deterministic question will be regenerated after commit.
+                List<FollowUpQuestion> dependentQuestions = questions.stream()
+                        .filter(candidate -> candidate.getSequenceNo() > question.getSequenceNo())
+                        .toList();
+                if (!dependentQuestions.isEmpty()) {
+                    followUpQuestionRepository.deleteAll(dependentQuestions);
+                }
+            }
         }
 
         // 다음 질문이 있으면 다음 질문을 반환하고, 
@@ -425,10 +476,9 @@ public class FollowUpPersistenceService {
                         .orElse(null);
 
         if (nextQuestion == null) {
-
-            consultation.moveToSummary(
-                    now
-            );
+            if (!deferCompletion) {
+                consultation.moveToSummary(now);
+            }
 
             return FollowUpStateResponse
                     .complete();

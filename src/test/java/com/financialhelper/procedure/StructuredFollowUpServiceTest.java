@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -69,6 +70,28 @@ class StructuredFollowUpServiceTest {
                     assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::value)
                             .containsExactly("UNKNOWN");
                 });
+    }
+
+    @Test
+    void unknownProductGetsOneClarificationAndThenStops() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        ProcedureVersionData procedure = procedure(List.of(
+                new ProcedureVersionData.RequiredFact("productType", "ENUM", true)
+        ));
+        when(procedureService.requireApprovedCard()).thenReturn(procedure);
+        StructuredFollowUpService service = new StructuredFollowUpService(procedureService);
+
+        StructuredFollowUpData clarification = service.specifyFromValues(
+                Map.of("productType", "UNKNOWN"), 3);
+        assertThat(clarification.questions()).singleElement().satisfies(question -> {
+            assertThat(question.factKey()).isEqualTo("productType");
+            assertThat(question.questionIntent()).isEqualTo("CLARIFY_PRODUCT");
+        });
+
+        StructuredFollowUpData afterClarification = service.specifyFromValues(
+                Map.of("productType", "UNKNOWN"), 3, Set.of("productType"));
+        assertThat(afterClarification.questions()).isEmpty();
+        assertThat(afterClarification.missingFacts()).containsExactly("productType");
     }
 
     private ProcedureVersionData procedure(List<ProcedureVersionData.RequiredFact> requiredFacts) {

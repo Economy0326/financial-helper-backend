@@ -6,6 +6,9 @@ import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 import com.financialhelper.account.AccountAiQuotaService;
 import com.financialhelper.account.GlobalAiBudgetGuard;
 import com.financialhelper.account.AccountProperties;
+import com.financialhelper.procedure.FinancialActionPlanData;
+import com.financialhelper.procedure.FinancialActionPlanService;
+import com.financialhelper.procedure.PlanStatus;
 
 import com.financialhelper.ai.summary
         .ConsultationSummary;
@@ -65,6 +68,7 @@ public class AnalysisPersistenceService {
     private final AccountAiQuotaService accountAiQuotaService;
     private final GlobalAiBudgetGuard globalAiBudgetGuard;
     private final AccountProperties accountProperties;
+    private final FinancialActionPlanService actionPlanService;
 
     public AnalysisPersistenceService(
             ConsultationRepository consultationRepository,
@@ -77,7 +81,8 @@ public class AnalysisPersistenceService {
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
             AccountAiQuotaService accountAiQuotaService,
             GlobalAiBudgetGuard globalAiBudgetGuard,
-            AccountProperties accountProperties
+            AccountProperties accountProperties,
+            FinancialActionPlanService actionPlanService
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -104,6 +109,7 @@ public class AnalysisPersistenceService {
         this.accountAiQuotaService = accountAiQuotaService;
         this.globalAiBudgetGuard = globalAiBudgetGuard;
         this.accountProperties = accountProperties;
+        this.actionPlanService = actionPlanService;
     }
 
     @Transactional
@@ -979,6 +985,31 @@ public class AnalysisPersistenceService {
                 result,
                 consultation
                         .getInformationSupplementCount()
+                , partialSafeActions(job, consultation)
         );
+    }
+
+    private java.util.List<AnalysisStateResponse.SafeAction> partialSafeActions(
+            AnalysisJob job,
+            Consultation consultation
+    ) {
+        if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
+                || consultation.getCategory() != com.financialhelper.consultation.ConsultationCategory.CARD) {
+            return java.util.List.of();
+        }
+        try {
+            FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultation.getId());
+            if (plan.status() != PlanStatus.NEEDS_CLARIFICATION || !plan.coverageGaps().isEmpty()) {
+                return java.util.List.of();
+            }
+            return plan.actions().stream()
+                    .map(action -> new AnalysisStateResponse.SafeAction(
+                            action.actionId(), action.title(), action.description()))
+                    .toList();
+        } catch (RuntimeException ignored) {
+            // State polling must not turn a partial-information result into a
+            // technical failure when its optional guidance cannot be loaded.
+            return java.util.List.of();
+        }
     }
 }
