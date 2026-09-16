@@ -1,5 +1,6 @@
 package com.financialhelper.ai.report;
 
+import com.financialhelper.ai.grounded.GroundedEvidenceCitation;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
 import jakarta.validation.Valid;
@@ -60,8 +61,19 @@ public class ConsultationReportAiResult {
     @Valid
     public ComplaintDraft complaintDraft;
 
+    /** Required for CARD grounded reports; empty for legacy reports. */
+    @Size(max = 20)
+    @Valid
+    @JsonPropertyDescription(
+            "Typed evidence IDs and locators from the supplied CARD evidence snapshot. Never invent URLs or legal citations."
+    )
+    public List<GroundedEvidenceCitation> evidenceCitations = List.of();
+
 
     public static class FirstAction {
+
+        @Size(max = 120)
+        public String actionId;
 
         @NotBlank
         @Size(max = 150)
@@ -86,6 +98,9 @@ public class ConsultationReportAiResult {
 
 
     public static class ActionStep {
+
+        @Size(max = 120)
+        public String actionId;
 
         @Min(1)
         @Max(6)
@@ -114,6 +129,9 @@ public class ConsultationReportAiResult {
 
 
     public static class RequiredDocument {
+
+        @Size(max = 120)
+        public String documentId;
 
         @NotBlank
         @Size(max = 160)

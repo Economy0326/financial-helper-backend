@@ -5,8 +5,11 @@ import com.financialhelper.ai.AiProviderException;
 import com.financialhelper.ai.OpenAiProperties;
 import com.financialhelper.ai.OpenAiStructuredClient;
 
-import com.financialhelper.ai.analysis.AnalysisAiResult;
-import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
+import com.financialhelper.ai.grounded.GroundedAiInputProjection;
+import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
+import com.financialhelper.ai.grounded.GroundedOutputValidator;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.account.InputLimitException;
 
 import com.financialhelper.ai.understanding.AiGenerationFailedException;
 
@@ -14,6 +17,9 @@ import org.springframework.boot.autoconfigure.condition
         .ConditionalOnProperty;
 
 import org.springframework.stereotype.Service;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
@@ -28,6 +34,8 @@ import java.util.UUID;
         havingValue = "true"
 )
 public class ConsultationReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ConsultationReportService.class);
 
     private static final String INSTRUCTIONS =
             """
@@ -46,9 +54,9 @@ public class ConsultationReportService {
             3. 법적 승패, 손해배상 가능성,
                환급 가능성을 확정적으로 표현하지 않는다.
 
-            4. 아직 공식 금융자료 Retrieval이 없으므로
-               법령, 판례, URL, 기관 지침,
-               유사 분쟁 사례를 만들어내지 않는다.
+            4. CARD 입력에서는 제공된 evidence snapshot의
+               evidenceId와 locator만 인용한다.
+               법령, URL, 기관 지침 또는 사례를 만들어내지 않는다.
 
             5. 행동 단계는 사용자가 실제로 수행할 수 있는
                저위험 확인·문의·자료확보 중심으로 작성한다.
@@ -71,6 +79,10 @@ public class ConsultationReportService {
                 1부터 순서대로 작성한다.
 
             12. 출력은 제공된 Structured Output Schema만 사용한다.
+
+            13. CARD actionSteps와 requiredDocuments에는
+                snapshot의 승인된 actionId/documentId, 제목, 설명을
+                그대로 사용한다.
             """;
 
     private final OpenAiStructuredClient
@@ -87,12 +99,17 @@ public class ConsultationReportService {
 
     private final JsonMapper jsonMapper;
 
+    private final GroundedOutputValidator groundedOutputValidator;
+    private final AccountProperties accountProperties;
+
     public ConsultationReportService(
             OpenAiStructuredClient openAiStructuredClient,
             OpenAiProperties openAiProperties,
             ConsultationReportBusinessValidator businessValidator,
             ConsultationReportPersistenceService persistenceService,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            GroundedOutputValidator groundedOutputValidator,
+            AccountProperties accountProperties
     ) {
         this.openAiStructuredClient =
                 openAiStructuredClient;
@@ -108,6 +125,9 @@ public class ConsultationReportService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.groundedOutputValidator = groundedOutputValidator;
+        this.accountProperties = accountProperties;
     }
 
     public ConsultationReportStateResponse prepare(
@@ -140,13 +160,13 @@ public class ConsultationReportService {
 
         try {
 
+            String modelInput = buildModelInput(snapshot);
+
             result =
                     openAiStructuredClient
                             .generateStructured(
                                     INSTRUCTIONS,
-                                    buildModelInput(
-                                            snapshot
-                                    ),
+                                    modelInput,
                                     ConsultationReportAiResult.class
                             );
 
@@ -156,9 +176,18 @@ public class ConsultationReportService {
                                     result
                             );
 
+            if (snapshot.groundedEvidence() != null) {
+                groundedOutputValidator.validateReport(
+                        result,
+                        snapshot.groundedEvidence()
+                );
+            }
+
         } catch (
                 AiProviderException
                 | AiOutputContractException
+                | GroundedEvidenceUnavailableException
+                | InputLimitException
                         exception
         ) {
 
@@ -189,23 +218,39 @@ public class ConsultationReportService {
                 );
     }
 
+    public ConsultationReportStateResponse getStateForAccount(UUID consultationId) {
+        return persistenceService.getStateForAccount(consultationId);
+    }
+
     private String buildModelInput(
             ConsultationReportData.Snapshot snapshot
     ) {
 
         try {
 
-            ReportPromptInput input =
-                    new ReportPromptInput(
+            GroundedAiInputProjection.ReportInput input =
+                    GroundedAiInputProjection.forReport(
                             snapshot.category().name(),
                             snapshot.summary(),
-                            snapshot.analysis()
+                            snapshot.analysis(),
+                            snapshot.groundedEvidence()
                     );
 
-            return jsonMapper
+            String serialized = jsonMapper
                     .writeValueAsString(
                             input
                     );
+            log.info(
+                    "Report prompt prepared caseRevision={} followUpRevision={} inputCharacters={} limit={}",
+                    snapshot.caseInputRevision(),
+                    snapshot.followUpAnswerRevision(),
+                    serialized.length(),
+                    accountProperties.limits().maxAiInputCharacters()
+            );
+            if (serialized.length() > accountProperties.limits().maxAiInputCharacters()) {
+                throw new InputLimitException("ai");
+            }
+            return serialized;
 
         } catch (JacksonException exception) {
 
@@ -215,10 +260,4 @@ public class ConsultationReportService {
         }
     }
 
-    private record ReportPromptInput(
-            String consultationCategory,
-            ConsultationSummaryAiResult confirmedSummary,
-            AnalysisAiResult analysisResult
-    ) {
-    }
 }

@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.validation.Valid;
@@ -41,11 +42,12 @@ public class ConsultationController {
                     required = false
             )
             String rawToken,
+            @RequestParam(name = "new", defaultValue = "false") boolean startNew,
             HttpServletResponse servletResponse
     ) {
         ConsultationStartResult result =
                 consultationService
-                        .startConsultation(rawToken);
+                        .startConsultation(rawToken, startNew);
 
         result.getRawTokenToSet()
                 .ifPresent(token ->
@@ -124,12 +126,16 @@ public class ConsultationController {
 
             @Valid
             @RequestBody
-            UpdateConsultationSituationRequest request
+            UpdateConsultationSituationRequest request,
+
+            @RequestParam(name = "edit", defaultValue = "false")
+            boolean editFromSummary
     ) {
         return consultationService.updateSituation(
                 id,
                 rawToken,
-                request
+                request,
+                editFromSummary
         );
     }
 }

@@ -7,6 +7,9 @@ import com.openai.models.responses.ResponseCreateParams;
 import com.openai.models.responses.StructuredResponse;
 import com.openai.models.responses.StructuredResponseCreateParams;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +24,8 @@ import java.util.Objects;
 )
 // 실제로 OpenAI API를 호출하는 역할
 public class OpenAiStructuredClient {
+
+    private static final Logger log = LoggerFactory.getLogger(OpenAiStructuredClient.class);
 
     private final OpenAIClient client;
     private final OpenAiProperties properties;
@@ -67,10 +72,13 @@ public class OpenAiStructuredClient {
                         .store(false)
                         .build();
 
+        long startedAt = System.nanoTime();
         try {
             StructuredResponse<T> response =
                     client.responses()
                             .create(params);
+
+            logUsage(response, responseType, elapsedMillis(startedAt));
 
             List<T> outputs =
                     response.output()
@@ -128,6 +136,38 @@ public class OpenAiStructuredClient {
                     "AI provider request failed"
             );
         }
+    }
+
+    private <T> void logUsage(
+            StructuredResponse<T> response,
+            Class<T> responseType,
+            long elapsedMillis
+    ) {
+        response.usage().ifPresentOrElse(
+                usage -> log.info(
+                        "OpenAI structured call completed type={} model={} durationMs={} inputTokens={} outputTokens={} totalTokens={} cachedInputTokens={} reasoningTokens={}",
+                        responseType.getSimpleName(),
+                        properties.model(),
+                        elapsedMillis,
+                        usage.inputTokens(),
+                        usage.outputTokens(),
+                        usage.totalTokens(),
+                        usage.inputTokensDetails().cachedTokens(),
+                        usage.outputTokensDetails().reasoningTokens()
+                ),
+                () -> log.info(
+                        "OpenAI structured call completed type={} model={} durationMs={} usage=UNAVAILABLE",
+                        responseType.getSimpleName(),
+                        properties.model(),
+                        elapsedMillis
+                )
+        );
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
+                System.nanoTime() - startedAt
+        );
     }
 
     private void validateRequestArguments(

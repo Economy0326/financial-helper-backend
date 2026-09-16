@@ -10,6 +10,19 @@ spring:
     open-in-view: false
 
 app:
+  ai:
+    enabled: ${AI_ENABLED:true}
+  law-open-api:
+    enabled: ${LAW_OPEN_API_ENABLED:true}
+  retrieval:
+    kure:
+      enabled: ${KURE_RUNTIME_ENABLED:true}
+  auth:
+    cookie-secure: true
+    kakao:
+      enabled: ${KAKAO_LOGIN_ENABLED:true}
+    naver:
+      enabled: ${NAVER_LOGIN_ENABLED:true}
   guest-session:
     cookie:
       secure: true

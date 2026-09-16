@@ -10,6 +10,28 @@ spring:
     open-in-view: false
 
 app:
+  auth:
+    general-consultation-required: false
+    kakao:
+      enabled: false
+    naver:
+      enabled: false
+    limits:
+      max-situation-characters: 1000
+      max-follow-up-characters: 64
+      max-ai-input-characters: 12000
+      max-request-bytes: 262144
+      ai-attempts-per-window: 10
+      ai-quota-window: PT1H
+      consultation-ai-attempts: 3
+      rate-limit-requests: 60
+      rate-limit-window: PT1M
+      rate-limit-enabled: false
+      global-ai-budget-enabled: false
+      global-ai-budget-units: 1000
+      new-consultation-limit: 3
+      consultation-window-days: 7
+      max-active-consultations: 1
   guest-session:
     ttl: PT24H
     cookie:

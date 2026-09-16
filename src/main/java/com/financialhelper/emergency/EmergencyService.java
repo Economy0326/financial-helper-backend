@@ -3,6 +3,7 @@ package com.financialhelper.emergency;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
 import com.financialhelper.guest.GuestSessionService;
+import com.financialhelper.account.AccountSessionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,17 +21,23 @@ public class EmergencyService {
     private final EmergencySelectionRepository selectionRepository;
     private final EmergencyScenarioReader scenarioReader;
     private final GuestSessionService guestSessionService;
+    private final AccountSessionService accountSessionService;
+    private final EmergencyHistoryRepository emergencyHistoryRepository;
 
     public EmergencyService(
             EmergencyScenarioRepository scenarioRepository,
             EmergencySelectionRepository selectionRepository,
             EmergencyScenarioReader scenarioReader,
-            GuestSessionService guestSessionService
+            GuestSessionService guestSessionService,
+            AccountSessionService accountSessionService,
+            EmergencyHistoryRepository emergencyHistoryRepository
     ) {
         this.scenarioRepository = scenarioRepository;
         this.selectionRepository = selectionRepository;
         this.scenarioReader = scenarioReader;
         this.guestSessionService = guestSessionService;
+        this.accountSessionService = accountSessionService;
+        this.emergencyHistoryRepository = emergencyHistoryRepository;
     }
 
     // Emergency Type 화면에 필요한 서버 기준 목록 반환
@@ -95,6 +102,10 @@ public class EmergencyService {
                         );
 
         selectionRepository.save(selection);
+
+        accountSessionService.currentAccount().ifPresent(account ->
+                emergencyHistoryRepository.save(new EmergencyHistory(
+                        account, request.type(), scenario.getScenarioKey(), now)));
 
         return new EmergencySelectionResult(
                 new EmergencySelectionResponse(

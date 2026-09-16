@@ -34,6 +34,7 @@ public record ConsultationReportStateResponse(
                         result.caseSummary,
 
                         new FirstAction(
+                                result.firstAction.actionId,
                                 result.firstAction.title,
                                 result.firstAction.description
                         ),
@@ -54,6 +55,7 @@ public record ConsultationReportStateResponse(
                                 .map(
                                         item ->
                                                 new ActionStep(
+                                                        item.actionId,
                                                         item.order,
                                                         item.title,
                                                         item.description
@@ -77,6 +79,7 @@ public record ConsultationReportStateResponse(
                                 .map(
                                         item ->
                                                 new RequiredDocument(
+                                                        item.documentId,
                                                         item.name,
                                                         item.reason
                                                 )
@@ -100,10 +103,19 @@ public record ConsultationReportStateResponse(
                         ),
 
                         List.of(),
-                        List.of()
+                        result.evidenceCitations == null
+                                ? List.of()
+                                : result.evidenceCitations.stream()
+                                .map(item -> new Citation(
+                                        item.evidenceId,
+                                        item.locator,
+                                        item.label))
+                                .toList()
                 ),
 
-                aiV1evidence()
+                result.evidenceCitations != null && !result.evidenceCitations.isEmpty()
+                        ? groundedEvidence()
+                        : aiV1evidence()
         );
     }
 
@@ -130,11 +142,12 @@ public record ConsultationReportStateResponse(
              * AI V2/V3에서 실제 데이터 연결 예정.
              */
             List<Object> similarCases,
-            List<Object> citations
+            List<Citation> citations
     ) {
     }
 
     public record FirstAction(
+            String actionId,
             String title,
             String description
     ) {
@@ -147,6 +160,7 @@ public record ConsultationReportStateResponse(
     }
 
     public record ActionStep(
+            String actionId,
             int order,
             String title,
             String description
@@ -160,6 +174,7 @@ public record ConsultationReportStateResponse(
     }
 
     public record RequiredDocument(
+            String documentId,
             String name,
             String reason
     ) {
@@ -180,6 +195,20 @@ public record ConsultationReportStateResponse(
     public record Evidence(
             String status,
             String message
+    ) {
+    }
+
+    private static Evidence groundedEvidence() {
+        return new Evidence(
+                "GROUNDED_CARD",
+                "승인된 CARD 공식 자료와 검토된 법령 근거를 기준으로 작성된 리포트입니다."
+        );
+    }
+
+    public record Citation(
+            String evidenceId,
+            String locator,
+            String label
     ) {
     }
 }

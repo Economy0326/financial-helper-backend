@@ -10,9 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class HealthController {
 
     private final HealthService healthService;
+    private final ReadinessService readinessService;
 
-    public HealthController(HealthService healthService) {
+    public HealthController(HealthService healthService, ReadinessService readinessService) {
         this.healthService = healthService;
+        this.readinessService = readinessService;
     }
 
     @GetMapping("/health")
@@ -30,5 +32,14 @@ public class HealthController {
         return ResponseEntity
                 .status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(new HealthResponse("DOWN", "DOWN"));
+    }
+
+    @GetMapping({"/health/readiness", "/ready"})
+    public ResponseEntity<ReadinessResponse> readiness() {
+        ReadinessService.ReadinessResult result = readinessService.check();
+        ReadinessResponse response = new ReadinessResponse(result.status(), result.dependencies());
+        return "READY".equals(result.status())
+                ? ResponseEntity.ok(response)
+                : ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
     }
 }

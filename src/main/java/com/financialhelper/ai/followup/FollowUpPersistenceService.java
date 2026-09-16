@@ -1,6 +1,7 @@
 package com.financialhelper.ai.followup;
 
 import com.financialhelper.ai.understanding.AiInputChangedException;
+import com.financialhelper.procedure.FollowUpQuestionSpec;
 
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationNotFoundException;
@@ -20,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.LocalDate;
 
 import java.util.List;
 import java.util.UUID;
@@ -240,6 +242,77 @@ public class FollowUpPersistenceService {
         );
     }
 
+    /** Stores Backend-owned structured questions without involving the LLM. */
+    @Transactional
+    public List<FollowUpQuestion> saveStructuredQuestionsIfCurrent(
+            UUID consultationId,
+            String rawToken,
+            long expectedCaseInputRevision,
+            List<FollowUpQuestionSpec> specs
+    ) {
+        Consultation consultation = findOwnedConsultation(consultationId, rawToken);
+        ensureInProgress(consultation);
+        ensureFollowUpStep(consultation);
+        if (consultation.getCaseInputRevision() != expectedCaseInputRevision) {
+            throw new AiInputChangedException();
+        }
+        List<FollowUpQuestion> existing = currentQuestions(consultation);
+        if (!existing.isEmpty()) {
+            return existing;
+        }
+        return appendStructuredQuestionsIfCurrent(
+                consultationId, rawToken, expectedCaseInputRevision, specs);
+    }
+
+    /** Appends only the next backend-selected question to the current revision. */
+    @Transactional
+    public List<FollowUpQuestion> appendStructuredQuestionsIfCurrent(
+            UUID consultationId,
+            String rawToken,
+            long expectedCaseInputRevision,
+            List<FollowUpQuestionSpec> specs
+    ) {
+        Consultation consultation = findOwnedConsultation(consultationId, rawToken);
+        ensureInProgress(consultation);
+        ensureFollowUpStep(consultation);
+        if (consultation.getCaseInputRevision() != expectedCaseInputRevision) {
+            throw new AiInputChangedException();
+        }
+        List<FollowUpQuestion> existing = currentQuestions(consultation);
+        if (existing.stream().anyMatch(question -> !question.isAnswered())) {
+            return existing;
+        }
+        if (specs == null || specs.isEmpty()) {
+            return existing;
+        }
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        int nextSequence = existing.stream()
+                .mapToInt(FollowUpQuestion::getSequenceNo)
+                .max()
+                .orElse(0) + 1;
+        List<FollowUpQuestion> questions = java.util.stream.IntStream
+                .range(0, specs.size())
+                .mapToObj(index -> {
+                    FollowUpQuestionSpec spec = specs.get(index);
+                    return new FollowUpQuestion(
+                            consultation,
+                            expectedCaseInputRevision,
+                            nextSequence + index,
+                            spec.question(),
+                            spec.description(),
+                            serializeStructuredOptions(spec.options()),
+                            "BACKEND_PROCEDURE",
+                            now,
+                            spec.factKey(),
+                            spec.inputType().name(),
+                            spec.requiredForDecision(),
+                            spec.questionIntent()
+                    );
+                })
+                .toList();
+        return followUpQuestionRepository.saveAll(questions);
+    }
+
     // 추가 질문 없이 Follow-up을 완료 처리하는 경우
     @Transactional
     public FollowUpStateResponse completeWithoutQuestions(
@@ -286,6 +359,21 @@ public class FollowUpPersistenceService {
             UUID questionId,
             String rawToken,
             String answerValue
+    ) {
+        return saveAnswer(consultationId, questionId, rawToken, answerValue, false);
+    }
+
+    /**
+     * Saves an answer without closing the consultation when the procedure
+     * service still needs to select the next question.
+     */
+    @Transactional
+    public FollowUpStateResponse saveAnswer(
+            UUID consultationId,
+            UUID questionId,
+            String rawToken,
+            String answerValue,
+            boolean deferCompletion
     ) {
 
         Consultation consultation =
@@ -363,6 +451,17 @@ public class FollowUpPersistenceService {
                     .recordFollowUpAnswerChanged(
                             now
                     );
+            if (deferCompletion) {
+                // A changed earlier answer can invalidate every later branch.
+                // Remove only current-revision dependent questions; the next
+                // deterministic question will be regenerated after commit.
+                List<FollowUpQuestion> dependentQuestions = questions.stream()
+                        .filter(candidate -> candidate.getSequenceNo() > question.getSequenceNo())
+                        .toList();
+                if (!dependentQuestions.isEmpty()) {
+                    followUpQuestionRepository.deleteAll(dependentQuestions);
+                }
+            }
         }
 
         // 다음 질문이 있으면 다음 질문을 반환하고, 
@@ -377,10 +476,9 @@ public class FollowUpPersistenceService {
                         .orElse(null);
 
         if (nextQuestion == null) {
-
-            consultation.moveToSummary(
-                    now
-            );
+            if (!deferCompletion) {
+                consultation.moveToSummary(now);
+            }
 
             return FollowUpStateResponse
                     .complete();
@@ -408,9 +506,29 @@ public class FollowUpPersistenceService {
                                         )
                 )
                 .findFirst()
-                .orElseThrow(
-                        InvalidFollowUpAnswerException::new
-                );
+                .orElseGet(() -> freeTextOption(question, answerValue));
+    }
+
+    private FollowUpStateResponse.Option freeTextOption(
+            FollowUpQuestion question,
+            String answerValue
+    ) {
+        if (answerValue == null || answerValue.isBlank()
+                || (!"DATE".equals(question.getInputType())
+                && !"SHORT_TEXT".equals(question.getInputType()))) {
+            throw new InvalidFollowUpAnswerException();
+        }
+        if ("DATE".equals(question.getInputType())) {
+            try {
+                LocalDate date = LocalDate.parse(answerValue);
+                if (date.isAfter(LocalDate.now(ZoneOffset.UTC))) {
+                    throw new InvalidFollowUpAnswerException();
+                }
+            } catch (java.time.format.DateTimeParseException exception) {
+                throw new InvalidFollowUpAnswerException();
+            }
+        }
+        return new FollowUpStateResponse.Option(answerValue, answerValue, "");
     }
 
     // 전체 옵션을 가져옴
@@ -465,6 +583,21 @@ public class FollowUpPersistenceService {
             throw new IllegalStateException(
                     "Failed to serialize follow-up options"
             );
+        }
+    }
+
+    private String serializeStructuredOptions(
+            List<FollowUpQuestionSpec.Option> options
+    ) {
+        try {
+            return jsonMapper.writeValueAsString(
+                    new FollowUpOptionsPayload(options.stream()
+                            .map(option -> new FollowUpOptionsPayload.Option(
+                                    option.value(), option.label(), option.description()))
+                            .toList())
+            );
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Failed to serialize structured follow-up options");
         }
     }
 

@@ -1,5 +1,6 @@
 package com.financialhelper.ai.analysis;
 
+import com.financialhelper.ai.grounded.GroundedEvidenceCitation;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 
 import jakarta.validation.Valid;
@@ -41,6 +42,14 @@ public class AnalysisAiResult {
             "Additional information needed only when the outcome is NEEDS_MORE_INFO. Otherwise this must be empty."
     )
     public List<AdditionalInformation> additionalInformationNeeded;
+
+    /** Required for CARD grounded runs; optional for legacy AI V1 runs. */
+    @Size(max = 20)
+    @Valid
+    @JsonPropertyDescription(
+            "Typed evidence IDs and locators from the supplied CARD evidence snapshot. Never invent URLs or legal citations."
+    )
+    public List<GroundedEvidenceCitation> evidenceCitations = List.of();
 
 
     public enum Outcome {

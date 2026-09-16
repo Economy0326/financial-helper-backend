@@ -1,6 +1,14 @@
 package com.financialhelper.ai.analysis;
 
 import com.financialhelper.ai.OpenAiProperties;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.account.AccountAiQuotaService;
+import com.financialhelper.account.GlobalAiBudgetGuard;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.procedure.FinancialActionPlanData;
+import com.financialhelper.procedure.FinancialActionPlanService;
+import com.financialhelper.procedure.PlanStatus;
 
 import com.financialhelper.ai.summary
         .ConsultationSummary;
@@ -55,6 +63,13 @@ public class AnalysisPersistenceService {
     private final AnalysisProperties
         analysisProperties;
 
+    private final AnalysisEvidenceSnapshotService
+            evidenceSnapshotService;
+    private final AccountAiQuotaService accountAiQuotaService;
+    private final GlobalAiBudgetGuard globalAiBudgetGuard;
+    private final AccountProperties accountProperties;
+    private final FinancialActionPlanService actionPlanService;
+
     public AnalysisPersistenceService(
             ConsultationRepository consultationRepository,
             ConsultationSummaryRepository summaryRepository,
@@ -62,7 +77,12 @@ public class AnalysisPersistenceService {
             GuestSessionService guestSessionService,
             OpenAiProperties openAiProperties,
             JsonMapper jsonMapper,
-            AnalysisProperties analysisProperties
+            AnalysisProperties analysisProperties,
+            AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            AccountAiQuotaService accountAiQuotaService,
+            GlobalAiBudgetGuard globalAiBudgetGuard,
+            AccountProperties accountProperties,
+            FinancialActionPlanService actionPlanService
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -84,6 +104,12 @@ public class AnalysisPersistenceService {
 
         this.analysisProperties =
                 analysisProperties;
+
+        this.evidenceSnapshotService = evidenceSnapshotService;
+        this.accountAiQuotaService = accountAiQuotaService;
+        this.globalAiBudgetGuard = globalAiBudgetGuard;
+        this.accountProperties = accountProperties;
+        this.actionPlanService = actionPlanService;
     }
 
     @Transactional
@@ -149,6 +175,19 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        // Summary가 Confirm인 경우에만 새로운 AI 사용량을 예약한다.
+        if (summary.getConfirmedAt() == null) {
+            throw new InvalidConsultationStateException();
+        }
+
+        if (analysisJobRepository.sumAttemptCountByConsultationId(consultationId)
+                >= accountAiAttemptsLimit()) {
+            throw new AnalysisRetryLimitExceededException();
+        }
+
+        accountAiQuotaService.reserveIfAuthenticated();
+        globalAiBudgetGuard.reserveRequestUnit();
+
         OffsetDateTime now =
                 OffsetDateTime.now(
                         ZoneOffset.UTC
@@ -166,11 +205,6 @@ public class AnalysisPersistenceService {
                                 now
                         )
                 );
-
-        // Summary가 Confirm인 것은 이미 확인 완료
-        if (summary.getConfirmedAt() == null) {
-            throw new InvalidConsultationStateException();
-        }
 
         consultation.startAnalysis(now);
 
@@ -269,6 +303,9 @@ public class AnalysisPersistenceService {
                         ZoneOffset.UTC
                 );
 
+        accountAiQuotaService.reserveIfAuthenticated();
+        globalAiBudgetGuard.reserveRequestUnit();
+
         job.queueRetry(
                 openAiProperties.model(),
                 now
@@ -360,6 +397,28 @@ public class AnalysisPersistenceService {
             AnalysisData.Snapshot snapshot,
             AnalysisAiResult result
     ) {
+
+        complete(snapshot, result, null);
+    }
+
+    private int accountAiAttemptsLimit() {
+        // The existing per-job max-attempt policy remains authoritative. The
+        // account-level guard is supplied by AccountProperties through the
+        // quota service; this fallback keeps legacy callers bounded by the
+        // existing configured retry limit.
+        return Math.max(accountProperties.limits().consultationAiAttempts(), 1);
+    }
+
+    @Transactional
+    public void complete(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result,
+            AnalysisEvidenceSnapshotData evidenceSnapshot
+    ) {
+
+        if (evidenceSnapshot != null) {
+            evidenceSnapshotService.assertCurrent(evidenceSnapshot);
+        }
 
         AnalysisJob job =
                 analysisJobRepository
@@ -926,6 +985,31 @@ public class AnalysisPersistenceService {
                 result,
                 consultation
                         .getInformationSupplementCount()
+                , partialSafeActions(job, consultation)
         );
+    }
+
+    private java.util.List<AnalysisStateResponse.SafeAction> partialSafeActions(
+            AnalysisJob job,
+            Consultation consultation
+    ) {
+        if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
+                || consultation.getCategory() != com.financialhelper.consultation.ConsultationCategory.CARD) {
+            return java.util.List.of();
+        }
+        try {
+            FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultation.getId());
+            if (plan.status() != PlanStatus.NEEDS_CLARIFICATION || !plan.coverageGaps().isEmpty()) {
+                return java.util.List.of();
+            }
+            return plan.actions().stream()
+                    .map(action -> new AnalysisStateResponse.SafeAction(
+                            action.actionId(), action.title(), action.description()))
+                    .toList();
+        } catch (RuntimeException ignored) {
+            // State polling must not turn a partial-information result into a
+            // technical failure when its optional guidance cannot be loaded.
+            return java.util.List.of();
+        }
     }
 }

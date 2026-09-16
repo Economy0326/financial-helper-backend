@@ -1,5 +1,6 @@
 package com.financialhelper.consultation;
 
+import com.financialhelper.account.Account;
 import com.financialhelper.guest.GuestSession;
 
 import jakarta.persistence.Column;
@@ -41,6 +42,10 @@ public class Consultation {
             nullable = false
     )
     private GuestSession guestSession;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "account_id")
+    private Account account;
 
     @Enumerated(EnumType.STRING)
     @Column(
@@ -141,6 +146,17 @@ public class Consultation {
 
     public GuestSession getGuestSession() {
         return guestSession;
+    }
+
+    public Account getAccount() {
+        return account;
+    }
+
+    public void bindAccount(Account account) {
+        if (this.account != null && !this.account.getId().equals(account.getId())) {
+            throw new IllegalStateException("consultation is already owned by another account");
+        }
+        this.account = account;
     }
 
     public ConsultationCategory getCategory() {
@@ -261,13 +277,21 @@ public class Consultation {
     ) {
 
         this.status =
-                ConsultationStatus.IN_PROGRESS;
+                ConsultationStatus.COMPLETED;
 
         this.currentStep =
                 ConsultationStep.REPORT;
 
         this.updatedAt =
                 updatedAt;
+    }
+
+    public void abandon(OffsetDateTime updatedAt) {
+        if (!ConsultationStatus.activeStatuses().contains(this.status)) {
+            throw new IllegalStateException("Only active consultation can be abandoned");
+        }
+        this.status = ConsultationStatus.ABANDONED;
+        this.updatedAt = updatedAt;
     }
 
 

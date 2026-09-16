@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.financialhelper.account.AccountSessionService;
 
 import java.util.UUID;
 
@@ -27,12 +28,15 @@ public class ConsultationReportController {
 
     private final ConsultationReportService
             consultationReportService;
+    private final AccountSessionService accountSessionService;
 
     public ConsultationReportController(
-            ConsultationReportService consultationReportService
+            ConsultationReportService consultationReportService,
+            AccountSessionService accountSessionService
     ) {
         this.consultationReportService =
                 consultationReportService;
+        this.accountSessionService = accountSessionService;
     }
 
     @PostMapping("/prepare")
@@ -64,10 +68,9 @@ public class ConsultationReportController {
             String rawToken
     ) {
 
-        return consultationReportService
-                .getState(
-                        consultationId,
-                        rawToken
-                );
+        if (accountSessionService.isAuthenticated()) {
+            return consultationReportService.getStateForAccount(consultationId);
+        }
+        return consultationReportService.getState(consultationId, rawToken);
     }
 }

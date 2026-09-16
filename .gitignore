@@ -56,3 +56,8 @@ Thumbs.db
 
 ### Curl / Guest Session Test Files ###
 cookies*.txt
+
+### Retrieval runtime artifacts ###
+var/retrieval-indexes/
+__pycache__/
+*.pyc

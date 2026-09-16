@@ -3,7 +3,16 @@ package com.financialhelper.ai.analysis;
 import com.financialhelper.ai.AiOutputContractException;
 import com.financialhelper.ai.AiProviderException;
 import com.financialhelper.ai.OpenAiStructuredClient;
-import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
+import com.financialhelper.account.AccountProperties;
+import com.financialhelper.account.InputLimitException;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.ai.grounded.GroundedAiInputProjection;
+import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
+import com.financialhelper.ai.grounded.GroundedOutputValidator;
+import com.financialhelper.procedure.FinancialActionPlanData;
+import com.financialhelper.procedure.FinancialActionPlanService;
+import com.financialhelper.procedure.PlanStatus;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,9 +61,9 @@ public class AnalysisWorker {
             3. 법적 승패, 배상 가능성,
                금융기관 위법 여부를 단정하지 않는다.
 
-            4. 아직 공식 금융자료 Retrieval이 제공되지 않았으므로
-               법령, 판례, 공식 기관 지침,
-               URL 또는 출처를 임의 생성하지 않는다.
+            4. CARD 입력에서는 제공된 evidence snapshot의
+               evidenceId와 locator만 인용한다.
+               법령, URL 또는 출처를 임의 생성하지 않는다.
 
             5. READY_FOR_REPORT는 현재 정보만으로
                행동 중심 AI V1 리포트를 만들 수 있을 때 사용한다.
@@ -79,6 +88,9 @@ public class AnalysisWorker {
 
             11. 출력은 반드시 제공된
                 Structured Output Schema를 따른다.
+
+            12. CARD 입력에서는 실제로 사용한
+                snapshot evidenceId와 locator를 모두 명시한다.
             """;
 
     private final AnalysisPersistenceService
@@ -92,11 +104,21 @@ public class AnalysisWorker {
 
     private final JsonMapper jsonMapper;
 
+    private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
+
+    private final GroundedOutputValidator groundedOutputValidator;
+    private final AccountProperties accountProperties;
+    private final FinancialActionPlanService actionPlanService;
+
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
             OpenAiStructuredClient openAiStructuredClient,
             AnalysisAiBusinessValidator businessValidator,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            GroundedOutputValidator groundedOutputValidator,
+            AccountProperties accountProperties,
+            FinancialActionPlanService actionPlanService
     ) {
         this.persistenceService =
                 persistenceService;
@@ -109,6 +131,12 @@ public class AnalysisWorker {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.evidenceSnapshotService = evidenceSnapshotService;
+
+        this.groundedOutputValidator = groundedOutputValidator;
+        this.accountProperties = accountProperties;
+        this.actionPlanService = actionPlanService;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -133,13 +161,25 @@ public class AnalysisWorker {
 
         try {
 
+            if (snapshot.category() == com.financialhelper.consultation.ConsultationCategory.CARD) {
+                FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
+                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION
+                        && plan.coverageGaps().isEmpty()) {
+                    persistenceService.complete(snapshot, partialResult(plan));
+                    return;
+                }
+            }
+
+            AnalysisEvidenceSnapshotData evidenceSnapshot =
+                    evidenceSnapshotService.prepare(snapshot);
+
             AnalysisAiResult result =
                     openAiStructuredClient
                             .generateStructured(
                                     INSTRUCTIONS,
                                     buildModelInput(
                                             snapshot
-                                    ),
+                                    , evidenceSnapshot),
                                     AnalysisAiResult.class
                             );
 
@@ -149,14 +189,24 @@ public class AnalysisWorker {
                                     result
                             );
 
+            if (evidenceSnapshot != null) {
+                groundedOutputValidator.validateAnalysis(result, evidenceSnapshot);
+            }
+
             persistenceService.complete(
                     snapshot,
-                    result
+                    result,
+                    evidenceSnapshot
             );
+
+        } catch (InputLimitException exception) {
+            log.warn("Analysis job input exceeded configured limit. jobId={}", jobId);
+            persistenceService.fail(jobId, "AI_INPUT_TOO_LARGE");
 
         } catch (
                 AiProviderException
                 | AiOutputContractException
+                | GroundedEvidenceUnavailableException
                         exception
         ) {
 
@@ -193,25 +243,75 @@ public class AnalysisWorker {
         }
     }
 
+    private AnalysisAiResult partialResult(FinancialActionPlanData plan) {
+        AnalysisAiResult result = new AnalysisAiResult();
+        result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
+        result.analysisSummary = "현재 확인된 내용으로 안내할 수 있는 부분만 먼저 정리했습니다.";
+        result.keyIssues = plan.actions().isEmpty()
+                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 카드별 행동을 아직 확정할 수 없습니다."))
+                : plan.actions().stream()
+                        .map(action -> issue(action.title(), action.description()))
+                        .toList();
+        result.additionalInformationNeeded = plan.unresolvedFacts().stream()
+                .map(fact -> {
+                    AnalysisAiResult.AdditionalInformation information =
+                            new AnalysisAiResult.AdditionalInformation();
+                    information.topic = factLabel(fact);
+                    information.reason = "이 정보가 확인되면 해당 조건에 맞는 안내를 더 정확히 정리할 수 있어요.";
+                    return information;
+                })
+                .toList();
+        result.evidenceCitations = java.util.List.of();
+        return result;
+    }
+
+    private AnalysisAiResult.KeyIssue issue(String title, String explanation) {
+        AnalysisAiResult.KeyIssue issue = new AnalysisAiResult.KeyIssue();
+        issue.title = title;
+        issue.explanation = explanation;
+        return issue;
+    }
+
+    private String factLabel(String fact) {
+        return switch (fact) {
+            case "institution" -> "카드 발급사";
+            case "productType" -> "카드 종류";
+            case "cardLost" -> "분실·도난 여부";
+            case "unauthorizedPayment" -> "본인이 하지 않은 결제 여부";
+            case "transactionType" -> "거래 유형";
+            case "domestic" -> "국내 거래 여부";
+            case "reported" -> "분실·도난 신고 여부";
+            case "incidentDate" -> "사고 발생 날짜";
+            default -> fact;
+        };
+    }
+
     private String buildModelInput(
-            AnalysisData.Snapshot snapshot
+            AnalysisData.Snapshot snapshot,
+            AnalysisEvidenceSnapshotData evidenceSnapshot
     ) {
 
         try {
 
-            AnalysisPromptInput input =
-                    new AnalysisPromptInput(
-                            snapshot.category()
-                                    .name(),
-
-                            snapshot
-                                    .confirmedSummary()
+            GroundedAiInputProjection.AnalysisInput input =
+                    GroundedAiInputProjection.forAnalysis(
+                            snapshot.category().name(),
+                            snapshot.confirmedSummary(),
+                            evidenceSnapshot
                     );
 
-            return jsonMapper
-                    .writeValueAsString(
-                            input
-                    );
+            String serialized = jsonMapper.writeValueAsString(input);
+            log.info(
+                    "Analysis prompt prepared caseRevision={} followUpRevision={} inputCharacters={} limit={}",
+                    snapshot.caseInputRevision(),
+                    snapshot.followUpAnswerRevision(),
+                    serialized.length(),
+                    accountProperties.limits().maxAiInputCharacters()
+            );
+            if (serialized.length() > accountProperties.limits().maxAiInputCharacters()) {
+                throw new InputLimitException("ai");
+            }
+            return serialized;
 
         } catch (JacksonException exception) {
 
@@ -221,9 +321,4 @@ public class AnalysisWorker {
         }
     }
 
-    private record AnalysisPromptInput(
-            String consultationCategory,
-            ConsultationSummaryAiResult confirmedSummary
-    ) {
-    }
 }

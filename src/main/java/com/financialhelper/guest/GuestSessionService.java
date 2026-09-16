@@ -1,5 +1,8 @@
 package com.financialhelper.guest;
 
+import com.financialhelper.account.Account;
+import com.financialhelper.account.AccountOwnershipException;
+import com.financialhelper.account.AccountSessionService;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationStatus;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,17 +21,20 @@ public class GuestSessionService {
     private final ConsultationRepository consultationRepository;
     private final GuestSessionTokenService tokenService;
     private final Duration sessionTtl;
+    private final AccountSessionService accountSessionService;
 
     public GuestSessionService(
             GuestSessionRepository guestSessionRepository,
             ConsultationRepository consultationRepository,
             GuestSessionTokenService tokenService,
-            @Value("${app.guest-session.ttl}") Duration sessionTtl
+            @Value("${app.guest-session.ttl}") Duration sessionTtl,
+            AccountSessionService accountSessionService
     ) {
         this.guestSessionRepository = guestSessionRepository;
         this.consultationRepository = consultationRepository;
         this.tokenService = tokenService;
         this.sessionTtl = sessionTtl;
+        this.accountSessionService = accountSessionService;
     }
 
     // 유효한 Guest Session을 조회하고,
@@ -42,7 +48,10 @@ public class GuestSessionService {
         }
 
         return findValidSessionInternal(rawToken)
-            .map(GuestSessionResolution::existing)
+            .map(session -> {
+                requireAccountOwnership(session);
+                return GuestSessionResolution.existing(session);
+            })
             .orElseGet(this::createNewSession);
     }
 
@@ -57,6 +66,7 @@ public class GuestSessionService {
         }
 
         return findValidSessionInternal(rawToken)
+                .map(this::requireAccountOwnership)
                 .orElseThrow(
                         GuestSessionExpiredException::new
                 );
@@ -67,7 +77,8 @@ public class GuestSessionService {
     public Optional<GuestSession> findValidSession(
             String rawToken
     ) {
-        return findValidSessionInternal(rawToken);
+        return findValidSessionInternal(rawToken)
+                .map(this::requireAccountOwnership);
     }
 
     // Guest Session과 진행 중 Consultation 존재 여부를 조회해
@@ -77,27 +88,38 @@ public class GuestSessionService {
             String rawToken
     ) {
         Optional<GuestSession> guestSession =
-                findValidSessionInternal(rawToken);
+                findValidSessionInternal(rawToken)
+                        // /session is an authentication/CSRF bootstrap endpoint.
+                        // A stale guest cookie bound to another account must not
+                        // turn this state check into ACCOUNT_OWNERSHIP_REQUIRED.
+                        // Ownership-protected consultation operations still use
+                        // requireAccountOwnership through the methods above.
+                        .filter(this::isUsableForSessionState);
 
         if (guestSession.isEmpty()) {
             return new SessionResponse(
                     // Guest는 존재
                     true,
                     // 이어갈 상담은 없음
-                    false
+                    false,
+                    accountSessionService.isAuthenticated(),
+                    accountSessionService.currentAccountId().orElse(null),
+                    accountSessionService.currentAccount().map(account -> account.getProvider().name()).orElse(null)
             );
         }
 
-        boolean hasActiveConsultation =
-                consultationRepository
-                        .existsByGuestSession_IdAndStatusIn(
-                                guestSession.get().getId(),
-                                ConsultationStatus.resumableStatuses()
-                        );
+        boolean hasActiveConsultation = accountSessionService.isAuthenticated()
+                ? consultationRepository.findFirstByAccount_IdAndStatusInOrderByUpdatedAtDesc(
+                        accountSessionService.currentAccountId().orElseThrow(), ConsultationStatus.resumableStatuses()).isPresent()
+                : consultationRepository.existsByGuestSession_IdAndStatusIn(
+                        guestSession.get().getId(), ConsultationStatus.resumableStatuses());
 
         return new SessionResponse(
                 true,
-                hasActiveConsultation
+                hasActiveConsultation,
+                accountSessionService.isAuthenticated(),
+                accountSessionService.currentAccountId().orElse(null),
+                accountSessionService.currentAccount().map(account -> account.getProvider().name()).orElse(null)
         );
     }
 
@@ -125,6 +147,30 @@ public class GuestSessionService {
                 savedSession,
                 rawToken
         );
+    }
+
+    private GuestSession requireAccountOwnership(GuestSession session) {
+        Account owner = session.getAccount();
+        if (owner == null) {
+            return session;
+        }
+        Account current = accountSessionService.currentAccount()
+                .orElseThrow(AccountOwnershipException::new);
+        if (!owner.getId().equals(current.getId())) {
+            throw new AccountOwnershipException();
+        }
+        return session;
+    }
+
+    private boolean isUsableForSessionState(GuestSession session) {
+        Account owner = session.getAccount();
+        if (owner == null) {
+            return true;
+        }
+
+        return accountSessionService.currentAccount()
+                .map(current -> owner.getId().equals(current.getId()))
+                .orElse(false);
     }
 
     // Raw Token을 Hash한 뒤 만료되지 않은 Guest Session을 조회

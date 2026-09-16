@@ -1,6 +1,7 @@
 package com.financialhelper.ai.report;
 
 import com.financialhelper.ai.analysis.AnalysisAiResult;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
 import com.financialhelper.consultation.ConsultationCategory;
 
@@ -20,7 +21,8 @@ public final class ConsultationReportData {
             long caseInputRevision,
             long followUpAnswerRevision,
             ConsultationSummaryAiResult summary,
-            AnalysisAiResult analysis
+            AnalysisAiResult analysis,
+            AnalysisEvidenceSnapshotData groundedEvidence
     ) {
     }
 
@@ -30,7 +32,8 @@ public final class ConsultationReportData {
             long followUpAnswerRevision,
             String model,
             ConsultationReportAiResult result,
-            OffsetDateTime generatedAt
+            OffsetDateTime generatedAt,
+            UUID evidenceSnapshotId
     ) {
     }
 }

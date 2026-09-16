@@ -29,6 +29,15 @@ dependencies {
 	// Spring Boot와 Flyway 연결
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 
+	// 공식 HTML 원문 파싱 / 정규화
+	implementation 'org.jsoup:jsoup:1.23.2'
+
+	// 공식 PDF 원문에서 텍스트를 추출하되 원본 bytes는 SourceDocument에 보존
+	implementation 'org.apache.pdfbox:pdfbox:3.0.5'
+
+	// HWP 5.0 OLE container access for the narrow official HWP parser
+	implementation 'org.apache.poi:poi:5.4.1'
+
 	// Flyway PostgreSQL 지원
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 

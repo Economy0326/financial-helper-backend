@@ -1,5 +1,7 @@
 package com.financialhelper.common.config;
 
+import com.financialhelper.account.AccountSessionAuthenticationFilter;
+import com.financialhelper.account.RateLimitFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -10,22 +12,32 @@ import org.springframework.security.config.annotation.web
         .builders.HttpSecurity;
 
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf
         .CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf
+        .CsrfTokenRequestAttributeHandler;
 
 @Configuration
 public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http
+            HttpSecurity http,
+            AccountSessionAuthenticationFilter accountSessionAuthenticationFilter,
+            RateLimitFilter rateLimitFilter
     ) throws Exception {
 
+        // The browser client reads the double-submit token to mirror it in
+        // X-XSRF-TOKEN. It is not an authentication credential, and keeping
+        // it readable is required for the configured cookie/header contract.
         CookieCsrfTokenRepository csrfTokenRepository =
-                new CookieCsrfTokenRepository();
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+        CsrfTokenRequestAttributeHandler csrfRequestHandler =
+                new CsrfTokenRequestAttributeHandler();
 
         csrfTokenRepository.setCookiePath("/");
-
         http
                 .cors(Customizer.withDefaults())
 
@@ -33,14 +45,28 @@ public class SecurityConfig {
                         .csrfTokenRepository(
                                 csrfTokenRepository
                         )
+                        .csrfTokenRequestHandler(csrfRequestHandler)
                 )
+
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                .addFilterBefore(rateLimitFilter, AnonymousAuthenticationFilter.class)
+                .addFilterBefore(accountSessionAuthenticationFilter, RateLimitFilter.class)
 
                 .authorizeHttpRequests(authorize -> authorize
 
                     .requestMatchers(
-                            "/health"
+                            "/health", "/health/readiness", "/ready"
                     )
                     .permitAll()
+
+                    .requestMatchers("/api/v1/auth/**")
+                    .permitAll()
+
+                    .requestMatchers("/api/v1/account/**")
+                    .authenticated()
 
                     .requestMatchers(
                             HttpMethod.GET,
@@ -76,7 +102,16 @@ public class SecurityConfig {
                     .requestMatchers(
                             HttpMethod.POST,
                             "/api/v1/consultations/*/understanding",
-                            "/api/v1/consultations/*/follow-up/prepare"
+                            "/api/v1/consultations/*/follow-up/prepare",
+                            "/api/v1/consultations/*/procedure-follow-up/prepare",
+                            "/api/v1/consultations/*/financial-action-plan"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.GET,
+                            "/api/v1/consultations/*/procedure-follow-up",
+                            "/api/v1/consultations/*/financial-action-plan"
                     )
                     .permitAll()
 
@@ -89,6 +124,12 @@ public class SecurityConfig {
                     .requestMatchers(
                             HttpMethod.PUT,
                             "/api/v1/consultations/*/follow-up/questions/*/answer"
+                    )
+                    .permitAll()
+
+                    .requestMatchers(
+                            HttpMethod.PUT,
+                            "/api/v1/consultations/*/procedure-follow-up/questions/*/answer"
                     )
                     .permitAll()
 

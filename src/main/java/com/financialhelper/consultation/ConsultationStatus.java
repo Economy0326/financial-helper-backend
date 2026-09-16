@@ -15,6 +15,7 @@ public enum ConsultationStatus {
     INSUFFICIENT_INFORMATION,
 
     COMPLETED,
+    ABANDONED,
     FAILED;
 
     // 실제로 계속 진행하거나 Retry 할 수 있는 상담 상태

@@ -13,6 +13,9 @@ import java.util.UUID;
 public interface AnalysisJobRepository
         extends JpaRepository<AnalysisJob, UUID> {
 
+    @Query("select coalesce(sum(job.attemptCount), 0) from AnalysisJob job where job.consultation.id = :consultationId")
+    long sumAttemptCountByConsultationId(@Param("consultationId") UUID consultationId);
+
     Optional<AnalysisJob>
     findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
             UUID consultationId,

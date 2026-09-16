@@ -1,0 +1,95 @@
+# Preparation-only Render Blueprint.
+# Syncing this file creates paid resources and requires an explicit user
+# review in the Render dashboard. No secret values are stored here.
+services:
+  - type: web
+    name: financial-helper-backend
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/readiness
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+      - key: DB_URL
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: KURE_RUNTIME_ENDPOINT
+        value: http://financial-helper-kure:10000
+      - key: KURE_RUNTIME_ENABLED
+        value: "true"
+      - key: LAW_OPEN_API_ENABLED
+        value: "true"
+      - key: LAW_OC
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AI_ENABLED
+        value: "true"
+      - key: KAKAO_LOGIN_ENABLED
+        value: "true"
+      - key: KAKAO_CLIENT_ID
+        sync: false
+      - key: KAKAO_CLIENT_SECRET
+        sync: false
+      - key: KAKAO_REDIRECT_URI
+        sync: false
+      - key: KAKAO_FRONTEND_SUCCESS_URI
+        sync: false
+      - key: NAVER_LOGIN_ENABLED
+        value: "true"
+      - key: NAVER_CLIENT_ID
+        sync: false
+      - key: NAVER_CLIENT_SECRET
+        sync: false
+      - key: NAVER_REDIRECT_URI
+        sync: false
+      - key: NAVER_FRONTEND_SUCCESS_URI
+        sync: false
+      - key: ACCOUNT_COOKIE_SECURE
+        value: "true"
+      - key: ACCOUNT_COOKIE_SAME_SITE
+        value: Lax
+      - key: GUEST_SESSION_COOKIE_SECURE
+        value: "true"
+      - key: GUEST_SESSION_COOKIE_SAME_SITE
+        value: Lax
+
+  - type: pserv
+    name: financial-helper-kure
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    dockerfilePath: ./retrieval_runtime/Dockerfile
+    dockerContext: .
+    disk:
+      name: kure-runtime-data
+      mountPath: /var/lib/kure
+      sizeGB: 1
+    envVars:
+      - key: KURE_RUNTIME_HOST
+        value: 0.0.0.0
+      - key: KURE_RUNTIME_PORT
+        value: "10000"
+      - key: KURE_INDEX_ROOT
+        value: /var/lib/kure/retrieval-indexes
+      - key: HF_HOME
+        value: /var/lib/kure/huggingface
+      - key: KURE_DEVICE
+        value: cpu
+
+databases:
+  - name: financial-helper-db
+    region: singapore
+    plan: 0.5c-1g
+    diskSizeGB: 15
+    postgresMajorVersion: "18"
+    ipAllowList: []

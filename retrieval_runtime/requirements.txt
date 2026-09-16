@@ -1,0 +1,5 @@
+# Pins for the KURE-v2 / PyLate / PLAID foundation.
+pylate==1.6.0
+sentence-transformers==5.3.0
+fast-plaid==1.4.6.2110
+

@@ -9,7 +9,59 @@ spring:
   profiles:
     default: local
 
+server:
+  # Render supplies PORT. The local fallback keeps the existing 8080 workflow.
+  port: ${PORT:8080}
+  address: ${SERVER_ADDRESS:0.0.0.0}
+
 app:
+  auth:
+    general-consultation-required: ${GENERAL_CONSULTATION_LOGIN_REQUIRED:true}
+    session-ttl: ${ACCOUNT_SESSION_TTL:PT12H}
+    cookie-name: ${ACCOUNT_COOKIE_NAME:financial_helper_account}
+    cookie-secure: ${ACCOUNT_COOKIE_SECURE:false}
+    cookie-same-site: ${ACCOUNT_COOKIE_SAME_SITE:Lax}
+    kakao:
+      enabled: ${KAKAO_LOGIN_ENABLED:false}
+      client-id: ${KAKAO_CLIENT_ID:}
+      client-secret: ${KAKAO_CLIENT_SECRET:}
+      redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:8080/api/v1/auth/kakao/callback}
+      frontend-success-uri: ${KAKAO_FRONTEND_SUCCESS_URI:http://localhost:3000/account}
+      authorize-url: ${KAKAO_AUTHORIZE_URL:https://kauth.kakao.com/oauth/authorize}
+      token-url: ${KAKAO_TOKEN_URL:https://kauth.kakao.com/oauth/token}
+      user-info-url: ${KAKAO_USER_INFO_URL:https://kapi.kakao.com/v2/user/me}
+      timeout: ${KAKAO_TIMEOUT:10s}
+    naver:
+      enabled: ${NAVER_LOGIN_ENABLED:false}
+      client-id: ${NAVER_CLIENT_ID:}
+      client-secret: ${NAVER_CLIENT_SECRET:}
+      redirect-uri: ${NAVER_REDIRECT_URI:http://localhost:8080/api/v1/auth/naver/callback}
+      frontend-success-uri: ${NAVER_FRONTEND_SUCCESS_URI:http://localhost:3000/account}
+      authorize-url: ${NAVER_AUTHORIZE_URL:https://nid.naver.com/oauth2.0/authorize}
+      token-url: ${NAVER_TOKEN_URL:https://nid.naver.com/oauth2.0/token}
+      user-info-url: ${NAVER_USER_INFO_URL:https://openapi.naver.com/v1/nid/me}
+      timeout: ${NAVER_TIMEOUT:10s}
+    limits:
+      max-situation-characters: ${MAX_SITUATION_CHARACTERS:1000}
+      max-follow-up-characters: ${MAX_FOLLOW_UP_CHARACTERS:64}
+      max-ai-input-characters: ${MAX_AI_INPUT_CHARACTERS:12000}
+      max-request-bytes: ${MAX_REQUEST_BYTES:262144}
+      ai-attempts-per-window: ${AI_ATTEMPTS_PER_WINDOW:10}
+      ai-quota-window: ${AI_QUOTA_WINDOW:PT1H}
+      consultation-ai-attempts: ${CONSULTATION_AI_ATTEMPTS:3}
+      rate-limit-requests: ${RATE_LIMIT_REQUESTS:60}
+      rate-limit-window: ${RATE_LIMIT_WINDOW:PT1M}
+      rate-limit-enabled: ${RATE_LIMIT_ENABLED:true}
+      global-ai-budget-enabled: ${GLOBAL_AI_BUDGET_ENABLED:false}
+      global-ai-budget-units: ${GLOBAL_AI_BUDGET_UNITS:1000}
+      new-consultation-limit: ${ACCOUNT_NEW_CONSULTATION_LIMIT:3}
+      consultation-window-days: ${ACCOUNT_CONSULTATION_WINDOW_DAYS:7}
+      max-active-consultations: ${ACCOUNT_MAX_ACTIVE_CONSULTATIONS:1}
+
+  card-corpus:
+    # Human-approved CARD activation is explicit and opt-in.
+    run-on-startup: ${CARD_CORPUS_RUN_ON_STARTUP:false}
+
   guest-session:
     ttl: ${GUEST_SESSION_TTL:PT24H}
 
@@ -18,6 +70,49 @@ app:
 
   cors:
     allowed-origin: ${FRONTEND_ORIGIN:http://localhost:3000}
+
+  source-ingestion:
+    run-on-startup: ${SOURCE_INGESTION_RUN_ON_STARTUP:false}
+    connect-timeout: ${SOURCE_INGESTION_CONNECT_TIMEOUT:10s}
+    request-timeout: ${SOURCE_INGESTION_REQUEST_TIMEOUT:20s}
+    max-response-bytes: ${SOURCE_INGESTION_MAX_RESPONSE_BYTES:5242880}
+    max-redirects: ${SOURCE_INGESTION_MAX_REDIRECTS:5}
+    user-agent: ${SOURCE_INGESTION_USER_AGENT:FinancialHelperSourceIngestion/1.0}
+
+  retrieval:
+    search-context-ttl: ${RETRIEVAL_SEARCH_CONTEXT_TTL:PT10M}
+    chunking:
+      target-tokens: ${RETRIEVAL_CHUNK_TARGET_TOKENS:500}
+      max-tokens: ${RETRIEVAL_CHUNK_MAX_TOKENS:600}
+      overlap-tokens: ${RETRIEVAL_CHUNK_OVERLAP_TOKENS:0}
+      config-version: ${RETRIEVAL_CHUNK_CONFIG_VERSION:structure-first-v2}
+      tokenizer-identifier: ${RETRIEVAL_TOKENIZER_IDENTIFIER:nlpai-lab/KURE-v2}
+      tokenizer-revision: ${RETRIEVAL_TOKENIZER_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+
+    kure:
+      enabled: ${KURE_RUNTIME_ENABLED:false}
+      endpoint: ${KURE_RUNTIME_ENDPOINT:http://127.0.0.1:8091}
+      connect-timeout: ${KURE_RUNTIME_CONNECT_TIMEOUT:2s}
+      request-timeout: ${KURE_RUNTIME_REQUEST_TIMEOUT:10m}
+      model-identifier: ${KURE_MODEL_IDENTIFIER:nlpai-lab/KURE-v2}
+      model-revision: ${KURE_MODEL_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+      tokenizer-identifier: ${KURE_TOKENIZER_IDENTIFIER:nlpai-lab/KURE-v2}
+      tokenizer-revision: ${KURE_TOKENIZER_REVISION:3431f86d399d666083890dbb882aced6708873bc}
+      query-length: ${KURE_QUERY_LENGTH:64}
+      max-document-tokens: ${KURE_MAX_DOCUMENT_TOKENS:8192}
+      token-vector-dimension: ${KURE_TOKEN_VECTOR_DIMENSION:128}
+      index-backend: ${KURE_INDEX_BACKEND:PLAID}
+      batch-size: ${KURE_BATCH_SIZE:32}
+
+  law-open-api:
+    # Official Korean Law Open API is opt-in and never decides financial actions.
+    enabled: ${LAW_OPEN_API_ENABLED:false}
+    base-url: ${LAW_OPEN_API_BASE_URL:https://www.law.go.kr/DRF}
+    connect-timeout: ${LAW_OPEN_API_CONNECT_TIMEOUT:2s}
+    request-timeout: ${LAW_OPEN_API_REQUEST_TIMEOUT:30s}
+    law-oc: ${LAW_OC:}
+    provider-version: ${LAW_OPEN_API_PROVIDER_VERSION:law-open-api}
+    provider-revision: ${LAW_OPEN_API_PROVIDER_REVISION:unversioned}
 
   ai:
     enabled: ${AI_ENABLED:false}
