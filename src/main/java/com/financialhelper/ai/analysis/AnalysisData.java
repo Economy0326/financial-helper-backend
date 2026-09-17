@@ -5,6 +5,7 @@ import com.financialhelper.ai.summary
 
 import com.financialhelper.consultation
         .ConsultationCategory;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import java.util.UUID;
 
@@ -18,10 +19,20 @@ public final class AnalysisData {
             UUID jobId,
             UUID consultationId,
             ConsultationCategory category,
+            ConsultationScenario scenario,
             long caseInputRevision,
             long followUpAnswerRevision,
             ConsultationSummaryAiResult confirmedSummary
     ) {
+        public Snapshot(UUID jobId, UUID consultationId, ConsultationCategory category,
+                        long caseInputRevision, long followUpAnswerRevision,
+                        ConsultationSummaryAiResult confirmedSummary) {
+            this(jobId, consultationId, category,
+                    category == ConsultationCategory.CARD
+                            ? ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                            : ConsultationScenario.UNKNOWN,
+                    caseInputRevision, followUpAnswerRevision, confirmedSummary);
+        }
     }
 
     // 실행 여부 결정

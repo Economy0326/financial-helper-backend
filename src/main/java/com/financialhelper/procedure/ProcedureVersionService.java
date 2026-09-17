@@ -118,7 +118,8 @@ public class ProcedureVersionService {
         List<ProcedureVersionData.RequiredFact> result = new ArrayList<>();
         for (JsonNode node : jsonMapper.readTree(json)) {
             String key = requiredText(node, "key");
-            if (!CardCaseFactExtractor.ALLOWED_FACT_KEYS.contains(key)) {
+            if (!ScenarioCaseFactExtractor.ALLOWED_FACT_KEYS.contains(key)
+                    && !CardCaseFactExtractor.ALLOWED_FACT_KEYS.contains(key)) {
                 throw new IllegalArgumentException("procedure contains unsupported fact key");
             }
             result.add(new ProcedureVersionData.RequiredFact(
@@ -248,7 +249,8 @@ public class ProcedureVersionService {
             expression.conditions().forEach(ProcedureVersionService::validateConditionFacts);
             return;
         }
-        if (!CardCaseFactExtractor.ALLOWED_FACT_KEYS.contains(expression.factKey())) {
+        if (!ScenarioCaseFactExtractor.ALLOWED_FACT_KEYS.contains(expression.factKey())
+                && !CardCaseFactExtractor.ALLOWED_FACT_KEYS.contains(expression.factKey())) {
             throw new IllegalArgumentException("condition contains unsupported fact key");
         }
     }

@@ -6,7 +6,12 @@ import jakarta.validation.constraints.NotNull;
 public record UpdateConsultationCategoryRequest(
 
         @NotNull
-        ConsultationCategory category
+        ConsultationCategory category,
+
+        ConsultationScenario scenario
 
 ) {
+    public UpdateConsultationCategoryRequest(ConsultationCategory category) {
+        this(category, null);
+    }
 }

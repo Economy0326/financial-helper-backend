@@ -101,6 +101,46 @@ class SourceChunkingServiceTest {
                 .isLessThanOrEqualTo(definitions.get(1).sourceStartOffset());
     }
 
+    @Test
+    void oversizedSingleHtmlLineSplitsAtSafeBoundaries() {
+        SourceChunkPersistenceService persistence = mock(
+                SourceChunkPersistenceService.class
+        );
+        SourceDocument document = mock(SourceDocument.class);
+        when(document.getId()).thenReturn(UUID.randomUUID());
+        String content = String.join(" ", "공식 안내입니다.".repeat(20));
+        when(document.getNormalizedContent()).thenReturn(content);
+        List<SourceChunkData.Definition> definitions = new ArrayList<>();
+        doAnswer(invocation -> {
+            SourceChunkData.Definition definition = invocation.getArgument(1);
+            definitions.add(definition);
+            return mock(SourceChunk.class);
+        }).when(persistence).saveIfAbsent(any(), any());
+
+        SourceChunkingService service = new SourceChunkingService(
+                persistence,
+                new CountingTokenizer(),
+                new SourceChunkingProperties(
+                        5,
+                        6,
+                        0,
+                        "structure-first-v1",
+                        "test-tokenizer",
+                        "test-revision"
+                ),
+                JsonMapper.builder().build()
+        );
+
+        service.chunk(document);
+
+        assertThat(definitions).hasSizeGreaterThan(1);
+        assertThat(definitions).allSatisfy(definition -> {
+            assertThat(definition.body()).doesNotEndWith(" ");
+            assertThat(definition.body()).isNotBlank();
+        });
+        assertThat(definitions.getLast().sourceEndOffset()).isEqualTo(content.length());
+    }
+
     private static final class CountingTokenizer implements SourceChunkTokenizer {
         @Override
         public int countDocumentTokens(String text) {

@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KoreanLawOpenApiLiveSmokeTest {
 
     @Test
-    void validates_card_current_and_2024_historical_versions() {
+    void validates_card_and_breadth_current_and_2024_historical_versions() {
         String lawOc = System.getenv("LAW_OC");
         KoreanLawOpenApiProperties properties = new KoreanLawOpenApiProperties(
                 true,
@@ -36,7 +36,11 @@ class KoreanLawOpenApiLiveSmokeTest {
                 new LawEvidenceRequest("여신전문금융업법 시행령", "제6조의9", null),
                 new LawEvidenceRequest("전자금융거래법", "제9조", null),
                 new LawEvidenceRequest("전자금융거래법", "제10조", null),
-                new LawEvidenceRequest("전자금융거래법 시행령", "제8조", null)
+                new LawEvidenceRequest("전자금융거래법 시행령", "제8조", null),
+                new LawEvidenceRequest(
+                        "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제3조", null),
+                new LawEvidenceRequest(
+                        "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제4조", null)
         );
         Map<String, List<String>> expectedIdentity = Map.of(
                 "여신전문금융업법|제16조", List.of("000536", "277267", "248927"),
@@ -44,6 +48,10 @@ class KoreanLawOpenApiLiveSmokeTest {
                 "전자금융거래법|제9조", List.of("010199", "280277", "218909"),
                 "전자금융거래법|제10조", List.of("010199", "280277", "218909"),
                 "전자금융거래법 시행령|제8조", List.of("010366", "285727", "256699")
+                ,"전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법|제3조",
+                        List.of("011359", "289413", "251011")
+                ,"전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법|제4조",
+                        List.of("011359", "289413", "251011")
         );
         for (LawEvidenceRequest request : requests) {
             var versions = client.searchLaw(request.lawName());

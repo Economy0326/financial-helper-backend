@@ -151,6 +151,69 @@ class FinancialActionPlanServiceTest {
     }
 
     @Test
+    void breadthProcedureWithoutReviewedEvidenceFailsClosed() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        FinancialActionPlanService service = service(procedureService, resolver);
+
+        ProcedureVersionData breadth = new ProcedureVersionData(
+                UUID.randomUUID(), "VOICE_PHISHING_SUSPICIOUS_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT", 1, ProcedureStatus.APPROVED,
+                null, null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of("source corpus pending"), "breadth", "test", null);
+
+        FinancialActionPlanData result = service.buildFromSnapshot(
+                snapshot(), breadth, new CardCaseFacts(Map.of("suspiciousTransfer", "TRUE")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.coverageGaps()).containsExactly("OFFICIAL_EVIDENCE_UNAVAILABLE");
+    }
+
+    @Test
+    void breadthSafeActionSurvivesBlockingUnknownAsPartialGuidance() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(
+                        List.of(new FinancialActionPlanData.EvidenceBinding(
+                                "fsc-2026-alert", UUID.randomUUID(), 1, List.of(UUID.randomUUID()),
+                                null, null, "SAFE_GUIDANCE")), List.of()));
+        FinancialActionPlanService service = service(procedureService, resolver);
+
+        ConditionExpression suspicious = new ConditionExpression(
+                null, "suspiciousTransfer", ConditionOperator.EQ, "TRUE", List.of());
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                UUID.randomUUID(), "VOICE_PHISHING_SUSPICIOUS_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT", 1, ProcedureStatus.APPROVED,
+                null, null,
+                List.of(new ProcedureVersionData.RequiredFact("transferCompleted", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("suspiciousTransfer", "BOOLEAN", true)),
+                List.of(new ProcedureVersionData.ConditionRule("voice-secure-contact", suspicious)),
+                List.of(new ProcedureVersionData.ActionStep("voice-secure-contact", 1,
+                        "금융회사 공식 채널 확인", "안전한 공식 채널로 문의합니다.", null, List.of())),
+                List.of(),
+                List.of(new ProcedureVersionData.EvidenceReference(
+                        "fsc-2026-alert", 1, "hash", null, null, "SAFE_GUIDANCE", true)),
+                List.of(), List.of(), List.of("송금 여부가 확인되면 추가 안내가 달라질 수 있다."),
+                "test", "test", null);
+
+        FinancialActionPlanData result = service.buildFromSnapshot(
+                snapshot(), procedure, new CardCaseFacts(Map.of(
+                        "suspiciousTransfer", "TRUE", "transferCompleted", "UNKNOWN")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("voice-secure-contact");
+        assertThat(result.unresolvedFacts()).contains("transferCompleted");
+        assertThat(result.warnings()).contains("PARTIAL_GUIDANCE_ONLY");
+    }
+
+    @Test
     void overseasTransactionIsOutsideTheInitialCardSlice() {
         ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
         FinancialActionPlanService service = service(procedureService, mock(EvidenceBindingResolver.class));

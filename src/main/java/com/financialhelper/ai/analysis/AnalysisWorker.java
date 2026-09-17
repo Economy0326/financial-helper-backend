@@ -13,6 +13,7 @@ import com.financialhelper.ai.grounded.GroundedOutputValidator;
 import com.financialhelper.procedure.FinancialActionPlanData;
 import com.financialhelper.procedure.FinancialActionPlanService;
 import com.financialhelper.procedure.PlanStatus;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,7 +62,7 @@ public class AnalysisWorker {
             3. 법적 승패, 배상 가능성,
                금융기관 위법 여부를 단정하지 않는다.
 
-            4. CARD 입력에서는 제공된 evidence snapshot의
+            4. Procedure-backed 입력에서는 제공된 evidence snapshot의
                evidenceId와 locator만 인용한다.
                법령, URL 또는 출처를 임의 생성하지 않는다.
 
@@ -89,8 +90,8 @@ public class AnalysisWorker {
             11. 출력은 반드시 제공된
                 Structured Output Schema를 따른다.
 
-            12. CARD 입력에서는 실제로 사용한
-                snapshot evidenceId와 locator를 모두 명시한다.
+            12. Procedure-backed 입력에서는 실제로 사용한
+                snapshot evidenceId와 locator를 명시한다.
             """;
 
     private final AnalysisPersistenceService
@@ -161,7 +162,7 @@ public class AnalysisWorker {
 
         try {
 
-            if (snapshot.category() == com.financialhelper.consultation.ConsultationCategory.CARD) {
+            if (snapshot.scenario() != null && snapshot.scenario() != ConsultationScenario.UNKNOWN) {
                 FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
                 if (plan.status() == PlanStatus.NEEDS_CLARIFICATION
                         && plan.coverageGaps().isEmpty()) {
@@ -248,7 +249,7 @@ public class AnalysisWorker {
         result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
         result.analysisSummary = "현재 확인된 내용으로 안내할 수 있는 부분만 먼저 정리했습니다.";
         result.keyIssues = plan.actions().isEmpty()
-                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 카드별 행동을 아직 확정할 수 없습니다."))
+                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 이 상황에 맞는 행동을 아직 확정할 수 없습니다."))
                 : plan.actions().stream()
                         .map(action -> issue(action.title(), action.description()))
                         .toList();
@@ -274,14 +275,25 @@ public class AnalysisWorker {
 
     private String factLabel(String fact) {
         return switch (fact) {
-            case "institution" -> "카드 발급사";
-            case "productType" -> "카드 종류";
+            case "institution" -> "금융회사";
+            case "productType" -> "금융상품 종류";
             case "cardLost" -> "분실·도난 여부";
             case "unauthorizedPayment" -> "본인이 하지 않은 결제 여부";
             case "transactionType" -> "거래 유형";
             case "domestic" -> "국내 거래 여부";
             case "reported" -> "분실·도난 신고 여부";
             case "incidentDate" -> "사고 발생 날짜";
+            case "transferCompleted" -> "송금 완료 여부";
+            case "userInitiatedTransfer" -> "본인 송금 여부";
+            case "suspiciousTransfer" -> "사기 의심 여부";
+            case "unauthorizedTransaction" -> "본인 아닌 거래 여부";
+            case "reportedToFinancialInstitution" -> "금융회사 신고 여부";
+            case "policeReported" -> "경찰 신고 여부";
+            case "suspiciousLinkClicked" -> "의심 링크 클릭 여부";
+            case "maliciousAppInstalled" -> "의심 앱 설치 여부";
+            case "remoteControlUsed" -> "원격제어 여부";
+            case "personalInfoExposed" -> "개인정보 노출 여부";
+            case "authenticationInfoExposed", "accessCredentialExposed" -> "인증정보 노출 여부";
             default -> fact;
         };
     }
@@ -295,7 +307,7 @@ public class AnalysisWorker {
 
             GroundedAiInputProjection.AnalysisInput input =
                     GroundedAiInputProjection.forAnalysis(
-                            snapshot.category().name(),
+                            snapshot.scenario().name(),
                             snapshot.confirmedSummary(),
                             evidenceSnapshot
                     );

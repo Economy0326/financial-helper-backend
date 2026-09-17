@@ -5,5 +5,6 @@ public enum ConsultationCategory {
     INSURANCE,
     LOAN,
     CARD,
+    FINANCIAL_FRAUD,
     UNKNOWN
 }

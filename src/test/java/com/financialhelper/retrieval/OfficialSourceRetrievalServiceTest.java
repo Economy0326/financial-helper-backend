@@ -193,6 +193,43 @@ class OfficialSourceRetrievalServiceTest {
     }
 
     @Test
+    void breadth_scenario_scope_excludes_card_chunks_from_hybrid_candidates() {
+        UUID generationId = UUID.randomUUID();
+        UUID breadthChunkId = UUID.randomUUID();
+        UUID cardChunkId = UUID.randomUUID();
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(
+                new RetrievalCorpusSnapshotService.EligibleChunk(
+                        breadthChunkId, "의심 송금 신고", UUID.randomUUID(), 1,
+                        LocalDate.of(2026, 2, 12), null, "{}", "금융위원회",
+                        "피싱 예방 안내", "지급정지", null, null, "p1", "https://fsc.go.kr",
+                        "fsc-2026-alert"),
+                new RetrievalCorpusSnapshotService.EligibleChunk(
+                        cardChunkId, "카드 분실 안내", UUID.randomUUID(), 1,
+                        LocalDate.of(2025, 1, 1), null, "{}", "㈜KB국민카드",
+                        "카드 약관", "분실", null, null, "p1", "https://kbcard.com",
+                        "kb-personal-card-terms-260402")));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                        generationId,
+                        List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(
+                                breadthChunkId, 1, 1.0, generationId))));
+        when(keywordSearch.searchApproved(anyString(), anyInt())).thenReturn(List.of());
+
+        OfficialSearchResponse response = service.search(new OfficialSearchRequest(
+                "의심 송금", "FINANCIAL_FRAUD", "금융위원회", null, null, List.of(), 10,
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER"));
+
+        assertThat(response.status()).isEqualTo(RetrievalStatus.FOUND);
+        assertThat(response.candidates()).extracting(OfficialEvidenceCandidate::sourceChunkId)
+                .containsExactly(breadthChunkId)
+                .doesNotContain(cardChunkId);
+    }
+
+    @Test
     void passage_expansion_keeps_parent_article_and_exception_chunks_in_one_version() {
         UUID generationId = UUID.randomUUID();
         UUID documentId = UUID.randomUUID();

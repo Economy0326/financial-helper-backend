@@ -1,6 +1,7 @@
 package com.financialhelper.procedure;
 
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import org.springframework.stereotype.Service;
 
@@ -28,10 +29,16 @@ public class StructuredFollowUpService {
             ConfirmedCaseSnapshotData snapshot,
             Set<String> clarificationAskedKeys
     ) {
-        ProcedureVersionData procedure = procedureVersionService.requireApprovedCard();
-        CardCaseFacts facts = CardCaseFactExtractor.fromSnapshot(snapshot);
+        ConsultationScenario scenario = scenario(snapshot);
+        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? procedureVersionService.requireApprovedCard()
+                : procedureVersionService.requireApproved(scenario.name(),
+                        "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
+        CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? CardCaseFactExtractor.fromSnapshot(snapshot)
+                : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
         return specify(procedure, facts, snapshot == null ? 0 : snapshot.caseInputRevision(),
-                clarificationAskedKeys);
+                clarificationAskedKeys, scenario);
     }
 
     public StructuredFollowUpData specify(
@@ -52,6 +59,17 @@ public class StructuredFollowUpService {
             long caseInputRevision,
             Set<String> clarificationAskedKeys
     ) {
+        return specify(procedure, facts, caseInputRevision, clarificationAskedKeys,
+                scenarioName(procedure));
+    }
+
+    public StructuredFollowUpData specify(
+            ProcedureVersionData procedure,
+            CardCaseFacts facts,
+            long caseInputRevision,
+            Set<String> clarificationAskedKeys,
+            ConsultationScenario scenario
+    ) {
         if (procedure == null || !procedure.status().equals(ProcedureStatus.APPROVED)) {
             throw new IllegalStateException("approved procedure is required");
         }
@@ -60,7 +78,7 @@ public class StructuredFollowUpService {
         List<String> missing = new ArrayList<>();
         List<FollowUpQuestionSpec> questions = new ArrayList<>();
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
-            if (!isRelevant(required.key(), facts)) {
+            if (!isRelevant(required.key(), facts, scenario)) {
                 // The approved procedure may list a fact for the positive CARD
                 // branch. Once the user explicitly says there is no
                 // unauthorized payment, transaction details cannot affect any
@@ -75,11 +93,11 @@ public class StructuredFollowUpService {
             // deterministic planning. Only blocking facts get one useful,
             // deterministic clarification and never the original question again.
             if (facts.value(required.key()) == null) {
-                questions.add(specFor(required));
+                questions.add(specFor(required, scenario));
             } else if ("UNKNOWN".equalsIgnoreCase(facts.value(required.key()))
                     && !clarificationAsked.contains(required.key())
                     && clarificationSupported(required.key())) {
-                questions.add(clarificationSpecFor(required));
+                questions.add(clarificationSpecFor(required, scenario));
             }
         }
         return new StructuredFollowUpData(
@@ -93,6 +111,20 @@ public class StructuredFollowUpService {
             return false;
         }
         return true;
+    }
+
+    private boolean isRelevant(String factKey, CardCaseFacts facts, ConsultationScenario scenario) {
+        if (scenario == ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER
+                && "FALSE".equalsIgnoreCase(facts.value("transferCompleted"))
+                && Set.of("userInitiatedTransfer", "reportedToFinancialInstitution", "policeReported")
+                .contains(factKey)) return false;
+        if (scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                && "FALSE".equalsIgnoreCase(facts.value("unauthorizedTransaction"))
+                && !"unauthorizedTransaction".equals(factKey)) return false;
+        if (scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                && "institution".equals(factKey)
+                && "FALSE".equalsIgnoreCase(facts.value("moneyMoved"))) return false;
+        return isRelevant(factKey, facts);
     }
 
     public StructuredFollowUpData specifyFromValues(
@@ -113,20 +145,48 @@ public class StructuredFollowUpService {
                 clarificationAskedKeys);
     }
 
+    /** Deterministic entry point for breadth scenarios and focused tests. */
+    public StructuredFollowUpData specifyForScenario(
+            ConsultationScenario scenario,
+            Map<String, String> explicitValues,
+            long caseInputRevision,
+            Set<String> clarificationAskedKeys
+    ) {
+        if (scenario == null || scenario == ConsultationScenario.UNKNOWN) {
+            throw new IllegalArgumentException("supported scenario is required");
+        }
+        if (scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
+            return specify(procedureVersionService.requireApprovedCard(),
+                    CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision,
+                    clarificationAskedKeys, scenario);
+        }
+        ProcedureVersionData procedure = procedureVersionService.requireApproved(
+                scenario.name(),
+                "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
+        return specify(procedure, ScenarioCaseFactExtractor.fromValues(explicitValues),
+                caseInputRevision, clarificationAskedKeys, scenario);
+    }
+
     private boolean clarificationSupported(String factKey) {
         return "institution".equals(factKey) || "productType".equals(factKey);
     }
 
-    private FollowUpQuestionSpec clarificationSpecFor(ProcedureVersionData.RequiredFact fact) {
+    private FollowUpQuestionSpec clarificationSpecFor(ProcedureVersionData.RequiredFact fact,
+                                                      ConsultationScenario scenario) {
         return switch (fact.key()) {
-            case "institution" -> new FollowUpQuestionSpec(
+            case "institution" -> scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                    ? new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.INSTITUTION_SELECT,
                     List.of(
                             option("KB_KOOKMIN_CARD", "KB국민카드", "KB국민카드에서 발급한 카드예요."),
                             option("OTHER", "다른 카드사", "다른 카드사라면 이 절차를 적용하지 않아요."),
                             option("UNKNOWN", "그래도 모르겠어요", "카드사를 확인하기 어려워요.")
                     ), "카드 앞면이나 앱에서 카드사를 확인할 수 있나요?",
-                    "확인할 수 있으면 해당 카드사를 선택해 주세요.", true, "CLARIFY_INSTITUTION", false);
+                     "확인할 수 있으면 해당 카드사를 선택해 주세요.", true, "CLARIFY_INSTITUTION", false)
+                    : new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
+                    List.of(option("UNKNOWN", "모르겠어요", "금융회사를 확인하기 어려워요.")),
+                    "이용한 금융회사를 알고 있나요?", "모르면 모르겠어요를 선택해 주세요.",
+                    fact.requiredForDecision(), "IDENTIFY_FINANCIAL_INSTITUTION", true);
             case "productType" -> new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(
@@ -135,20 +195,33 @@ public class StructuredFollowUpService {
                             option("UNKNOWN", "그래도 모르겠어요", "카드 종류를 확인하기 어려워요.")
                     ), "카드 앞면이나 앱에서 '신용' 또는 '체크' 표시를 확인할 수 있나요?",
                     "확인할 수 있으면 해당 카드 종류를 선택해 주세요.", true, "CLARIFY_PRODUCT", false);
-            default -> throw new IllegalArgumentException("unsupported clarification fact: " + fact.key());
+            default -> new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
+                    List.of(option("UNKNOWN", "정확히 모르겠어요", "확인하기 어려워요.")),
+                    "이 내용을 확인할 수 있나요?", "확인하기 어렵다면 모르겠어요를 선택해 주세요.",
+                    fact.requiredForDecision(), "CLARIFY_" + fact.key().toUpperCase(), false);
         };
     }
 
     private FollowUpQuestionSpec specFor(ProcedureVersionData.RequiredFact fact) {
+        return specFor(fact, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+    }
+
+    private FollowUpQuestionSpec specFor(ProcedureVersionData.RequiredFact fact,
+                                         ConsultationScenario scenario) {
         return switch (fact.key()) {
-            case "institution" -> new FollowUpQuestionSpec(
+            case "institution" -> scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                    ? new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.INSTITUTION_SELECT,
                     List.of(
                             option("KB_KOOKMIN_CARD", "KB국민카드", "KB국민카드에서 발급한 카드예요."),
                             option("OTHER", "다른 카드사", "다른 카드사라면 이 절차를 적용하지 않아요."),
                             option("UNKNOWN", "모르겠어요", "카드사를 확인하기 어려워요.")
                     ), "카드를 발급한 카드사가 어디인가요?", "카드 앞면이나 앱에서 확인할 수 있어요.",
-                    true, "IDENTIFY_INSTITUTION", false);
+                    true, "IDENTIFY_INSTITUTION", false)
+                    : new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
+                    List.of(option("UNKNOWN", "모르겠어요", "금융회사를 확인하기 어려워요.")),
+                    "이용한 금융회사를 알고 있나요?", "모르면 모르겠어요를 선택해 주세요.",
+                    fact.requiredForDecision(), "IDENTIFY_FINANCIAL_INSTITUTION", true);
             case "productType" -> new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(
@@ -174,8 +247,51 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.DATE,
                     List.of(option("UNKNOWN", "정확히 기억나지 않아요", "날짜를 확인하기 어려워요.")),
                     "사고가 발생한 날짜를 알려주세요.", "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.", true, "IDENTIFY_INCIDENT_DATE", true);
+            case "transactionDate" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.DATE,
+                    List.of(option("UNKNOWN", "정확히 기억나지 않아요", "거래 날짜를 확인하기 어려워요.")),
+                    "거래가 발생한 날짜를 알려주세요.", "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.", true, "IDENTIFY_TRANSACTION_DATE", true);
+            case "transferCompleted" -> yesNoUnknown(fact.key(), "돈을 이미 송금했나요?", "송금 여부를 선택해 주세요.", "TRANSFER_COMPLETED");
+            case "userInitiatedTransfer" -> yesNoUnknown(fact.key(), "본인이 직접 송금했나요?", "직접 송금했는지 선택해 주세요.", "USER_INITIATED_TRANSFER");
+            case "suspiciousTransfer" -> yesNoUnknown(fact.key(), "사기나 보이스피싱이 의심되나요?", "의심 여부를 선택해 주세요.", "SUSPICIOUS_TRANSFER");
+            case "unauthorizedTransaction" -> yesNoUnknown(fact.key(), "본인이 하지 않은 계좌 거래인가요?", "본인 거래인지 선택해 주세요.", "UNAUTHORIZED_TRANSACTION");
+            case "reportedToFinancialInstitution" -> yesNoUnknown(fact.key(), "금융회사에 신고했나요?", "신고 여부를 선택해 주세요.", "FINANCIAL_INSTITUTION_REPORT");
+            case "policeReported" -> yesNoUnknown(fact.key(), "경찰에 신고했나요?", "경찰 신고 여부를 선택해 주세요.", "POLICE_REPORT");
+            case "financialLossOccurred", "moneyMoved" -> yesNoUnknown(fact.key(), "금전 피해가 발생했나요?", "돈이 실제로 이동했는지 선택해 주세요.", "MONEY_MOVED");
+            case "suspiciousLinkClicked" -> yesNoUnknown(fact.key(), "의심스러운 링크를 눌렀나요?", "링크 클릭 여부를 선택해 주세요.", "SUSPICIOUS_LINK");
+            case "maliciousAppInstalled" -> yesNoUnknown(fact.key(), "의심스러운 앱을 설치했나요?", "앱 설치 여부를 선택해 주세요.", "MALICIOUS_APP");
+            case "remoteControlUsed" -> yesNoUnknown(fact.key(), "원격제어 앱이 사용됐나요?", "원격제어 여부를 선택해 주세요.", "REMOTE_CONTROL");
+            case "personalInfoExposed" -> yesNoUnknown(fact.key(), "개인정보를 전달했나요?", "개인정보 노출 여부를 선택해 주세요.", "PERSONAL_INFO");
+            case "authenticationInfoExposed", "accessCredentialExposed" -> yesNoUnknown(fact.key(), "인증정보나 비밀번호가 노출됐나요?", "인증정보 노출 여부를 선택해 주세요.", "AUTH_EXPOSURE");
+            case "transactionChannel" -> new FollowUpQuestionSpec(fact.key(), FollowUpInputType.ENUM_SELECT,
+                    List.of(option("BANK_APP", "은행 앱", "은행 앱에서 거래했어요."), option("ATM", "ATM", "현금자동입출금기에서 거래했어요."), option("UNKNOWN", "모르겠어요", "수단을 확인하기 어려워요.")),
+                    "어떤 수단으로 거래했나요?", "거래 수단을 선택해 주세요.", fact.requiredForDecision(), "TRANSACTION_CHANNEL", false);
             default -> throw new IllegalArgumentException("unsupported CARD follow-up fact: " + fact.key());
         };
+    }
+
+    private ConsultationScenario scenario(ConfirmedCaseSnapshotData snapshot) {
+        String value = value(snapshot, "scenario", null);
+        if (value == null) return ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE;
+        try { return ConsultationScenario.valueOf(value); }
+        catch (IllegalArgumentException ignored) { return ConsultationScenario.UNKNOWN; }
+    }
+
+    private ConsultationScenario scenarioName(ProcedureVersionData procedure) {
+        try { return ConsultationScenario.valueOf(procedure.scenario()); }
+        catch (Exception ignored) { return ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE; }
+    }
+
+    private String value(ConfirmedCaseSnapshotData snapshot, String key, String fallback) {
+        if (snapshot != null) for (ConfirmedCaseSnapshotData.Fact fact : snapshot.facts()) {
+            if (fact != null && key.equals(fact.key()) && fact.value() != null) return fact.value();
+        }
+        return fallback;
+    }
+
+    private String genericProduct(ConsultationScenario scenario) {
+        return scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT";
     }
 
     private FollowUpQuestionSpec yesNoUnknown(
