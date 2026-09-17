@@ -6,6 +6,7 @@ import java.util.UUID;
 public record ConsultationDetailResponse(
         UUID consultationId,
         ConsultationCategory category,
+        ConsultationScenario scenario,
         String situationText,
         ConsultationStatus status,
         ConsultationStep currentStep,
@@ -18,6 +19,7 @@ public record ConsultationDetailResponse(
         return new ConsultationDetailResponse(
                 consultation.getId(),
                 consultation.getCategory(),
+                consultation.getScenario(),
                 consultation.getSituationText(),
                 consultation.getStatus(),
                 consultation.getCurrentStep(),

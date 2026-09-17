@@ -2,6 +2,7 @@ package com.financialhelper.ai.grounded;
 
 import com.financialhelper.law.LawEvidence;
 import com.financialhelper.procedure.FinancialActionPlanData;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -32,8 +33,43 @@ public record AnalysisEvidenceSnapshotData(
         List<ReviewedLawEvidence> reviewedLawEvidence,
         int snapshotRevision,
         AnalysisEvidenceSnapshotStatus status,
-        OffsetDateTime capturedAt
+        OffsetDateTime capturedAt,
+        ConsultationScenario scenario
 ) {
+    /** Compatibility constructor for legacy CARD snapshot fixtures. */
+    public AnalysisEvidenceSnapshotData(
+            UUID id,
+            UUID consultationId,
+            UUID analysisJobId,
+            long caseInputRevision,
+            long followUpAnswerRevision,
+            UUID procedureVersionId,
+            UUID financialActionPlanId,
+            UUID retrievalGenerationId,
+            String retrievalGenerationKey,
+            String retrievalModelIdentifier,
+            String retrievalModelRevision,
+            String retrievalTokenizerIdentifier,
+            String retrievalTokenizerRevision,
+            String retrievalEncodingConfigJson,
+            String retrievalIndexConfigJson,
+            String retrievalCorpusSnapshotSha256,
+            FinancialActionPlanData actionPlan,
+            List<SourceEvidence> sourceEvidence,
+            List<ReviewedLawEvidence> reviewedLawEvidence,
+            int snapshotRevision,
+            AnalysisEvidenceSnapshotStatus status,
+            OffsetDateTime capturedAt
+    ) {
+        this(id, consultationId, analysisJobId, caseInputRevision, followUpAnswerRevision,
+                procedureVersionId, financialActionPlanId, retrievalGenerationId,
+                retrievalGenerationKey, retrievalModelIdentifier, retrievalModelRevision,
+                retrievalTokenizerIdentifier, retrievalTokenizerRevision,
+                retrievalEncodingConfigJson, retrievalIndexConfigJson,
+                retrievalCorpusSnapshotSha256, actionPlan, sourceEvidence,
+                reviewedLawEvidence, snapshotRevision, status, capturedAt, null);
+    }
+
     public AnalysisEvidenceSnapshotData {
         sourceEvidence = sourceEvidence == null ? List.of() : List.copyOf(sourceEvidence);
         reviewedLawEvidence = reviewedLawEvidence == null ? List.of() : List.copyOf(reviewedLawEvidence);

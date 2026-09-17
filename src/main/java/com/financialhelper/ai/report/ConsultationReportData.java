@@ -4,6 +4,7 @@ import com.financialhelper.ai.analysis.AnalysisAiResult;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
 import com.financialhelper.consultation.ConsultationCategory;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -33,7 +34,20 @@ public final class ConsultationReportData {
             String model,
             ConsultationReportAiResult result,
             OffsetDateTime generatedAt,
-            UUID evidenceSnapshotId
+            UUID evidenceSnapshotId,
+            ConsultationScenario scenario
     ) {
+        public Document(
+                UUID consultationId,
+                long caseInputRevision,
+                long followUpAnswerRevision,
+                String model,
+                ConsultationReportAiResult result,
+                OffsetDateTime generatedAt,
+                UUID evidenceSnapshotId
+        ) {
+            this(consultationId, caseInputRevision, followUpAnswerRevision, model,
+                    result, generatedAt, evidenceSnapshotId, null);
+        }
     }
 }

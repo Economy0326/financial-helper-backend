@@ -296,9 +296,7 @@ public class SourceChunkingService {
         );
 
         if (segmentTokens > properties.maxTokens()) {
-            throw new SourceChunkingException(
-                    "one structural line exceeds the configured token limit"
-            );
+            return splitOversizedLine(segmentStart, segmentEnd, content);
         }
 
         for (int index = 1; index < unitLines.size(); index++) {
@@ -346,6 +344,88 @@ public class SourceChunkingService {
                 )
         );
         return segments;
+    }
+
+    /**
+     * Some official HTML pages expose their whole article as one text node.
+     * Keep the original offsets and split only at punctuation/whitespace
+     * boundaries when that structural line exceeds the token budget.  This is
+     * deliberately a boundary split, never a substring truncation.
+     */
+    private List<Segment> splitOversizedLine(
+            int startOffset,
+            int endOffset,
+            String content
+    ) {
+        List<Segment> segments = new ArrayList<>();
+        int cursor = startOffset;
+        while (cursor < endOffset) {
+            int boundary = largestSafeBoundary(cursor, endOffset, content);
+            if (boundary <= cursor) {
+                throw new SourceChunkingException(
+                        "one structural token exceeds the configured token limit"
+                );
+            }
+            int bodyEnd = trimTrailingWhitespace(boundary, cursor, content);
+            if (bodyEnd <= cursor) {
+                cursor = boundary;
+                continue;
+            }
+            segments.add(new Segment(
+                    cursor,
+                    bodyEnd,
+                    countTokens(content.substring(cursor, bodyEnd))
+            ));
+            cursor = skipWhitespace(boundary, endOffset, content);
+        }
+        return segments;
+    }
+
+    private int largestSafeBoundary(int startOffset, int endOffset, String content) {
+        int low = startOffset + 1;
+        int high = endOffset;
+        int safe = -1;
+        while (low <= high) {
+            int middle = low + ((high - low) / 2);
+            if (countTokens(content.substring(startOffset, middle))
+                    <= properties.maxTokens()) {
+                safe = middle;
+                low = middle + 1;
+            } else {
+                high = middle - 1;
+            }
+        }
+        if (safe < 0) {
+            return -1;
+        }
+        for (int index = safe; index > startOffset; index--) {
+            char value = content.charAt(index - 1);
+            if (Character.isWhitespace(value) || isSentenceBoundary(value)) {
+                return index;
+            }
+        }
+        return safe;
+    }
+
+    private boolean isSentenceBoundary(char value) {
+        return value == '.' || value == '!' || value == '?' || value == '。'
+                || value == '；' || value == ';';
+    }
+
+    private int trimTrailingWhitespace(int boundary, int startOffset, String content) {
+        int result = boundary;
+        while (result > startOffset && Character.isWhitespace(content.charAt(result - 1))) {
+            result--;
+        }
+        return result;
+    }
+
+    private int skipWhitespace(int offset, int endOffset, String content) {
+        int result = offset;
+        while (result < endOffset && Character.isWhitespace(content.charAt(result))) {
+            result++;
+        }
+        return result;
     }
 
     private int countTokens(String text) {

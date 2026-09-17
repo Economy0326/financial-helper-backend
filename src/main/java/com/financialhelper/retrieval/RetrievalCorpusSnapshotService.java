@@ -41,7 +41,8 @@ public class RetrievalCorpusSnapshotService {
                         chunk.getArticleReference(),
                         chunk.getPageReference(),
                         chunk.getLocator(),
-                        chunk.getSourceDocument().getCanonicalUrl()))
+                        chunk.getSourceDocument().getCanonicalUrl(),
+                        chunk.getSourceDocument().getSourceRegistry().getSourceKey()))
                 .toList();
     }
 
@@ -59,7 +60,31 @@ public class RetrievalCorpusSnapshotService {
             String articleReference,
             String pageReference,
             String locator,
-            String canonicalUrl
+            String canonicalUrl,
+            String sourceKey
     ) {
+        /** Compatibility constructor for focused retrieval tests. */
+        public EligibleChunk(
+                UUID sourceChunkId,
+                String body,
+                UUID sourceDocumentId,
+                int documentVersion,
+                java.time.LocalDate applicabilityStartDate,
+                java.time.LocalDate applicabilityEndDate,
+                String representationMetadataJson,
+                String organizationName,
+                String title,
+                String parentSection,
+                String articleReference,
+                String pageReference,
+                String locator,
+                String canonicalUrl
+        ) {
+            this(sourceChunkId, body, sourceDocumentId, documentVersion,
+                    applicabilityStartDate, applicabilityEndDate,
+                    representationMetadataJson, organizationName, title,
+                    parentSection, articleReference, pageReference, locator,
+                    canonicalUrl, null);
+        }
     }
 }

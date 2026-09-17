@@ -2,6 +2,8 @@ package com.financialhelper.procedure;
 
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationCategory;
+import com.financialhelper.consultation.ConsultationScenario;
+import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.consultation.ConsultationNotFoundException;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.guest.GuestSession;
@@ -77,8 +79,8 @@ public class FinancialActionPlanService {
         Consultation consultation = consultationRepository
                 .findByIdAndGuestSession_Id(consultationId, session.getId())
                 .orElseThrow(ConsultationNotFoundException::new);
-        if (consultation.getCategory() != ConsultationCategory.CARD) {
-            throw new IllegalStateException("CARD procedure is unavailable for this consultation category");
+        if (!isProcedureBacked(consultation)) {
+            throw new IllegalStateException("procedure is unavailable for this consultation scenario");
         }
         return buildForConsultation(consultation);
     }
@@ -94,8 +96,8 @@ public class FinancialActionPlanService {
     public FinancialActionPlanData buildForCurrent(UUID consultationId) {
         Consultation consultation = consultationRepository.findById(consultationId)
                 .orElseThrow(ConsultationNotFoundException::new);
-        if (consultation.getCategory() != ConsultationCategory.CARD) {
-            throw new IllegalStateException("CARD procedure is unavailable for this consultation category");
+        if (!isProcedureBacked(consultation)) {
+            throw new IllegalStateException("procedure is unavailable for this consultation scenario");
         }
         return buildForConsultation(consultation);
     }
@@ -104,12 +106,20 @@ public class FinancialActionPlanService {
         ConfirmedCaseSnapshotData snapshotData = snapshotService.capture(consultation.getId());
         ConfirmedCaseSnapshot snapshot = snapshotRepository.findById(snapshotData.id())
                 .orElseThrow(() -> new IllegalStateException("confirmed case snapshot is unavailable"));
-        ProcedureVersionData procedure = procedureVersionService.requireApprovedCard();
+        ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? procedureVersionService.requireApprovedCard()
+                : procedureVersionService.requireApproved(scenario.name(),
+                        "GENERIC_FINANCIAL_INSTITUTION",
+                        scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                                ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT");
         ProcedureVersion procedureEntity = procedureRepository.findById(procedure.id())
                 .orElseThrow(() -> new IllegalStateException("approved procedure entity is unavailable"));
 
         FinancialActionPlanData result = buildFromSnapshot(snapshotData, procedure,
-                CardCaseFactExtractor.fromSnapshot(snapshotData));
+                scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                        ? CardCaseFactExtractor.fromSnapshot(snapshotData)
+                        : ScenarioCaseFactExtractor.fromSnapshot(snapshotData));
         return saveIfAbsent(consultation, procedureEntity, snapshot, result);
     }
 
@@ -144,23 +154,37 @@ public class FinancialActionPlanService {
                     List.of("Only an APPROVED ProcedureVersion may execute."));
         }
 
-        LocalDate incidentDate = incidentDate(facts, unresolved);
+        LocalDate incidentDate = incidentDate(facts, unresolved,
+                !ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario()));
         if (!procedureVersionService.isApplicable(procedure, incidentDate)) {
             coverageGaps.add("PROCEDURE_NOT_APPLICABLE_FOR_INCIDENT_DATE");
         }
-        if (!matchesScope(facts, unresolved)) {
+        if (!matchesScope(procedure.scenario(), facts, unresolved)) {
+            String scopeGap = ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+                    ? "CARD_SCOPE_OUT_OF_SCOPE" : "SCENARIO_SCOPE_OUT_OF_SCOPE";
             return data(snapshot, procedure, PlanStatus.UNSUPPORTED, List.of(), List.of(),
-                    List.of(), unresolved, List.of("CARD_SCOPE_OUT_OF_SCOPE"), warnings);
+                    List.of(), unresolved, List.of(scopeGap), warnings);
         }
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
             if (required.requiredForDecision() && !facts.hasKnownValue(required.key())) {
                 unresolved.add(required.key());
             }
         }
-        if (hasBlockingUnresolved(unresolved)) {
+        if (hasBlockingUnresolved(procedure.scenario(), unresolved)
+                && !hasDefinitelyTrueAction(procedure, facts)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps,
                     List.of("BLOCKING_INFORMATION_REQUIRED"));
+        }
+        // A breadth Procedure definition is not executable until its reviewed
+        // official corpus is bound.  Keeping this guard in the deterministic
+        // plan layer prevents an approved-looking catalog row from producing
+        // unsupported actions while source acquisition/review is pending.
+        if (!ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+                && procedure.evidenceReferences().isEmpty()) {
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
+                    List.of(), unresolved, List.of("OFFICIAL_EVIDENCE_UNAVAILABLE"),
+                    List.of("SCENARIO_CORPUS_NOT_ACTIVATED"));
         }
         // If no action can be determined yet, do not spend evidence resolution
         // work or manufacture a partial result from an UNKNOWN condition.
@@ -180,7 +204,8 @@ public class FinancialActionPlanService {
                 // historical effective date. It is needed once compensation
                 // submission is selected, but must not block the immediate
                 // loss-report branch for an already-known FALSE report state.
-                .filter(reference -> !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
+                .filter(reference -> !ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+                        || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
                         || "TRUE".equalsIgnoreCase(facts.value("reported"))
                         || incidentDate == null)
                 .toList();
@@ -233,7 +258,10 @@ public class FinancialActionPlanService {
                 resolution.bindings(), List.of(), coverageGaps, warnings);
     }
 
-    private boolean matchesScope(CardCaseFacts facts, Set<String> unresolved) {
+    private boolean matchesScope(String scenario, CardCaseFacts facts, Set<String> unresolved) {
+        if (!ProcedureVersionService.CARD_SCENARIO.equals(scenario)) {
+            return matchesBreadthScope(scenario, facts, unresolved);
+        }
         String institution = facts.value("institution");
         if (institution == null || "UNKNOWN".equalsIgnoreCase(institution)) {
             unresolved.add("institution");
@@ -275,15 +303,39 @@ public class FinancialActionPlanService {
         return true;
     }
 
-    private LocalDate incidentDate(CardCaseFacts facts, Set<String> unresolved) {
+    private boolean matchesBreadthScope(String scenario, CardCaseFacts facts, Set<String> unresolved) {
+        if (scenario == null || !Set.of(
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER",
+                "UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "PERSONAL_INFO_SMISHING_MALICIOUS_APP").contains(scenario)) return false;
+        String institution = facts.value("institution");
+        if (institution == null || "UNKNOWN".equalsIgnoreCase(institution)) {
+            // Institution-specific channels are never guessed. Generic safe
+            // actions may still be returned because the procedure uses only
+            // the reviewed, institution-neutral wording.
+        }
+        if ("VOICE_PHISHING_SUSPICIOUS_TRANSFER".equals(scenario)) {
+            String suspicious = facts.value("suspiciousTransfer");
+            if (suspicious != null && !"UNKNOWN".equalsIgnoreCase(suspicious)
+                    && !"TRUE".equalsIgnoreCase(suspicious)) return false;
+        }
+        if ("UNAUTHORIZED_ACCOUNT_TRANSFER".equals(scenario)) {
+            String unauthorized = facts.value("unauthorizedTransaction");
+            if (unauthorized != null && !"UNKNOWN".equalsIgnoreCase(unauthorized)
+                    && !"TRUE".equalsIgnoreCase(unauthorized)) return false;
+        }
+        return true;
+    }
+
+    private LocalDate incidentDate(CardCaseFacts facts, Set<String> unresolved, boolean nonBlocking) {
         String value = facts.value("incidentDate");
         if (value == null || "UNKNOWN".equalsIgnoreCase(value)) {
-            unresolved.add("incidentDate");
+            if (!nonBlocking) unresolved.add("incidentDate");
             return null;
         }
         LocalDate parsed = parseDate(value);
         if (parsed == null) {
-            unresolved.add("incidentDate");
+            if (!nonBlocking) unresolved.add("incidentDate");
         }
         return parsed;
     }
@@ -314,8 +366,29 @@ public class FinancialActionPlanService {
         }
     }
 
-    private boolean hasBlockingUnresolved(Set<String> unresolved) {
-        return unresolved.stream().anyMatch(BLOCKING_FACTS::contains);
+    private boolean hasBlockingUnresolved(String scenario, Set<String> unresolved) {
+        if (ProcedureVersionService.CARD_SCENARIO.equals(scenario)) {
+            return unresolved.stream().anyMatch(BLOCKING_FACTS::contains);
+        }
+        Set<String> blocking = Set.of(
+                "institution", "productType", "transferCompleted", "userInitiatedTransfer",
+                "suspiciousTransfer", "unauthorizedTransaction", "transactionType");
+        return unresolved.stream().anyMatch(blocking::contains);
+    }
+
+    private boolean isProcedureBacked(Consultation consultation) {
+        ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+        return scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                || scenario == ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER
+                || scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                || scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP;
+    }
+
+    private String valueFrom(ConfirmedCaseSnapshotData snapshot, String key, String fallback) {
+        if (snapshot != null) for (ConfirmedCaseSnapshotData.Fact fact : snapshot.facts()) {
+            if (fact != null && key.equals(fact.key()) && fact.value() != null) return fact.value();
+        }
+        return fallback;
     }
 
     private boolean hasDefinitelyTrueAction(

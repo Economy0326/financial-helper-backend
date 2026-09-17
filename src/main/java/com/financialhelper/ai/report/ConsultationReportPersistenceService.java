@@ -17,6 +17,7 @@ import com.financialhelper.consultation.ConsultationNotFoundException;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationStatus;
 import com.financialhelper.consultation.ConsultationStep;
+import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.consultation.InvalidConsultationStateException;
 import com.financialhelper.account.Account;
 import com.financialhelper.account.AccountSessionService;
@@ -185,7 +186,8 @@ public class ConsultationReportPersistenceService {
         }
 
         AnalysisEvidenceSnapshotData groundedEvidence = null;
-        if (consultation.getCategory() == com.financialhelper.consultation.ConsultationCategory.CARD) {
+        if (com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
+                != com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
             groundedEvidence = evidenceSnapshotService.loadForJob(
                     analysisJob.getId(), consultation.getCaseInputRevision(),
                     consultation.getFollowUpAnswerRevision());
@@ -447,7 +449,8 @@ public class ConsultationReportPersistenceService {
                 report.getResultJson()
                 ),
                 report.getGeneratedAt(),
-                report.getAnalysisEvidenceSnapshotId()
+                report.getAnalysisEvidenceSnapshotId(),
+                ConsultationScenarioResolver.resolve(report.getConsultation())
         );
     }
 }

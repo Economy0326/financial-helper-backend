@@ -54,7 +54,7 @@ public class ConsultationReportService {
             3. 법적 승패, 손해배상 가능성,
                환급 가능성을 확정적으로 표현하지 않는다.
 
-            4. CARD 입력에서는 제공된 evidence snapshot의
+            4. Procedure-backed 입력에서는 제공된 evidence snapshot의
                evidenceId와 locator만 인용한다.
                법령, URL, 기관 지침 또는 사례를 만들어내지 않는다.
 
@@ -80,7 +80,7 @@ public class ConsultationReportService {
 
             12. 출력은 제공된 Structured Output Schema만 사용한다.
 
-            13. CARD actionSteps와 requiredDocuments에는
+            13. actionSteps와 requiredDocuments에는
                 snapshot의 승인된 actionId/documentId, 제목, 설명을
                 그대로 사용한다.
             """;

@@ -10,13 +10,22 @@ public record OfficialSearchRequest(
         String productType,
         LocalDate incidentDate,
         List<ConfirmedCaseSnapshotData.Fact> confirmedFacts,
-        int limit
+        int limit,
+        String scenario
 ) {
+    public OfficialSearchRequest(String query, String category, String institution,
+                                 String productType, LocalDate incidentDate,
+                                 List<ConfirmedCaseSnapshotData.Fact> confirmedFacts,
+                                 int limit) {
+        this(query, category, institution, productType, incidentDate, confirmedFacts, limit, null);
+    }
+
     public OfficialSearchRequest {
         query = query == null ? "" : query.trim();
         category = normalize(category);
         institution = normalize(institution);
         productType = normalize(productType);
+        scenario = normalize(scenario);
         confirmedFacts = confirmedFacts == null ? List.of() : List.copyOf(confirmedFacts);
         if (limit == 0) {
             limit = 10;

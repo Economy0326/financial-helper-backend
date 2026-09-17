@@ -62,6 +62,10 @@ app:
     # Human-approved CARD activation is explicit and opt-in.
     run-on-startup: ${CARD_CORPUS_RUN_ON_STARTUP:false}
 
+  breadth-corpus:
+    # Human-reviewed breadth activation is explicit and opt-in.
+    run-on-startup: ${BREADTH_CORPUS_RUN_ON_STARTUP:false}
+
   guest-session:
     ttl: ${GUEST_SESSION_TTL:PT24H}
 

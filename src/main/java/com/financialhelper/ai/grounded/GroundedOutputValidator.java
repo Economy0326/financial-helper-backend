@@ -19,7 +19,7 @@ public class GroundedOutputValidator {
             AnalysisEvidenceSnapshotData snapshot
     ) {
         if (snapshot == null || result == null) {
-            throw new AiOutputContractException("CARD evidence snapshot and analysis result are required");
+            throw new AiOutputContractException("grounded evidence snapshot and analysis result are required");
         }
         validateCitations(result.evidenceCitations, snapshot, true);
     }
@@ -29,27 +29,27 @@ public class GroundedOutputValidator {
             AnalysisEvidenceSnapshotData snapshot
     ) {
         if (snapshot == null || result == null) {
-            throw new AiOutputContractException("CARD evidence snapshot and report result are required");
+            throw new AiOutputContractException("grounded evidence snapshot and report result are required");
         }
         validateCitations(result.evidenceCitations, snapshot, true);
         FinancialActionPlanData plan = snapshot.actionPlan();
         if (plan == null || plan.status() != com.financialhelper.procedure.PlanStatus.READY) {
-            throw new AiOutputContractException("CARD report requires a READY action plan");
+            throw new AiOutputContractException("grounded report requires a READY action plan");
         }
         if (result.firstAction == null || result.firstAction.actionId == null
                 || result.firstAction.actionId.isBlank()) {
-            throw new AiOutputContractException("CARD report first action must reference a procedure action");
+            throw new AiOutputContractException("grounded report first action must reference a procedure action");
         }
         List<FinancialActionPlanData.Action> actions = plan.actions();
         if (actions.isEmpty() || !actions.get(0).actionId().equals(result.firstAction.actionId)) {
-            throw new AiOutputContractException("CARD report first action is outside the approved procedure");
+            throw new AiOutputContractException("grounded report first action is outside the approved procedure");
         }
         if (!actions.get(0).title().equals(result.firstAction.title)
                 || !actions.get(0).description().equals(result.firstAction.description)) {
-            throw new AiOutputContractException("CARD report first action differs from the approved procedure");
+            throw new AiOutputContractException("grounded report first action differs from the approved procedure");
         }
         if (result.actionSteps == null || result.actionSteps.size() != actions.size()) {
-            throw new AiOutputContractException("CARD report action steps must match the approved procedure");
+            throw new AiOutputContractException("grounded report action steps must match the approved procedure");
         }
         for (int i = 0; i < actions.size(); i++) {
             FinancialActionPlanData.Action expected = actions.get(i);
@@ -58,21 +58,21 @@ public class GroundedOutputValidator {
                     || expected.order() != actual.order
                     || !expected.title().equals(actual.title)
                     || !expected.description().equals(actual.description)) {
-                throw new AiOutputContractException("CARD report action differs from the approved procedure");
+                throw new AiOutputContractException("grounded report action differs from the approved procedure");
             }
         }
         if (result.requiredDocuments == null) {
-            throw new AiOutputContractException("CARD report documents are required");
+            throw new AiOutputContractException("grounded report documents are required");
         }
         if (result.requiredDocuments.size() != plan.requiredDocuments().size()) {
-            throw new AiOutputContractException("CARD report documents must match the action plan");
+            throw new AiOutputContractException("grounded report documents must match the action plan");
         }
         for (int i = 0; i < plan.requiredDocuments().size(); i++) {
             var expected = plan.requiredDocuments().get(i);
             var actual = result.requiredDocuments.get(i);
             if (!expected.documentId().equals(actual.documentId)
                     || !expected.title().equals(actual.name)) {
-                throw new AiOutputContractException("CARD report document differs from the action plan");
+                throw new AiOutputContractException("grounded report document differs from the action plan");
             }
         }
     }

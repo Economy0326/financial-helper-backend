@@ -109,7 +109,7 @@ public class OfficialSourceRetrievalService {
         ConfirmedCaseSnapshotData snapshot = confirmedCaseSnapshotService.capture(consultationId);
         OfficialSearchRequest enriched = new OfficialSearchRequest(
                 request.query(), request.category(), request.institution(), request.productType(),
-                request.incidentDate(), snapshot.facts(), request.limit());
+                request.incidentDate(), snapshot.facts(), request.limit(), request.scenario());
         OfficialSearchResponse response = search(enriched);
         if (persistentContextRepository != null) {
             persistentContextRepository.deleteById(response.searchId());
@@ -145,6 +145,14 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
+            remember(searchId, response, Map.of(), null, 0L, 0L);
+            return response;
+        }
+
+        if (request.scenario() != null && !isSupportedScenario(request.scenario())) {
+            OfficialSearchResponse response = new OfficialSearchResponse(
+                    searchId, RetrievalStatus.NO_MATCH, false, List.of(),
+                    List.of("UNSUPPORTED_SCENARIO"), List.of());
             remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
@@ -334,29 +342,78 @@ public class OfficialSourceRetrievalService {
         boolean commonSource = contains(organization, "여신금융협회")
                 || contains(organization, "금융위원회")
                 || contains(organization, "금융감독원");
+        if (request.scenario() != null && !matchesScenarioSource(chunk, request.scenario())) {
+            return false;
+        }
         if (institution != null && !commonSource
                 && !contains(organization, institution)
         ) {
             return false;
         }
-        if (request.productType() != null) {
+        boolean cardScope = request.scenario() == null
+                ? request.category() == null || "CARD".equalsIgnoreCase(request.category())
+                : "CARD_LOSS_UNAUTHORIZED_USE".equalsIgnoreCase(request.scenario());
+        if (cardScope && request.productType() != null) {
             String product = normalize(request.productType());
             if (containsAny(product, CARD_OUT_OF_SCOPE_TERMS)
                     || !contains(product, "신용카드")) {
                 return false;
             }
         }
-        if (request.category() != null && !"CARD".equalsIgnoreCase(request.category())) {
+        if (request.category() != null && !"CARD".equalsIgnoreCase(request.category())
+                && request.scenario() == null) {
             return false;
         }
         return true;
     }
 
+    private boolean isSupportedScenario(String scenario) {
+        return Set.of("CARD_LOSS_UNAUTHORIZED_USE", "VOICE_PHISHING_SUSPICIOUS_TRANSFER",
+                "UNAUTHORIZED_ACCOUNT_TRANSFER", "PERSONAL_INFO_SMISHING_MALICIOUS_APP")
+                .contains(scenario.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private boolean matchesScenarioSource(RetrievalCorpusSnapshotService.EligibleChunk chunk,
+                                          String scenario) {
+        if ("CARD_LOSS_UNAUTHORIZED_USE".equalsIgnoreCase(scenario)) {
+            return true;
+        }
+        if (chunk.sourceKey() != null) {
+            return switch (scenario.toUpperCase(java.util.Locale.ROOT)) {
+                case "VOICE_PHISHING_SUSPICIOUS_TRANSFER" ->
+                        Set.of("fsc-2026-alert", "police-campaign", "police-reporting",
+                                "police-response").contains(chunk.sourceKey());
+                case "UNAUTHORIZED_ACCOUNT_TRANSFER" ->
+                        Set.of("fsc-2026-alert", "police-reporting",
+                                "police-response").contains(chunk.sourceKey());
+                case "PERSONAL_INFO_SMISHING_MALICIOUS_APP" ->
+                        Set.of("fsc-2026-alert", "fsc-personal-info", "kisa-118",
+                                "police-reporting").contains(chunk.sourceKey());
+                default -> false;
+            };
+        }
+        String key = (chunk.title() == null ? "" : chunk.title()) + " "
+                + (chunk.canonicalUrl() == null ? "" : chunk.canonicalUrl());
+        String value = key.toLowerCase(java.util.Locale.ROOT);
+        return switch (scenario.toUpperCase(java.util.Locale.ROOT)) {
+            case "VOICE_PHISHING_SUSPICIOUS_TRANSFER" -> value.contains("피싱")
+                    || value.contains("counterscam112") || value.contains("지급정지");
+            case "UNAUTHORIZED_ACCOUNT_TRANSFER" -> value.contains("전자금융")
+                    || value.contains("계좌") || value.contains("이체");
+            case "PERSONAL_INFO_SMISHING_MALICIOUS_APP" -> value.contains("kisa")
+                    || value.contains("스미싱") || value.contains("개인정보");
+            default -> false;
+        };
+    }
+
     private boolean isOutOfScopeCardRequest(OfficialSearchRequest request) {
-        if (request == null || (request.category() != null
-                && !"CARD".equalsIgnoreCase(request.category()))) {
+        if (request == null) {
             return false;
         }
+        boolean cardScope = request.scenario() == null
+                ? request.category() == null || "CARD".equalsIgnoreCase(request.category())
+                : "CARD_LOSS_UNAUTHORIZED_USE".equalsIgnoreCase(request.scenario());
+        if (!cardScope) return false;
         return containsAny(normalize(request.query()), CARD_OUT_OF_SCOPE_TERMS)
                 || (request.productType() != null
                 && (containsAny(normalize(request.productType()), CARD_OUT_OF_SCOPE_TERMS)

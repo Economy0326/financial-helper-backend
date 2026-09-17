@@ -265,6 +265,7 @@ public class ConsultationService {
         // 그래서 update 후 repository.save()를 다시 호출하지 않는다
         consultation.updateCategory(
                 request.category(),
+                request.scenario(),
                 OffsetDateTime.now(ZoneOffset.UTC)
         );
 
@@ -323,6 +324,16 @@ public class ConsultationService {
                 request.situationText(),
                 OffsetDateTime.now(ZoneOffset.UTC)
         );
+        // Re-resolve from the newly submitted explicit situation.  The stored
+        // scenario is a cache for downstream reads and must not prevent a
+        // deliberate situation edit from moving between supported scenarios.
+        ConsultationScenario resolved = ConsultationScenarioResolver.resolve(
+                consultation.getCategory(), request.situationText());
+        // Clear a previously resolved breadth scenario when the edited
+        // situation no longer contains an explicit supported signal.  A
+        // stale scenario must never route the new text through an old
+        // Procedure/FAP scope.
+        consultation.assignScenario(resolved, OffsetDateTime.now(ZoneOffset.UTC));
 
         return UpdateConsultationSituationResponse.from(
                 consultation

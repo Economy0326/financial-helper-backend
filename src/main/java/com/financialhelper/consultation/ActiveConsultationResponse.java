@@ -6,6 +6,7 @@ import java.util.UUID;
 public record ActiveConsultationResponse(
         UUID consultationId,
         ConsultationCategory category,
+        ConsultationScenario scenario,
         ConsultationStatus status,
         ConsultationStep currentStep,
         OffsetDateTime updatedAt
@@ -17,6 +18,7 @@ public record ActiveConsultationResponse(
         return new ActiveConsultationResponse(
                 consultation.getId(),
                 consultation.getCategory(),
+                consultation.getScenario(),
                 consultation.getStatus(),
                 consultation.getCurrentStep(),
                 consultation.getUpdatedAt()

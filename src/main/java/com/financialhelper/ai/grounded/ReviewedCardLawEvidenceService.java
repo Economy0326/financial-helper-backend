@@ -49,6 +49,15 @@ public class ReviewedCardLawEvidenceService {
         }
     }
 
+    /** Breadth scenarios have no approved law allowlist until their versioned
+     * legal review is completed.  Returning an empty set keeps the snapshot
+     * fail-closed without borrowing CARD law evidence. */
+    public List<AnalysisEvidenceSnapshotData.ReviewedLawEvidence> loadForScenario(
+            String scenario, LocalDate incidentDate) {
+        if ("CARD_LOSS_UNAUTHORIZED_USE".equals(scenario)) return load(incidentDate);
+        return List.of();
+    }
+
     private void validateReviewedIdentity(LawEvidence evidence) {
         Set<String> allowed = Set.of(
                 "여신전문금융업법|제16조",

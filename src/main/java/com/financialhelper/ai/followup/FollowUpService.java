@@ -9,6 +9,8 @@ import com.financialhelper.ai.understanding.AiGenerationFailedException;
 import com.financialhelper.ai.understanding.CaseUnderstandingData;
 import com.financialhelper.ai.understanding.CaseUnderstandingService;
 import com.financialhelper.consultation.ConsultationCategory;
+import com.financialhelper.consultation.ConsultationScenarioResolver;
+import com.financialhelper.consultation.ConsultationScenario;
 import com.financialhelper.consultation.ConsultationRepository;
 
 import org.springframework.boot.autoconfigure.condition
@@ -141,7 +143,7 @@ public class FollowUpService {
         // CARD WHAT is owned by the approved Procedure. The existing AI
         // flow remains the fallback for legacy categories.
         if (consultationRepository.findById(consultationId)
-                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .map(consultation -> isProcedureBacked(consultation))
                 .orElse(false)) {
             return procedureFollowUpService.prepareLegacy(consultationId, rawToken);
         }
@@ -246,7 +248,7 @@ public class FollowUpService {
     ) {
 
         if (consultationRepository.findById(consultationId)
-                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .map(consultation -> isProcedureBacked(consultation))
                 .orElse(false)) {
             return procedureFollowUpService.getLegacyState(consultationId, rawToken, questionNumber);
         }
@@ -267,7 +269,7 @@ public class FollowUpService {
     ) {
 
         if (consultationRepository.findById(consultationId)
-                .map(consultation -> consultation.getCategory() == ConsultationCategory.CARD)
+                .map(consultation -> isProcedureBacked(consultation))
                 .orElse(false)) {
             procedureFollowUpService.answer(consultationId, questionId, rawToken, request);
             return procedureFollowUpService.getLegacyState(consultationId, rawToken);
@@ -309,5 +311,13 @@ public class FollowUpService {
                     "Failed to serialize case understanding for follow-up generation"
             );
         }
+    }
+
+    private boolean isProcedureBacked(com.financialhelper.consultation.Consultation consultation) {
+        ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+        return scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                || scenario == ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER
+                || scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                || scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP;
     }
 }

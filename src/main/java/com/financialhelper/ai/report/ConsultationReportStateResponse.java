@@ -114,8 +114,8 @@ public record ConsultationReportStateResponse(
                 ),
 
                 result.evidenceCitations != null && !result.evidenceCitations.isEmpty()
-                        ? groundedEvidence()
-                        : aiV1evidence()
+                        ? groundedEvidence(document.scenario())
+                                : aiV1evidence()
         );
     }
 
@@ -198,10 +198,19 @@ public record ConsultationReportStateResponse(
     ) {
     }
 
-    private static Evidence groundedEvidence() {
+    private static Evidence groundedEvidence(
+            com.financialhelper.consultation.ConsultationScenario scenario
+    ) {
+        String status = scenario
+                == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                || scenario == null
+                ? "GROUNDED_CARD" : "GROUNDED_FINANCIAL_FRAUD";
         return new Evidence(
-                "GROUNDED_CARD",
-                "승인된 CARD 공식 자료와 검토된 법령 근거를 기준으로 작성된 리포트입니다."
+                status,
+                scenario == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                        || scenario == null
+                        ? "승인된 CARD 공식 자료와 검토된 법령 근거를 기준으로 작성된 리포트입니다."
+                        : "승인된 공식 자료를 기준으로 작성된 금융소비자 보호 안내입니다."
         );
     }
 

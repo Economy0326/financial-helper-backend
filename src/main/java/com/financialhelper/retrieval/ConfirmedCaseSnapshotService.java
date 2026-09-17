@@ -4,6 +4,7 @@ import com.financialhelper.ai.followup.FollowUpQuestion;
 import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationRepository;
+import com.financialhelper.consultation.ConsultationScenarioResolver;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -77,6 +78,24 @@ public class ConfirmedCaseSnapshotService {
             facts.add(new ConfirmedCaseSnapshotData.Fact(
                     "CATEGORY", "category", consultation.getCategory().name(),
                     null, "USER_SELECTED", null));
+        }
+        var resolvedScenario = ConsultationScenarioResolver.resolve(consultation);
+        // Preserve the established CARD snapshot shape when the broad CARD
+        // category already determines the legacy scenario.  Breadth scenarios
+        // still carry an explicit scenario fact so downstream services can
+        // select the matching procedure and scope safely.
+        boolean legacyCardScenario = consultation.getCategory()
+                == com.financialhelper.consultation.ConsultationCategory.CARD
+                && resolvedScenario
+                == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE;
+        if (resolvedScenario != com.financialhelper.consultation.ConsultationScenario.UNKNOWN
+                && !legacyCardScenario) {
+            facts.add(new ConfirmedCaseSnapshotData.Fact(
+                    "SCENARIO", "scenario", resolvedScenario.name(),
+                    null, "SYSTEM_RESOLVED_FROM_EXPLICIT_INPUT", null));
+        } else if (resolvedScenario
+                == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
+            missing.add("SCENARIO");
         }
         if (consultation.getSituationText() == null
                 || consultation.getSituationText().isBlank()) {

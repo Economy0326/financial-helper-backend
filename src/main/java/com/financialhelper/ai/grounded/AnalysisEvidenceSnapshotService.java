@@ -92,16 +92,17 @@ public class AnalysisEvidenceSnapshotService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    /** Returns null for legacy/non-CARD consultations. */
+    /** Returns null for legacy consultations without a supported scenario. */
     public AnalysisEvidenceSnapshotData prepare(AnalysisData.Snapshot input) {
-        if (input == null || input.category() != com.financialhelper.consultation.ConsultationCategory.CARD) {
+        if (input == null || input.scenario() == null
+                || input.scenario() == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
             return null;
         }
 
         FinancialActionPlanData plan = actionPlanService.buildForCurrent(input.consultationId());
         if (plan.status() != PlanStatus.READY || plan.id() == null) {
             throw new GroundedEvidenceUnavailableException(
-                    "CARD financial action plan is not READY: " + plan.status());
+                    "financial action plan is not READY: " + plan.status());
         }
 
         ConfirmedCaseSnapshot caseSnapshot = caseSnapshotRepository
@@ -110,7 +111,7 @@ public class AnalysisEvidenceSnapshotService {
                 .orElseThrow(() -> new GroundedEvidenceUnavailableException(
                         "confirmed case snapshot is unavailable"));
         ConfirmedCaseSnapshotData caseData = toCaseData(caseSnapshot);
-        LocalDate incidentDate = incidentDate(caseData);
+        LocalDate incidentDate = incidentDate(caseData, input.scenario());
 
         RetrievalGeneration generation = activeGeneration.current().orElseThrow(() ->
                 new GroundedEvidenceUnavailableException("active retrieval generation is unavailable"));
@@ -121,14 +122,15 @@ public class AnalysisEvidenceSnapshotService {
         List<AnalysisEvidenceSnapshotData.SourceEvidence> sourceEvidence =
                 loadSourceEvidence(plan, generation);
         if (sourceEvidence.isEmpty()) {
-            throw new GroundedEvidenceUnavailableException("CARD official evidence is unavailable");
+            throw new GroundedEvidenceUnavailableException("official evidence is unavailable");
         }
 
         // This is intentionally outside saveSnapshot's transaction.  A live
         // law API call can be slow or fail and must never hold a DB lock.
         List<AnalysisEvidenceSnapshotData.ReviewedLawEvidence> lawEvidence =
-                lawEvidenceService.load(incidentDate);
-        if (lawEvidence.isEmpty()) {
+                lawEvidenceService.loadForScenario(input.scenario().name(), incidentDate);
+        if (lawEvidence.isEmpty() && input.scenario()
+                == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
             throw new GroundedEvidenceUnavailableException("reviewed CARD law evidence is empty");
         }
 
@@ -154,7 +156,8 @@ public class AnalysisEvidenceSnapshotService {
                 lawEvidence,
                 1,
                 AnalysisEvidenceSnapshotStatus.READY,
-                OffsetDateTime.now(ZoneOffset.UTC)
+                OffsetDateTime.now(ZoneOffset.UTC),
+                input.scenario()
         );
         AnalysisEvidenceSnapshotData saved = transactionTemplate.execute(status -> saveIfCurrent(draft));
         if (saved == null) {
@@ -342,7 +345,7 @@ public class AnalysisEvidenceSnapshotService {
                 data.retrievalModelRevision(), data.retrievalTokenizerIdentifier(), data.retrievalTokenizerRevision(),
                 data.retrievalEncodingConfigJson(), data.retrievalIndexConfigJson(), data.retrievalCorpusSnapshotSha256(),
                 data.actionPlan(), data.sourceEvidence(), data.reviewedLawEvidence(), data.snapshotRevision(),
-                data.status(), data.capturedAt());
+                data.status(), data.capturedAt(), data.scenario());
     }
 
     private ConfirmedCaseSnapshotData toCaseData(ConfirmedCaseSnapshot entity) {
@@ -361,7 +364,10 @@ public class AnalysisEvidenceSnapshotService {
         }
     }
 
-    private LocalDate incidentDate(ConfirmedCaseSnapshotData data) {
+    private LocalDate incidentDate(
+            ConfirmedCaseSnapshotData data,
+            com.financialhelper.consultation.ConsultationScenario scenario
+    ) {
         return data.facts().stream()
                 .filter(fact -> "incidentDate".equals(fact.key()))
                 .map(ConfirmedCaseSnapshotData.Fact::value)
@@ -374,7 +380,17 @@ public class AnalysisEvidenceSnapshotService {
                         throw new GroundedEvidenceUnavailableException("incidentDate is invalid", exception);
                     }
                 })
-                .orElseThrow(() -> new GroundedEvidenceUnavailableException(
-                        "incidentDate is required for reviewed law applicability"));
+                .orElseGet(() -> {
+                    // CARD reviewed law evidence requires a date to select an
+                    // applicable legal version. Breadth procedures currently
+                    // have no reviewed law allowlist, so an UNKNOWN date is
+                    // retained as UNKNOWN and does not block their approved
+                    // source evidence snapshot.
+                    if (scenario == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
+                        throw new GroundedEvidenceUnavailableException(
+                                "incidentDate is required for reviewed law applicability");
+                    }
+                    return null;
+                });
     }
 }

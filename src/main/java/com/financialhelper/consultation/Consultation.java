@@ -54,6 +54,10 @@ public class Consultation {
     )
     private ConsultationCategory category;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "scenario", length = 100)
+    private ConsultationScenario scenario;
+
     @Column(name = "situation_text")
     private String situationText;
 
@@ -163,6 +167,10 @@ public class Consultation {
         return category;
     }
 
+    public ConsultationScenario getScenario() {
+        return scenario;
+    }
+
     public String getSituationText() {
         return situationText;
     }
@@ -203,11 +211,23 @@ public class Consultation {
             ConsultationCategory category,
             OffsetDateTime updatedAt
     ) {
+        updateCategory(category, null, updatedAt);
+    }
+
+    public void updateCategory(
+            ConsultationCategory category,
+            ConsultationScenario scenario,
+            OffsetDateTime updatedAt
+    ) {
         // Enum은 동일 값 여부를 == / != 로 비교 가능
         boolean changed =
-                this.category != category;
+                this.category != category || this.scenario != scenario;
 
         this.category = category;
+        // A category edit starts a new scenario resolution.  Keeping the old
+        // breadth scenario when the request omits one would route a later
+        // situation through stale Procedure/FAP scope.
+        this.scenario = scenario;
 
         if (changed) {
             markCaseInputChanged();
@@ -216,6 +236,22 @@ public class Consultation {
                     ConsultationStep.SITUATION;
         }
 
+        this.updatedAt = updatedAt;
+    }
+
+    public void updateScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
+        if (scenario != null && this.scenario != scenario) {
+            this.scenario = scenario;
+            markCaseInputChanged();
+            this.currentStep = ConsultationStep.SITUATION;
+        }
+        this.updatedAt = updatedAt;
+    }
+
+    /** Stores a deterministic scenario resolution for subsequent reads without
+     * treating the derived value as a second user input revision. */
+    public void assignScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
+        if (scenario != null && this.scenario != scenario) this.scenario = scenario;
         this.updatedAt = updatedAt;
     }
 

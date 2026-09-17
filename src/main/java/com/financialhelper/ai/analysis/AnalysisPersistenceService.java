@@ -24,6 +24,7 @@ import com.financialhelper.consultation.ConsultationNotFoundException;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationStatus;
 import com.financialhelper.consultation.ConsultationStep;
+import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.consultation.InvalidConsultationStateException;
 
 import com.financialhelper.guest.GuestSession;
@@ -383,6 +384,7 @@ public class AnalysisPersistenceService {
                         job.getId(),
                         consultation.getId(),
                         consultation.getCategory(),
+                        ConsultationScenarioResolver.resolve(consultation),
                         job.getCaseInputRevision(),
                         job.getFollowUpAnswerRevision(),
                         deserializeSummary(
@@ -994,7 +996,8 @@ public class AnalysisPersistenceService {
             Consultation consultation
     ) {
         if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
-                || consultation.getCategory() != com.financialhelper.consultation.ConsultationCategory.CARD) {
+                || com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
+                == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
             return java.util.List.of();
         }
         try {

@@ -61,11 +61,11 @@ public class ConsultationReportAiResult {
     @Valid
     public ComplaintDraft complaintDraft;
 
-    /** Required for CARD grounded reports; empty for legacy reports. */
+    /** Required for procedure-backed grounded reports; empty for legacy reports. */
     @Size(max = 20)
     @Valid
     @JsonPropertyDescription(
-            "Typed evidence IDs and locators from the supplied CARD evidence snapshot. Never invent URLs or legal citations."
+            "Typed evidence IDs and locators from the supplied evidence snapshot. Never invent URLs or legal citations."
     )
     public List<GroundedEvidenceCitation> evidenceCitations = List.of();
 

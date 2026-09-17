@@ -43,11 +43,11 @@ public class AnalysisAiResult {
     )
     public List<AdditionalInformation> additionalInformationNeeded;
 
-    /** Required for CARD grounded runs; optional for legacy AI V1 runs. */
+    /** Required for procedure-backed grounded runs; optional for legacy AI V1 runs. */
     @Size(max = 20)
     @Valid
     @JsonPropertyDescription(
-            "Typed evidence IDs and locators from the supplied CARD evidence snapshot. Never invent URLs or legal citations."
+            "Typed evidence IDs and locators from the supplied evidence snapshot. Never invent URLs or legal citations."
     )
     public List<GroundedEvidenceCitation> evidenceCitations = List.of();
 
