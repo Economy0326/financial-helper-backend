@@ -14,6 +14,9 @@ class ConsultationScenarioResolverTest {
                 "내가 하지 않은 계좌이체가 있어요."))
                 .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
         assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "제가 하지 않은 국내 계좌이체가 있어요."))
+                .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
                 "모르는 송금이 있어요."))
                 .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
         assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,

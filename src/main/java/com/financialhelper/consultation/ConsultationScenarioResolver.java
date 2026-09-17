@@ -18,7 +18,10 @@ public final class ConsultationScenarioResolver {
                     ? ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE : ConsultationScenario.UNKNOWN;
         }
         String value = situation.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "내가 하지 않은 계좌", "무단이체", "무단 출금", "모르는 계좌", "모르는 송금", "모르는 출금", "하지 않은 출금")) {
+        if (containsAny(value, "내가 하지 않은 계좌", "제가 하지 않은 계좌", "본인이 하지 않은 계좌",
+                "내가 하지 않은", "제가 하지 않은", "본인이 하지 않은",
+                "무단이체", "무단 출금", "모르는 계좌", "모르는 송금", "모르는 출금",
+                "하지 않은 출금", "제가 하지 않은 출금", "본인이 하지 않은 출금")) {
             return ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER;
         }
         if (containsAny(value, "보이스피싱", "사기 의심 송금", "의심 송금", "상대방 지시", "송금했", "송금하려")) {

@@ -247,6 +247,10 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.DATE,
                     List.of(option("UNKNOWN", "정확히 기억나지 않아요", "날짜를 확인하기 어려워요.")),
                     "사고가 발생한 날짜를 알려주세요.", "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.", true, "IDENTIFY_INCIDENT_DATE", true);
+            case "transactionDate" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.DATE,
+                    List.of(option("UNKNOWN", "정확히 기억나지 않아요", "거래 날짜를 확인하기 어려워요.")),
+                    "거래가 발생한 날짜를 알려주세요.", "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.", true, "IDENTIFY_TRANSACTION_DATE", true);
             case "transferCompleted" -> yesNoUnknown(fact.key(), "돈을 이미 송금했나요?", "송금 여부를 선택해 주세요.", "TRANSFER_COMPLETED");
             case "userInitiatedTransfer" -> yesNoUnknown(fact.key(), "본인이 직접 송금했나요?", "직접 송금했는지 선택해 주세요.", "USER_INITIATED_TRANSFER");
             case "suspiciousTransfer" -> yesNoUnknown(fact.key(), "사기나 보이스피싱이 의심되나요?", "의심 여부를 선택해 주세요.", "SUSPICIOUS_TRANSFER");
