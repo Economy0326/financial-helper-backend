@@ -353,6 +353,34 @@ class ConsultationApiIntegrationTest {
         assertThat(saved.getCaseInputRevision()).isEqualTo(previousRevision + 1);
     }
 
+    @Test
+    void explicitFailedAnalysisEditStartsANewRevision() throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createConsultation(guest.session());
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        consultation.updateCategory(ConsultationCategory.CARD, now);
+        consultation.updateSituation("실패한 분석의 기존 상황", now.plusSeconds(1));
+        consultation.moveToAnalysis(now.plusSeconds(2));
+        consultation.markAnalysisFailed(now.plusSeconds(3));
+        consultationRepository.saveAndFlush(consultation);
+        long failedRevision = consultation.getCaseInputRevision();
+
+        mockMvc.perform(
+                        put("/api/v1/consultations/{id}/situation?edit=true", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"situationText\":\"실패 후 수정한 상황\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentStep").value("FOLLOW_UP"));
+
+        Consultation saved = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(saved.getStatus()).isEqualTo(ConsultationStatus.IN_PROGRESS);
+        assertThat(saved.getCaseInputRevision()).isEqualTo(failedRevision + 1);
+        assertThat(saved.getFollowUpAnswerRevision()).isZero();
+        assertThat(saved.getSituationText()).isEqualTo("실패 후 수정한 상황");
+    }
+
     // Guest Ownership
     @Test
     void hidesConsultationFromDifferentGuest()

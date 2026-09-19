@@ -91,7 +91,7 @@ public record AccountProperties(
                     262144,
                     10,
                     Duration.ofHours(1),
-                    3,
+                    5,
                     60,
                     Duration.ofMinutes(1),
                     true,
@@ -114,7 +114,7 @@ public record AccountProperties(
                     maxRequestBytes, aiAttemptsPerWindow, aiQuotaWindow,
                     consultationAiAttempts, rateLimitRequests, rateLimitWindow,
                     rateLimitEnabled, globalAiBudgetEnabled, globalAiBudgetUnits,
-                    3, 7, 1);
+                    5, 7, 1);
         }
     }
 }

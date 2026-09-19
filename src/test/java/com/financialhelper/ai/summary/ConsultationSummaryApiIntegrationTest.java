@@ -184,6 +184,16 @@ class ConsultationSummaryApiIntegrationTest {
                 ConsultationStep.ANALYSIS
         );
 
+        // The frontend can still have an in-flight ordinary GET while the
+        // confirm transition reaches ANALYSIS. It must remain a read-only
+        // stored-summary retrieval, not a 409 state mutation guard.
+        mockMvc.perform(
+                        get("/api/v1/consultations/{id}/summary", consultation.getId())
+                                .cookie(guest.cookie())
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"));
+
         ConsultationSummary savedSummary =
                 consultationSummaryRepository
                         .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
@@ -196,6 +206,38 @@ class ConsultationSummaryApiIntegrationTest {
         assertThat(
                 savedSummary.getConfirmedAt()
         ).isNotNull();
+    }
+
+    @Test
+    void failedAnalysisCanReadTheSavedSummaryWithoutMutatingState()
+            throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createSummaryReadyConsultation(guest.session());
+
+        when(openAiStructuredClient.generateStructured(
+                anyString(), anyString(), eq(ConsultationSummaryAiResult.class)))
+                .thenReturn(createSummaryResult());
+
+        mockMvc.perform(
+                        post("/api/v1/consultations/{id}/summary/prepare", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"));
+
+        consultation.moveToAnalysis(OffsetDateTime.now(ZoneOffset.UTC));
+        consultation.markAnalysisFailed(OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.save(consultation);
+
+        mockMvc.perform(
+                        get("/api/v1/consultations/{id}/summary", consultation.getId())
+                                .cookie(guest.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"));
+
+        Consultation unchanged = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(unchanged.getStatus()).isEqualTo(com.financialhelper.consultation.ConsultationStatus.FAILED);
+        assertThat(unchanged.getCurrentStep()).isEqualTo(ConsultationStep.ANALYSIS);
     }
 
     private void cleanDatabase() {

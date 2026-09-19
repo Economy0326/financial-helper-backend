@@ -99,9 +99,18 @@ public class ConsultationSummaryService {
             UUID consultationId,
             String rawToken
     ) {
+        return getState(consultationId, rawToken, false);
+    }
+
+    public ConsultationSummaryStateResponse getState(
+            UUID consultationId,
+            String rawToken,
+            boolean review
+    ) {
         return persistenceService.getState(
                 consultationId,
-                rawToken
+                rawToken,
+                review
         );
     }
 

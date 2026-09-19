@@ -21,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.Clock;
 import java.time.LocalDate;
 
 import java.util.List;
@@ -41,11 +42,14 @@ public class FollowUpPersistenceService {
 
     private final JsonMapper jsonMapper;
 
+    private final Clock businessClock;
+
     public FollowUpPersistenceService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService,
             FollowUpQuestionRepository followUpQuestionRepository,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            Clock businessClock
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -58,6 +62,9 @@ public class FollowUpPersistenceService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.businessClock =
+                businessClock;
     }
 
     @Transactional(readOnly = true)
@@ -521,7 +528,7 @@ public class FollowUpPersistenceService {
         if ("DATE".equals(question.getInputType())) {
             try {
                 LocalDate date = LocalDate.parse(answerValue);
-                if (date.isAfter(LocalDate.now(ZoneOffset.UTC))) {
+                if (date.isAfter(LocalDate.now(businessClock))) {
                     throw new InvalidFollowUpAnswerException();
                 }
             } catch (java.time.format.DateTimeParseException exception) {

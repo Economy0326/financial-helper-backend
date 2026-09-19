@@ -30,6 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Locale;
 
 @Component
 @ConditionalOnProperty(
@@ -204,12 +205,20 @@ public class AnalysisWorker {
             log.warn("Analysis job input exceeded configured limit. jobId={}", jobId);
             persistenceService.fail(jobId, "AI_INPUT_TOO_LARGE");
 
-        } catch (
-                AiProviderException
-                | AiOutputContractException
-                | GroundedEvidenceUnavailableException
-                        exception
-        ) {
+        } catch (AiOutputContractException exception) {
+
+            log.warn("Analysis job failed validation. jobId={}", jobId);
+            persistenceService.fail(jobId, "AI_VALIDATION_FAILED");
+
+        } catch (GroundedEvidenceUnavailableException exception) {
+
+            String failureCode = groundedFailureCode(exception);
+            log.warn("Analysis job evidence unavailable. jobId={}, category={}", jobId, failureCode);
+            // Keep the public API contract stable while preserving the precise
+            // root category in the server log for diagnosis.
+            persistenceService.fail(jobId, publicFailureCode(failureCode));
+
+        } catch (AiProviderException exception) {
 
             // Provider response, 상담 원문,
             // AI output을 로그로 남기지 않는다
@@ -242,6 +251,97 @@ public class AnalysisWorker {
                     "INTERNAL_ERROR"
             );
         }
+    }
+
+    static String groundedFailureCode(
+            GroundedEvidenceUnavailableException exception
+    ) {
+        String message = exceptionMessages(exception);
+
+        if (message.contains("law")) {
+            return lawFailureCode(message);
+        }
+
+        if (message.contains("financial action plan")) {
+            return "FAP_UNAVAILABLE";
+        }
+
+        if (message.contains("procedure")) {
+            return "PROCEDURE_UNAVAILABLE";
+        }
+
+        if (message.contains("generation")) {
+            return "RETRIEVAL_GENERATION_MISMATCH";
+        }
+
+        if (message.contains("index")) {
+            return "RETRIEVAL_MAPPING_MISSING";
+        }
+
+        if (message.contains("official evidence") || message.contains("source chunk")) {
+            return "NO_APPROVED_EVIDENCE";
+        }
+
+        if (message.contains("snapshot")
+                || message.contains("confirmed case")
+                || message.contains("analysis job")
+                || message.contains("source evidence changed")) {
+            return "SNAPSHOT_UNAVAILABLE";
+        }
+
+        return "RETRIEVAL_UNAVAILABLE";
+    }
+
+    private static String lawFailureCode(String message) {
+        if (message.contains("disabled") || message.contains("law_oc")
+                || message.contains("configuration")) {
+            return "LAW_API_CONFIGURATION_MISSING";
+        }
+        if (message.contains("http error 401") || message.contains("http error 403")
+                || message.contains("unauthorized") || message.contains("forbidden")) {
+            return "LAW_API_AUTH_FAILED";
+        }
+        if (message.contains("http error")) {
+            return "LAW_API_HTTP_FAILED";
+        }
+        if (message.contains("search returned") || message.contains("search failed")) {
+            return "LAW_SEARCH_FAILED";
+        }
+        if (message.contains("requested article") || message.contains("no article")
+                || message.contains("article number is missing")) {
+            return "LAW_REQUIRED_ARTICLE_NOT_FOUND";
+        }
+        if (message.contains("no version applicable") || message.contains("no current statute")
+                || message.contains("future law version")) {
+            return "LAW_EFFECTIVE_VERSION_NOT_FOUND";
+        }
+        if (message.contains("identity") || message.contains("provenance")
+                || message.contains("effective date") || message.contains("allowlist")) {
+            return "LAW_EVIDENCE_VALIDATION_FAILED";
+        }
+        if (message.contains("malformed") || message.contains("missing law")
+                || message.contains("empty response") || message.contains("invalid ")) {
+            return "LAW_RESPONSE_PARSE_FAILED";
+        }
+        return "LAW_EVIDENCE_UNAVAILABLE";
+    }
+
+    private static String publicFailureCode(String internalCategory) {
+        return internalCategory != null && internalCategory.startsWith("LAW_")
+                ? "LAW_EVIDENCE_UNAVAILABLE"
+                : internalCategory;
+    }
+
+    private static String exceptionMessages(Throwable root) {
+        StringBuilder messages = new StringBuilder();
+        Throwable current = root;
+        while (current != null) {
+            if (current.getMessage() != null) {
+                messages.append(' ').append(current.getMessage());
+            }
+            current = current.getCause();
+        }
+        return messages.toString().toLowerCase(Locale.ROOT);
     }
 
     private AnalysisAiResult partialResult(FinancialActionPlanData plan) {

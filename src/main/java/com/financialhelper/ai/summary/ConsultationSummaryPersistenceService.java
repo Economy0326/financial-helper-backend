@@ -217,6 +217,15 @@ public class ConsultationSummaryPersistenceService {
             UUID consultationId,
             String rawToken
     ) {
+        return getState(consultationId, rawToken, false);
+    }
+
+    @Transactional(readOnly = true)
+    public ConsultationSummaryStateResponse getState(
+            UUID consultationId,
+            String rawToken,
+            boolean review
+    ) {
 
         Consultation consultation =
                 findOwnedConsultation(
@@ -224,21 +233,54 @@ public class ConsultationSummaryPersistenceService {
                         rawToken
                 );
 
-        ensureReadyForSummary(
-                consultation
-        );
-
-        return consultationSummaryRepository
+        Optional<ConsultationSummary> stored = consultationSummaryRepository
                 .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
                         consultation.getId(),
                         consultation.getCaseInputRevision(),
                         consultation.getFollowUpAnswerRevision()
-                )
-                .map(this::toDocument)
-                .map(ConsultationSummaryStateResponse::ready)
-                .orElseGet(
-                        ConsultationSummaryStateResponse::notPrepared
                 );
+
+        // GET is a read-only retrieval operation. Once the owned current-revision
+        // Summary exists, downstream ANALYSIS/REPORT states must not turn that
+        // stored record into a state-transition request.
+        if (stored.isPresent()) {
+            return ConsultationSummaryStateResponse.ready(toDocument(stored.get()));
+        }
+
+        // Keep the existing prepare contract for a genuinely absent Summary.
+        // `review` remains accepted for URL compatibility but does not widen
+        // mutation eligibility.
+        ensureReadyForSummary(consultation);
+        return ConsultationSummaryStateResponse.notPrepared();
+    }
+
+    private void ensureReadableSummaryReview(Consultation consultation) {
+        if (!isReadableReviewStatus(consultation)
+                || consultation.getCategory() == null
+                || consultation.getSituationText() == null
+                || consultation.getSituationText().isBlank()) {
+            throw new InvalidConsultationStateException();
+        }
+    }
+
+    private boolean isReadableReviewStep(Consultation consultation) {
+        return consultation.getCurrentStep() == ConsultationStep.ANALYSIS
+                || consultation.getCurrentStep() == ConsultationStep.REPORT;
+    }
+
+    private boolean isReadableReviewStatus(Consultation consultation) {
+        if (!isReadableReviewStep(consultation)) {
+            return false;
+        }
+
+        return switch (consultation.getStatus()) {
+            case IN_PROGRESS, ANALYZING, NEEDS_MORE_INFO,
+                    INSUFFICIENT_INFORMATION, FAILED ->
+                    consultation.getCurrentStep() == ConsultationStep.ANALYSIS;
+            case COMPLETED ->
+                    consultation.getCurrentStep() == ConsultationStep.REPORT;
+            case ABANDONED -> false;
+        };
     }
 
     @Transactional

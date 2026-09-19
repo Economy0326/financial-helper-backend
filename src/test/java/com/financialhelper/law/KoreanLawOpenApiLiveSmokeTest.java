@@ -3,6 +3,7 @@ package com.financialhelper.law;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import tools.jackson.databind.json.JsonMapper;
+import com.financialhelper.ai.grounded.ReviewedCardLawEvidenceService;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -73,5 +74,8 @@ class KoreanLawOpenApiLiveSmokeTest {
             assertThat(historical.lawIdentifier()).isEqualTo(current.lawIdentifier());
             assertThat(historical.mst()).isEqualTo(identity.get(2));
         }
+
+        var reviewedCard = new ReviewedCardLawEvidenceService(service, properties);
+        assertThat(reviewedCard.load(LocalDate.of(2026, 9, 17))).hasSize(5);
     }
 }

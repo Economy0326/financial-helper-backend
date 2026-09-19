@@ -26,6 +26,7 @@ import com.financialhelper.consultation.ConsultationStatus;
 import com.financialhelper.consultation.ConsultationStep;
 import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.consultation.InvalidConsultationStateException;
+import com.financialhelper.consultation.UnsupportedConsultationScopeException;
 
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionService;
@@ -181,6 +182,8 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        rejectUnsupportedProcedureScope(consultation);
+
         if (analysisJobRepository.sumAttemptCountByConsultationId(consultationId)
                 >= accountAiAttemptsLimit()) {
             throw new AnalysisRetryLimitExceededException();
@@ -291,6 +294,8 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        rejectUnsupportedProcedureScope(consultation);
+
         if (
                 job.getAttemptCount()
                         >= analysisProperties
@@ -323,6 +328,17 @@ public class AnalysisPersistenceService {
                         consultation
                 )
         );
+    }
+
+    private void rejectUnsupportedProcedureScope(Consultation consultation) {
+        if (ConsultationScenarioResolver.resolve(consultation)
+                == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
+            return;
+        }
+        FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultation.getId());
+        if (plan.status() == PlanStatus.UNSUPPORTED) {
+            throw new UnsupportedConsultationScopeException();
+        }
     }
 
     @Transactional

@@ -289,7 +289,7 @@ public class ConsultationService {
             UUID consultationId,
             String rawToken,
             UpdateConsultationSituationRequest request,
-            boolean editFromSummary
+            boolean explicitEdit
     ) {
         GuestSession guestSession =
                 guestSessionService
@@ -301,13 +301,13 @@ public class ConsultationService {
                         guestSession
                 );
 
-        ensureInProgress(consultation);
-
         boolean normalEdit = SITUATION_EDITABLE_STEPS.contains(
-                consultation.getCurrentStep());
-        boolean explicitSummaryEdit = editFromSummary
-                && consultation.getCurrentStep() == ConsultationStep.SUMMARY;
-        if (!normalEdit && !explicitSummaryEdit) {
+                consultation.getCurrentStep())
+                && consultation.getStatus() == ConsultationStatus.IN_PROGRESS;
+        boolean explicitFailedAnalysisEdit = explicitEdit
+                && consultation.getCurrentStep() == ConsultationStep.ANALYSIS
+                && consultation.getStatus() == ConsultationStatus.FAILED;
+        if (!normalEdit && !explicitFailedAnalysisEdit) {
             throw new InvalidConsultationStateException();
         }
 
@@ -320,10 +320,15 @@ public class ConsultationService {
             throw new InputLimitException("situation");
         }
 
-        consultation.updateSituation(
-                request.situationText(),
-                OffsetDateTime.now(ZoneOffset.UTC)
-        );
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (explicitFailedAnalysisEdit) {
+            consultation.replaceFailedAnalysisSituation(
+                    request.situationText(), now);
+        } else {
+            consultation.updateSituation(
+                    request.situationText(), now);
+        }
+
         // Re-resolve from the newly submitted explicit situation.  The stored
         // scenario is a cache for downstream reads and must not prevent a
         // deliberate situation edit from moving between supported scenarios.
@@ -333,7 +338,7 @@ public class ConsultationService {
         // situation no longer contains an explicit supported signal.  A
         // stale scenario must never route the new text through an old
         // Procedure/FAP scope.
-        consultation.assignScenario(resolved, OffsetDateTime.now(ZoneOffset.UTC));
+        consultation.assignScenario(resolved, now);
 
         return UpdateConsultationSituationResponse.from(
                 consultation

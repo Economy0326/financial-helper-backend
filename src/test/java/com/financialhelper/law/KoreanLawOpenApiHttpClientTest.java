@@ -107,6 +107,24 @@ class KoreanLawOpenApiHttpClientTest {
                 .hasMessageContaining("requested article");
     }
 
+    @Test
+    void parses_branch_article_with_numeric_fields_and_normalizes_leading_zeroes() {
+        server.removeContext("/DRF/lawService.do");
+        server.createContext("/DRF/lawService.do", exchange -> {
+            lastServiceQuery = exchange.getRequestURI().getRawQuery();
+            respond(exchange, """
+                    {"법령":{"기본정보":{"법령명_한글":"여신전문금융업법","법령ID":"000536","공포일자":"20251001","시행일자":"20251001"},"조문":{"조문단위":{"조문번호":6,"조문가지번호":9,"조문내용":"제6조의9(분기 조문)","항":{"항번호":"1","항내용":"분기 본문"}}}}}
+                    """);
+        });
+
+        var version = client.searchLaw("여신전문금융업법").getFirst();
+        var document = client.getLawText(version, "제06조의09");
+
+        assertThat(document.articleLocator()).isEqualTo("제6조의9");
+        assertThat(document.articleText()).contains("제6조의9(분기 조문)", "분기 본문");
+        assertThat(lastServiceQuery).contains("JO=000609");
+    }
+
     private KoreanLawOpenApiProperties properties(boolean enabled, String oc) {
         return new KoreanLawOpenApiProperties(
                 enabled,

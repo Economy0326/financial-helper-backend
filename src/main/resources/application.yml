@@ -54,7 +54,7 @@ app:
       rate-limit-enabled: ${RATE_LIMIT_ENABLED:true}
       global-ai-budget-enabled: ${GLOBAL_AI_BUDGET_ENABLED:false}
       global-ai-budget-units: ${GLOBAL_AI_BUDGET_UNITS:1000}
-      new-consultation-limit: ${ACCOUNT_NEW_CONSULTATION_LIMIT:3}
+      new-consultation-limit: ${ACCOUNT_NEW_CONSULTATION_LIMIT:5}
       consultation-window-days: ${ACCOUNT_CONSULTATION_WINDOW_DAYS:7}
       max-active-consultations: ${ACCOUNT_MAX_ACTIVE_CONSULTATIONS:1}
 

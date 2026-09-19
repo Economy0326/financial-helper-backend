@@ -179,8 +179,8 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.INSTITUTION_SELECT,
                     List.of(
                             option("KB_KOOKMIN_CARD", "KB국민카드", "KB국민카드에서 발급한 카드예요."),
-                            option("OTHER", "다른 카드사", "다른 카드사라면 이 절차를 적용하지 않아요."),
-                            option("UNKNOWN", "그래도 모르겠어요", "카드사를 확인하기 어려워요.")
+                            option("OTHER", "다른 카드사예요", "다른 카드사라면 이 절차를 적용하지 않아요."),
+                            option("UNKNOWN", "잘 모르겠어요", "카드사를 확인하기 어려워요.")
                     ), "카드 앞면이나 앱에서 카드사를 확인할 수 있나요?",
                      "확인할 수 있으면 해당 카드사를 선택해 주세요.", true, "CLARIFY_INSTITUTION", false)
                     : new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
@@ -191,8 +191,8 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(
                             option("PERSONAL_CREDIT_CARD", "신용카드", "개인 본인 명의의 신용카드예요."),
-                            option("CHECK_CARD", "체크카드", "체크카드는 이 절차의 범위 밖이에요."),
-                            option("UNKNOWN", "그래도 모르겠어요", "카드 종류를 확인하기 어려워요.")
+                            option("OTHER", "다른 카드 종류예요", "현재는 개인 본인 신용카드만 지원해요."),
+                            option("UNKNOWN", "잘 모르겠어요", "카드 종류를 확인하기 어려워요.")
                     ), "카드 앞면이나 앱에서 '신용' 또는 '체크' 표시를 확인할 수 있나요?",
                     "확인할 수 있으면 해당 카드 종류를 선택해 주세요.", true, "CLARIFY_PRODUCT", false);
             default -> new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
@@ -214,8 +214,8 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.INSTITUTION_SELECT,
                     List.of(
                             option("KB_KOOKMIN_CARD", "KB국민카드", "KB국민카드에서 발급한 카드예요."),
-                            option("OTHER", "다른 카드사", "다른 카드사라면 이 절차를 적용하지 않아요."),
-                            option("UNKNOWN", "모르겠어요", "카드사를 확인하기 어려워요.")
+                            option("OTHER", "다른 카드사예요", "다른 카드사라면 이 절차를 적용하지 않아요."),
+                            option("UNKNOWN", "잘 모르겠어요", "카드사를 확인하기 어려워요.")
                     ), "카드를 발급한 카드사가 어디인가요?", "카드 앞면이나 앱에서 확인할 수 있어요.",
                     true, "IDENTIFY_INSTITUTION", false)
                     : new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
@@ -226,9 +226,8 @@ public class StructuredFollowUpService {
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(
                             option("PERSONAL_CREDIT_CARD", "개인 본인 신용카드", "본인 명의의 신용카드예요."),
-                            option("CHECK_CARD", "체크카드", "체크카드는 이 절차의 범위 밖이에요."),
-                            option("PREPAID_CARD", "선불카드", "선불카드는 이 절차의 범위 밖이에요."),
-                            option("UNKNOWN", "모르겠어요", "카드 종류를 확인하기 어려워요.")
+                            option("OTHER", "다른 카드 종류예요", "현재는 개인 본인 신용카드만 지원해요."),
+                            option("UNKNOWN", "잘 모르겠어요", "카드 종류를 확인하기 어려워요.")
                     ), "어떤 종류의 카드인가요?", "카드 종류를 선택해 주세요.", true, "IDENTIFY_PRODUCT", false);
             case "cardLost" -> yesNoUnknown(fact.key(), "카드를 잃어버렸거나 도난당했나요?", "분실 또는 도난 여부를 선택해 주세요.", "CARD_LOSS");
             case "unauthorizedPayment" -> yesNoUnknown(fact.key(), "본인이 하지 않은 결제가 있나요?", "모르는 신용판매 결제가 있는지 선택해 주세요.", "UNAUTHORIZED_PAYMENT");
@@ -300,11 +299,43 @@ public class StructuredFollowUpService {
             String description,
             String intent
     ) {
+        String trueLabel = switch (factKey) {
+            case "domestic" -> "국내에서 발생한 거래예요";
+            case "reported", "reportedToFinancialInstitution", "policeReported" -> "이미 신고했어요";
+            case "cardLost" -> "카드를 잃어버렸어요";
+            case "transferCompleted" -> "이미 송금했어요";
+            case "userInitiatedTransfer" -> "제가 직접 송금했어요";
+            case "unauthorizedTransaction" -> "제가 하지 않은 거래예요";
+            case "suspiciousTransfer" -> "사기나 보이스피싱이 의심돼요";
+            case "financialLossOccurred", "moneyMoved" -> "금전 피해가 발생했어요";
+            case "suspiciousLinkClicked" -> "의심스러운 링크를 눌렀어요";
+            case "maliciousAppInstalled" -> "의심스러운 앱을 설치했어요";
+            case "remoteControlUsed" -> "원격제어 앱이 사용됐어요";
+            case "personalInfoExposed" -> "개인정보를 전달했어요";
+            case "authenticationInfoExposed", "accessCredentialExposed" -> "인증정보가 노출됐어요";
+            default -> "해당돼요";
+        };
+        String falseLabel = switch (factKey) {
+            case "domestic" -> "해외에서 발생한 거래예요";
+            case "reported", "reportedToFinancialInstitution", "policeReported" -> "아직 신고하지 않았어요";
+            case "cardLost" -> "카드는 가지고 있어요";
+            case "transferCompleted" -> "아직 송금하지 않았어요";
+            case "userInitiatedTransfer" -> "제가 송금하지 않았어요";
+            case "unauthorizedTransaction" -> "제가 한 거래예요";
+            case "suspiciousTransfer" -> "사기나 보이스피싱이 의심되지 않아요";
+            case "financialLossOccurred", "moneyMoved" -> "금전 피해가 발생하지 않았어요";
+            case "suspiciousLinkClicked" -> "의심스러운 링크를 누르지 않았어요";
+            case "maliciousAppInstalled" -> "의심스러운 앱을 설치하지 않았어요";
+            case "remoteControlUsed" -> "원격제어 앱이 사용되지 않았어요";
+            case "personalInfoExposed" -> "개인정보를 전달하지 않았어요";
+            case "authenticationInfoExposed", "accessCredentialExposed" -> "인증정보가 노출되지 않았어요";
+            default -> "해당되지 않아요";
+        };
         return new FollowUpQuestionSpec(
                 factKey, FollowUpInputType.YES_NO_UNKNOWN,
                 List.of(
-                        option("TRUE", "네", "해당돼요."),
-                        option("FALSE", "아니요", "해당되지 않아요."),
+                        option("TRUE", trueLabel, ""),
+                        option("FALSE", falseLabel, ""),
                         option("UNKNOWN", "잘 모르겠어요", "정확히 알기 어려워요.")
                 ), question, description, true, intent, false);
     }

@@ -15,6 +15,8 @@ import com.financialhelper.consultation.ConsultationRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -42,6 +44,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Service
 public class OfficialSourceRetrievalService {
+
+    private static final Logger log = LoggerFactory.getLogger(OfficialSourceRetrievalService.class);
 
     private final ActiveRetrievalGenerationPersistenceService activeGeneration;
     private final RetrievalCorpusSnapshotService corpusSnapshot;
@@ -208,6 +212,8 @@ public class OfficialSourceRetrievalService {
             semantic = List.copyOf(semanticHits);
         } catch (RuntimeException exception) {
             semanticFailed = true;
+            log.warn("Official retrieval semantic branch unavailable. category={}, type={}",
+                    semanticFailureCategory(exception), exception.getClass().getSimpleName());
         }
 
         try {
@@ -232,6 +238,8 @@ public class OfficialSourceRetrievalService {
             keyword = List.copyOf(keywordHits);
         } catch (RuntimeException exception) {
             keywordFailed = true;
+            log.warn("Official retrieval keyword branch unavailable. category=KEYWORD_RETRIEVAL_FAILED, type={}",
+                    exception.getClass().getSimpleName());
         }
 
         List<ReciprocalRankFusion.FusedHit> fused = ReciprocalRankFusion.fuse(
@@ -365,6 +373,13 @@ public class OfficialSourceRetrievalService {
             return false;
         }
         return true;
+    }
+
+    private String semanticFailureCategory(RuntimeException exception) {
+        String message = exception.getMessage() == null ? "" : exception.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("generation") || message.contains("ineligible")
+                ? "RETRIEVAL_GENERATION_MISMATCH"
+                : "RETRIEVAL_QUERY_FAILED";
     }
 
     private boolean isSupportedScenario(String scenario) {

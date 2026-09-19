@@ -85,4 +85,44 @@ class ConsultationTest {
                 consultation.getFollowUpAnswerRevision()
         ).isZero();
     }
+
+    @Test
+    void failedAnalysisSituationEditCreatesANewInputRevision() {
+        GuestSession guestSession = mock(GuestSession.class);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("기존 상황", now.plusSeconds(2));
+        consultation.moveToAnalysis(now.plusSeconds(3));
+        consultation.markAnalysisFailed(now.plusSeconds(4));
+        long failedRevision = consultation.getCaseInputRevision();
+
+        consultation.replaceFailedAnalysisSituation("수정한 상황", now.plusSeconds(5));
+
+        assertThat(consultation.getSituationText()).isEqualTo("수정한 상황");
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(failedRevision + 1);
+        assertThat(consultation.getFollowUpAnswerRevision()).isZero();
+        assertThat(consultation.getStatus()).isEqualTo(ConsultationStatus.IN_PROGRESS);
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+    }
+
+    @Test
+    void failedAnalysisSituationEditWithSameInputIsIdempotent() {
+        GuestSession guestSession = mock(GuestSession.class);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("같은 상황", now.plusSeconds(2));
+        consultation.moveToAnalysis(now.plusSeconds(3));
+        consultation.markAnalysisFailed(now.plusSeconds(4));
+        long failedRevision = consultation.getCaseInputRevision();
+
+        consultation.replaceFailedAnalysisSituation("같은 상황", now.plusSeconds(5));
+
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(failedRevision);
+        assertThat(consultation.getStatus()).isEqualTo(ConsultationStatus.FAILED);
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.ANALYSIS);
+    }
 }

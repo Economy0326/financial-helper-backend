@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -103,8 +104,16 @@ class ProcedureFollowUpApiIntegrationTest {
                         consultation.getId(), dateQuestion.getId())
                 .cookie(cookie).with(csrf())
                 .contentType("application/json")
-                .content("{\"answer\":\"" + LocalDate.now(ZoneOffset.UTC).plusDays(1) + "\"}"))
+                .content("{\"answer\":\"" + LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1) + "\"}"))
                 .andExpect(status().isBadRequest());
+
+        mockMvc.perform(put(
+                        "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
+                        consultation.getId(), dateQuestion.getId())
+                .cookie(cookie).with(csrf())
+                .contentType("application/json")
+                .content("{\"answer\":\"" + LocalDate.now(ZoneId.of("Asia/Seoul")) + "\"}"))
+                .andExpect(status().isOk());
     }
 
     @Test

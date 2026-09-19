@@ -31,6 +31,8 @@ class StructuredFollowUpServiceTest {
             assertThat(question.inputType()).isEqualTo(FollowUpInputType.YES_NO_UNKNOWN);
             assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::value)
                     .containsExactly("TRUE", "FALSE", "UNKNOWN");
+            assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::label)
+                    .containsExactly("이미 신고했어요", "아직 신고하지 않았어요", "잘 모르겠어요");
         });
     }
 

@@ -383,6 +383,30 @@ public class Consultation {
         this.updatedAt = updatedAt;
     }
 
+    public void replaceFailedAnalysisSituation(
+            String situationText,
+            OffsetDateTime updatedAt
+    ) {
+        if (this.status != ConsultationStatus.FAILED
+                || this.currentStep != ConsultationStep.ANALYSIS) {
+            throw new IllegalStateException(
+                    "Only a failed analysis can be reopened for situation editing"
+            );
+        }
+
+        if (Objects.equals(this.situationText, situationText)) {
+            // Reopening a failed analysis with the same input is a read-only
+            // no-op. Do not create a new revision or restart downstream work.
+            return;
+        }
+
+        this.situationText = situationText;
+        markCaseInputChanged();
+        this.status = ConsultationStatus.IN_PROGRESS;
+        this.currentStep = ConsultationStep.FOLLOW_UP;
+        this.updatedAt = updatedAt;
+    }
+
     public void reopenForMoreInfo(
             OffsetDateTime updatedAt
     ) {

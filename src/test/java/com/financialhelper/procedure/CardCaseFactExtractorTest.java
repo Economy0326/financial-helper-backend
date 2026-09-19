@@ -64,4 +64,10 @@ class CardCaseFactExtractorTest {
         assertThat(CardCaseFactExtractor.fromSnapshot(snapshot).value("reported"))
                 .isEqualTo("TRUE");
     }
+
+    @Test
+    void acceptsTheStructuredKookminIssuerValueAsTheApprovedCardIssuer() {
+        assertThat(ProcedureVersionService.canonicalInstitution("KB_KOOKMIN_CARD"))
+                .isEqualTo(ProcedureVersionService.KB_INSTITUTION);
+    }
 }

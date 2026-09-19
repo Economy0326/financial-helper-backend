@@ -129,13 +129,13 @@ public class ConsultationController {
             UpdateConsultationSituationRequest request,
 
             @RequestParam(name = "edit", defaultValue = "false")
-            boolean editFromSummary
+            boolean explicitEdit
     ) {
         return consultationService.updateSituation(
                 id,
                 rawToken,
                 request,
-                editFromSummary
+                explicitEdit
         );
     }
 }

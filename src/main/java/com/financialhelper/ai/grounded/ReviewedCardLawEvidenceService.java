@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
@@ -104,9 +105,10 @@ public class ReviewedCardLawEvidenceService {
             LocalDate effective = LocalDate.parse(evidence.effectiveDate(), DateTimeFormatter.BASIC_ISO_DATE);
             if (!identity.allowAnyCurrentEffectiveDate()
                     && !identity.acceptedEffectiveDates().contains(effective)) {
-                throw new IllegalArgumentException("law evidence effective date is outside reviewed versions");
+                throw new IllegalArgumentException(
+                        "law evidence effective date is outside reviewed versions: " + evidence.effectiveDate());
             }
-        } catch (RuntimeException exception) {
+        } catch (DateTimeParseException exception) {
             throw new IllegalArgumentException("law evidence effective date is invalid", exception);
         }
     }
@@ -153,7 +155,7 @@ public class ReviewedCardLawEvidenceService {
                             "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10))),
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|전자금융거래법시행령|제8조",
                     identity("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법 시행령", "제8조", "010366",
-                            "285727", LocalDate.of(2025, 12, 16), "256699", LocalDate.of(2020, 12, 10))),
+                            "285727", LocalDate.of(2026, 4, 28), "256699", LocalDate.of(2020, 12, 10))),
             Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해금환급에관한특별법|제3조",
                     identity("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제3조", "011359",
                             "289413", LocalDate.of(2026, 9, 8), "251011", LocalDate.of(2023, 11, 17))),

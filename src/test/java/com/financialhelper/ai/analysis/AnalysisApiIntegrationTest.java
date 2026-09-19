@@ -117,6 +117,17 @@ class AnalysisApiIntegrationTest {
         cleanDatabase();
     }
 
+    @Test
+    void returnsNotStartedWhenCurrentRevisionHasNoAnalysisJob() throws Exception {
+        TestContext context = createAnalysisReadyConsultation();
+
+        mockMvc.perform(
+                        get("/api/v1/consultations/{id}/analysis", context.consultation().getId())
+                                .cookie(context.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("NOT_STARTED"));
+    }
+
     // Analysis 정상 완료 및 같은 Revision의 중복 AI 호출 방지 검증
     @Test
     void startsAnalysisAndCompletesWithoutDuplicateGeneration()
@@ -290,6 +301,22 @@ class AnalysisApiIntegrationTest {
                                 .value(
                                         "FAILED"
                                 )
+                );
+
+        mockMvc.perform(
+                        get(
+                                "/api/v1/consultations/{id}/analysis",
+                                context
+                                        .consultation()
+                                        .getId()
+                        )
+                                .cookie(
+                                        context.cookie()
+                                )
+                )
+                .andExpect(
+                        jsonPath("$.failureCode")
+                                .value("AI_GENERATION_FAILED")
                 );
 
         mockMvc.perform(

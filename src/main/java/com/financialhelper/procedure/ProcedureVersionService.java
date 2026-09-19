@@ -94,7 +94,7 @@ public class ProcedureVersionService {
             return null;
         }
         String normalized = value.trim().replace(" ", "");
-        if (normalized.equals("KB국민카드") || normalized.equals("㈜KB국민카드")
+        if (normalized.equals("KB_KOOKMIN_CARD") || normalized.equals("KB국민카드") || normalized.equals("㈜KB국민카드")
                 || normalized.equals("주식회사KB국민카드")) {
             return KB_INSTITUTION;
         }
