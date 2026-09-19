@@ -89,6 +89,12 @@ class AccountConsultationQuotaServiceTest {
         ).containsExactly(5, 5);
     }
 
+    @Test
+    void default_account_limits_use_five_new_consultations() {
+        assertThat(AccountProperties.Limits.defaults().newConsultationLimit())
+                .isEqualTo(5);
+    }
+
     private static AccountProperties properties() {
         return new AccountProperties(
                 false, Duration.ofHours(12), "account", false, "Lax",

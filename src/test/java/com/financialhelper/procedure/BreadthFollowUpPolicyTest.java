@@ -49,7 +49,9 @@ class BreadthFollowUpPolicyTest {
                 ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER,
                 Map.of("unauthorizedTransaction", "UNKNOWN"), 1, Set.of("unauthorizedTransaction"));
 
-        assertThat(first.questions()).isEmpty();
+        assertThat(first.questions()).singleElement()
+                .extracting(FollowUpQuestionSpec::questionIntent)
+                .isEqualTo("CLARIFY_UNAUTHORIZED_TRANSACTION");
         assertThat(second.questions()).isEmpty();
         assertThat(second.missingFacts()).containsExactly("unauthorizedTransaction");
     }

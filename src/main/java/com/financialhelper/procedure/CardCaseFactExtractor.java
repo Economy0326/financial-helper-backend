@@ -22,7 +22,7 @@ public final class CardCaseFactExtractor {
     public static final Set<String> ALLOWED_FACT_KEYS = Set.of(
             "institution", "productType", "cardLost", "unauthorizedPayment",
             "transactionType", "domestic", "reported", "incidentDate", "transactionDate",
-            "resultDisputed");
+            "compensationStatus", "resultDisputed");
 
     private static final Pattern DATE = Pattern.compile(
             "(20\\d{2})[.\\-/년](\\d{1,2})[.\\-/월](\\d{1,2})일?");
@@ -111,6 +111,12 @@ public final class CardCaseFactExtractor {
         }
     }
 
+    /** Explicit unsupported product wording must never be silently coerced to credit-card scope. */
+    public static boolean hasExplicitUnsupportedProduct(String text) {
+        if (text == null) return false;
+        return containsAny(text, "체크카드", "선불카드", "법인카드", "가족카드");
+    }
+
     private static String normalizeValue(String key, String value) {
         String trimmed = value.trim();
         if ("institution".equals(key)) {
@@ -129,6 +135,11 @@ public final class CardCaseFactExtractor {
                 return "FALSE";
             }
             return "UNKNOWN";
+        }
+        if ("compensationStatus".equals(key)) {
+            String normalized = trimmed.toUpperCase(Locale.ROOT).replace(" ", "_");
+            return Set.of("NOT_SUBMITTED", "SUBMITTED", "INVESTIGATING", "RESULT_RECEIVED", "UNKNOWN")
+                    .contains(normalized) ? normalized : "UNKNOWN";
         }
         if ("incidentDate".equals(key) || "transactionDate".equals(key)) {
             try {

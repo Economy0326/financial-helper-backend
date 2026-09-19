@@ -28,6 +28,20 @@ public record AnalysisStateResponse(
         );
     }
 
+    public static AnalysisStateResponse unsupported(
+            int informationSupplementCount
+    ) {
+        return new AnalysisStateResponse(
+                "UNSUPPORTED_SCOPE",
+                "CONSULTATION_SCOPE_UNSUPPORTED",
+                0,
+                informationSupplementCount,
+                false,
+                List.of(),
+                List.of()
+        );
+    }
+
     public static AnalysisStateResponse from(
             AnalysisJob job,
             AnalysisAiResult result,
@@ -36,7 +50,7 @@ public record AnalysisStateResponse(
     ) {
 
         List<AdditionalInformation> information =
-                result == null
+                result == null || result.additionalInformationNeeded == null
                         ? List.of()
                         : result
                                 .additionalInformationNeeded
@@ -56,7 +70,8 @@ public record AnalysisStateResponse(
                 job.getFailureCode(),
                 job.getAttemptCount(),
                 informationSupplementCount,
-                informationSupplementCount < 1,
+                job.getStatus() == AnalysisJobStatus.NEEDS_MORE_INFO
+                        && informationSupplementCount < 1,
                 information,
                 safeActions == null ? List.of() : safeActions
         );

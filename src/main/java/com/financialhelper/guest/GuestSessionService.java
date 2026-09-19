@@ -48,10 +48,13 @@ public class GuestSessionService {
         }
 
         return findValidSessionInternal(rawToken)
-            .map(session -> {
-                requireAccountOwnership(session);
-                return GuestSessionResolution.existing(session);
-            })
+            // A browser can retain a guest cookie after the account changes.
+            // Starting a new consultation must create a fresh, account-owned
+            // guest session instead of turning that normal transition into a
+            // 403 ownership error. Ownership checks for existing consultation
+            // reads/writes remain strict in requireValidSession/findValidSession.
+            .filter(this::isUsableForSessionState)
+            .map(GuestSessionResolution::existing)
             .orElseGet(this::createNewSession);
     }
 

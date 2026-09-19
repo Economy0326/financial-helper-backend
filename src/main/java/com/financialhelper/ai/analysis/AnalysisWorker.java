@@ -10,6 +10,7 @@ import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 import com.financialhelper.ai.grounded.GroundedAiInputProjection;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
 import com.financialhelper.ai.grounded.GroundedOutputValidator;
+import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.procedure.FinancialActionPlanData;
 import com.financialhelper.procedure.FinancialActionPlanService;
 import com.financialhelper.procedure.PlanStatus;
@@ -111,6 +112,7 @@ public class AnalysisWorker {
     private final GroundedOutputValidator groundedOutputValidator;
     private final AccountProperties accountProperties;
     private final FinancialActionPlanService actionPlanService;
+    private final FollowUpQuestionRepository followUpQuestionRepository;
 
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
@@ -120,7 +122,8 @@ public class AnalysisWorker {
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
             GroundedOutputValidator groundedOutputValidator,
             AccountProperties accountProperties,
-            FinancialActionPlanService actionPlanService
+            FinancialActionPlanService actionPlanService,
+            FollowUpQuestionRepository followUpQuestionRepository
     ) {
         this.persistenceService =
                 persistenceService;
@@ -139,6 +142,7 @@ public class AnalysisWorker {
         this.groundedOutputValidator = groundedOutputValidator;
         this.accountProperties = accountProperties;
         this.actionPlanService = actionPlanService;
+        this.followUpQuestionRepository = followUpQuestionRepository;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -165,9 +169,13 @@ public class AnalysisWorker {
 
             if (snapshot.scenario() != null && snapshot.scenario() != ConsultationScenario.UNKNOWN) {
                 FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
-                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION
-                        && plan.coverageGaps().isEmpty()) {
-                    persistenceService.complete(snapshot, partialResult(plan));
+                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION) {
+                    AnalysisAiResult partial = partialResult(plan);
+                    // All procedure-backed scenarios use structured
+                    // follow-up. Information gaps and coverage gaps are
+                    // terminal partial/limited guidance here; they must not
+                    // reopen the legacy Situation supplement flow.
+                    persistenceService.completeWithoutSupplement(snapshot, partial);
                     return;
                 }
             }
@@ -184,6 +192,26 @@ public class AnalysisWorker {
                                     , evidenceSnapshot),
                                     AnalysisAiResult.class
                             );
+
+            // Structured scenarios finish missing-fact collection before the
+            // analysis job starts. Normalize model output before validation so
+            // it cannot reopen the legacy free-form supplement flow.
+            if (snapshot.scenario() != null
+                    && snapshot.scenario() != ConsultationScenario.UNKNOWN
+                    && result != null) {
+                if (result.additionalInformationNeeded == null) {
+                    result.additionalInformationNeeded = java.util.List.of();
+                }
+                if (result.outcome == AnalysisAiResult.Outcome.NEEDS_MORE_INFO) {
+                    log.info("Structured scenario supplement suppressed scenario={} caseRevision={} followUpRevision={}",
+                            snapshot.scenario(), snapshot.caseInputRevision(),
+                            snapshot.followUpAnswerRevision());
+                    result.outcome = AnalysisAiResult.Outcome.READY_FOR_REPORT;
+                    result.additionalInformationNeeded = java.util.List.of();
+                } else if (result.outcome == AnalysisAiResult.Outcome.READY_FOR_REPORT) {
+                    result.additionalInformationNeeded = java.util.List.of();
+                }
+            }
 
             result =
                     businessValidator
@@ -349,7 +377,11 @@ public class AnalysisWorker {
         result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
         result.analysisSummary = "현재 확인된 내용으로 안내할 수 있는 부분만 먼저 정리했습니다.";
         result.keyIssues = plan.actions().isEmpty()
-                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 이 상황에 맞는 행동을 아직 확정할 수 없습니다."))
+                ? java.util.List.of(issue(
+                plan.unresolvedFacts().isEmpty() ? "확정 가능한 안내가 없어요" : "추가 확인이 필요해요",
+                plan.unresolvedFacts().isEmpty()
+                        ? "현재 확인된 공식 자료만으로는 이 상황에 맞는 구체적인 행동을 확정하기 어렵습니다."
+                        : "중요한 정보가 확인되지 않아 이 상황에 맞는 행동을 아직 확정할 수 없습니다."))
                 : plan.actions().stream()
                         .map(action -> issue(action.title(), action.description()))
                         .toList();

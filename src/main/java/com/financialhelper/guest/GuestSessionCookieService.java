@@ -49,4 +49,15 @@ public class GuestSessionCookieService {
                 .maxAge(sessionTtl)
                 .build();
     }
+
+    public ResponseCookie clear() {
+        return ResponseCookie
+                .from(GuestSessionCookie.NAME, "")
+                .httpOnly(true)
+                .secure(secure)
+                .sameSite(sameSite)
+                .path("/")
+                .maxAge(Duration.ZERO)
+                .build();
+    }
 }

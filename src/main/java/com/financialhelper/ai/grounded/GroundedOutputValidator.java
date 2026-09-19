@@ -54,8 +54,12 @@ public class GroundedOutputValidator {
         for (int i = 0; i < actions.size(); i++) {
             FinancialActionPlanData.Action expected = actions.get(i);
             ConsultationReportAiResult.ActionStep actual = result.actionSteps.get(i);
+            // Report numbering is a presentation field owned by the
+            // backend composition step.  The persisted procedure may carry
+            // legacy gaps or duplicate order values, so the public report
+            // contract is always the deterministic list position 1..N.
             if (!expected.actionId().equals(actual.actionId)
-                    || expected.order() != actual.order
+                    || (i + 1) != actual.order
                     || !expected.title().equals(actual.title)
                     || !expected.description().equals(actual.description)) {
                 throw new AiOutputContractException("grounded report action differs from the approved procedure");

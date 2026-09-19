@@ -110,18 +110,17 @@ public class FinancialActionPlanService {
         ConfirmedCaseSnapshot snapshot = snapshotRepository.findById(snapshotData.id())
                 .orElseThrow(() -> new IllegalStateException("confirmed case snapshot is unavailable"));
         ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+        CardCaseFacts extractedFacts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? CardCaseFactExtractor.fromSnapshot(snapshotData)
+                : ScenarioCaseFactExtractor.fromSnapshot(snapshotData);
         ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
-                ? procedureVersionService.requireApprovedCard()
+                ? procedureVersionService.requireApprovedCard(extractedFacts)
                 : procedureVersionService.requireApproved(scenario.name(),
                         "GENERIC_FINANCIAL_INSTITUTION",
                         scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
                                 ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT");
         ProcedureVersion procedureEntity = procedureRepository.findById(procedure.id())
                 .orElseThrow(() -> new IllegalStateException("approved procedure entity is unavailable"));
-
-        CardCaseFacts extractedFacts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
-                ? CardCaseFactExtractor.fromSnapshot(snapshotData)
-                : ScenarioCaseFactExtractor.fromSnapshot(snapshotData);
         log.debug("FAP evaluation consultationId={}, scenario={}, snapshotCaseRevision={}, "
                         + "snapshotFollowUpRevision={}, procedureVersionId={}, procedureVersion={}, facts={}",
                 consultation.getId(), scenario, snapshotData.caseInputRevision(),
@@ -163,13 +162,13 @@ public class FinancialActionPlanService {
                     List.of("Only an APPROVED ProcedureVersion may execute."));
         }
 
-        LocalDate incidentDate = incidentDate(facts, unresolved,
-                !ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario()));
+        boolean cardProcedure = ProcedureVersionService.isCardProcedureScenario(procedure.scenario());
+        LocalDate incidentDate = incidentDate(facts, unresolved, !cardProcedure);
         if (!procedureVersionService.isApplicable(procedure, incidentDate)) {
             coverageGaps.add("PROCEDURE_NOT_APPLICABLE_FOR_INCIDENT_DATE");
         }
         if (!matchesScope(procedure.scenario(), facts, unresolved)) {
-            String scopeGap = ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+            String scopeGap = cardProcedure
                     ? "CARD_SCOPE_OUT_OF_SCOPE" : "SCENARIO_SCOPE_OUT_OF_SCOPE";
             log.warn("FAP scope unsupported procedureVersionId={}, scenario={}, "
                             + "procedureVersion={}, facts={}",
@@ -177,10 +176,23 @@ public class FinancialActionPlanService {
             return data(snapshot, procedure, PlanStatus.UNSUPPORTED, List.of(), List.of(),
                     List.of(), unresolved, List.of(scopeGap), warnings);
         }
+        // A procedure catalog can list facts that are useful for later
+        // branches without making them relevant to the action currently
+        // selected.  Only retain a required fact when it participates in an
+        // action or document condition (scope and temporal guards are
+        // handled separately above).  This keeps optional UNKNOWN values
+        // from downgrading an otherwise grounded report.
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
-            if (required.requiredForDecision() && !facts.hasKnownValue(required.key())) {
+            if (required.requiredForDecision()
+                    && !facts.hasKnownValue(required.key())
+                    && procedureUsesFact(procedure, required.key())) {
                 unresolved.add(required.key());
             }
+        }
+        if (cardProcedure && hasUnknownCardIdentity(facts, unresolved)) {
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
+                    List.of(), unresolved, coverageGaps,
+                    List.of("CARD_INSTITUTION_OR_PRODUCT_REQUIRED"));
         }
         if (hasBlockingUnresolved(procedure.scenario(), unresolved)
                 && !hasDefinitelyTrueAction(procedure, facts)) {
@@ -192,7 +204,7 @@ public class FinancialActionPlanService {
         // official corpus is bound.  Keeping this guard in the deterministic
         // plan layer prevents an approved-looking catalog row from producing
         // unsupported actions while source acquisition/review is pending.
-        if (!ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+        if (!cardProcedure
                 && procedure.evidenceReferences().isEmpty()) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, List.of("OFFICIAL_EVIDENCE_UNAVAILABLE"),
@@ -216,7 +228,7 @@ public class FinancialActionPlanService {
                 // historical effective date. It is needed once compensation
                 // submission is selected, but must not block the immediate
                 // loss-report branch for an already-known FALSE report state.
-                .filter(reference -> !ProcedureVersionService.CARD_SCENARIO.equals(procedure.scenario())
+                .filter(reference -> !cardProcedure
                         || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
                         || "TRUE".equalsIgnoreCase(facts.value("reported"))
                         || incidentDate == null)
@@ -261,6 +273,11 @@ public class FinancialActionPlanService {
                         requirement.documentId(), requirement.title(), requirement.status(),
                         result, requirement.evidenceRef()));
             }
+        }
+        if (actions.isEmpty() && documents.isEmpty() && unresolved.isEmpty()) {
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, actions, documents,
+                    resolution.bindings(), unresolved, coverageGaps,
+                    List.of("NO_APPROVED_SAFE_ACTION"));
         }
         if (!unresolved.isEmpty()) {
             warnings.add("PARTIAL_GUIDANCE_ONLY");
@@ -336,6 +353,11 @@ public class FinancialActionPlanService {
         if ("transactionType".equals(key)) {
             return value;
         }
+        if ("compensationStatus".equals(key)) {
+            return Set.of("NOT_SUBMITTED", "SUBMITTED", "INVESTIGATING", "RESULT_RECEIVED")
+                    .contains(value.toUpperCase(java.util.Locale.ROOT))
+                    ? value.toUpperCase(java.util.Locale.ROOT) : "UNKNOWN";
+        }
         if ("productType".equals(key)) {
             return ProcedureVersionService.PERSONAL_CREDIT_CARD.equals(value)
                     ? ProcedureVersionService.PERSONAL_CREDIT_CARD : "KNOWN";
@@ -351,7 +373,7 @@ public class FinancialActionPlanService {
     }
 
     private boolean matchesScope(String scenario, CardCaseFacts facts, Set<String> unresolved) {
-        if (!ProcedureVersionService.CARD_SCENARIO.equals(scenario)) {
+        if (!ProcedureVersionService.isCardProcedureScenario(scenario)) {
             return matchesBreadthScope(scenario, facts, unresolved);
         }
         String institution = facts.value("institution");
@@ -369,6 +391,16 @@ public class FinancialActionPlanService {
                 ProcedureVersionService.canonicalProduct(product))) {
             return scopeMismatch(ProcedureVersionService.CARD_SCENARIO, "productType", product,
                     ProcedureVersionService.PERSONAL_CREDIT_CARD);
+        }
+        if (ProcedureVersionService.CARD_LOSS_ONLY_SCENARIO.equals(scenario)) {
+            return requireCardBoolean(facts, unresolved, "cardLost", "TRUE")
+                    && requireCardBoolean(facts, unresolved, "unauthorizedPayment", "FALSE");
+        }
+        if (ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO.equals(scenario)) {
+            return requireCardBoolean(facts, unresolved, "cardLost", "FALSE")
+                    && requireCardBoolean(facts, unresolved, "unauthorizedPayment", "TRUE")
+                    && requireCardEnum(facts, unresolved, "transactionType", "CREDIT_SALE")
+                    && requireCardBoolean(facts, unresolved, "domestic", "TRUE");
         }
         String cardLost = facts.value("cardLost");
         if (cardLost == null || "UNKNOWN".equalsIgnoreCase(cardLost)) {
@@ -396,7 +428,40 @@ public class FinancialActionPlanService {
         } else if (!"TRUE".equalsIgnoreCase(domestic)) {
             return scopeMismatch(ProcedureVersionService.CARD_SCENARIO, "domestic", domestic, "TRUE");
         }
+        if (ProcedureVersionService.CARD_COMPENSATION_PROCESS_SCENARIO.equals(scenario)
+                || ProcedureVersionService.CARD_COMPENSATION_RESULT_SCENARIO.equals(scenario)) {
+            String reported = facts.value("reported");
+            if (reported == null || "UNKNOWN".equalsIgnoreCase(reported)) {
+                unresolved.add("reported");
+            } else if (!"TRUE".equalsIgnoreCase(reported)) {
+                return scopeMismatch(scenario, "reported", reported, "TRUE");
+            }
+        }
+        if (ProcedureVersionService.CARD_COMPENSATION_RESULT_SCENARIO.equals(scenario)) {
+            String status = facts.value("compensationStatus");
+            if (status == null || "UNKNOWN".equalsIgnoreCase(status)) {
+                unresolved.add("compensationStatus");
+            } else if (!"RESULT_RECEIVED".equalsIgnoreCase(status)) {
+                return scopeMismatch(scenario, "compensationStatus", status, "RESULT_RECEIVED");
+            }
+        }
         return true;
+    }
+
+    private boolean requireCardBoolean(CardCaseFacts facts, Set<String> unresolved,
+                                       String key, String expected) {
+        String value = facts.value(key);
+        if (value == null || "UNKNOWN".equalsIgnoreCase(value)) {
+            unresolved.add(key);
+            return true;
+        }
+        return expected.equalsIgnoreCase(value)
+                || scopeMismatch(ProcedureVersionService.CARD_SCENARIO, key, value, expected);
+    }
+
+    private boolean requireCardEnum(CardCaseFacts facts, Set<String> unresolved,
+                                    String key, String expected) {
+        return requireCardBoolean(facts, unresolved, key, expected);
     }
 
     private boolean scopeMismatch(String scenario, String key, String actual, String expected) {
@@ -469,8 +534,28 @@ public class FinancialActionPlanService {
         }
     }
 
+    private boolean procedureUsesFact(ProcedureVersionData procedure, String factKey) {
+        if (factKey == null || factKey.isBlank()) {
+            return false;
+        }
+        return procedure.conditionRules().stream()
+                .anyMatch(rule -> containsFact(rule.expression(), factKey))
+                || procedure.documentRequirements().stream()
+                .anyMatch(requirement -> containsFact(requirement.condition(), factKey));
+    }
+
+    private boolean containsFact(ConditionExpression expression, String factKey) {
+        if (expression == null) {
+            return false;
+        }
+        if (!expression.isGroup()) {
+            return factKey.equals(expression.factKey());
+        }
+        return expression.conditions().stream().anyMatch(child -> containsFact(child, factKey));
+    }
+
     private boolean hasBlockingUnresolved(String scenario, Set<String> unresolved) {
-        if (ProcedureVersionService.CARD_SCENARIO.equals(scenario)) {
+        if (ProcedureVersionService.isCardProcedureScenario(scenario)) {
             return unresolved.stream().anyMatch(BLOCKING_FACTS::contains);
         }
         Set<String> blocking = Set.of(
@@ -501,6 +586,11 @@ public class FinancialActionPlanService {
         return procedure.conditionRules().stream()
                 .anyMatch(rule -> ConditionEvaluator.evaluate(rule.expression(), facts)
                         == ConditionResult.TRUE);
+    }
+
+    private boolean hasUnknownCardIdentity(CardCaseFacts facts, Set<String> unresolved) {
+        return unresolved.contains("institution") || unresolved.contains("productType")
+                || facts.isUnknown("institution") || facts.isUnknown("productType");
     }
 
     private FinancialActionPlanData data(

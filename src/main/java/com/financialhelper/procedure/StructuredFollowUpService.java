@@ -20,8 +20,8 @@ public class StructuredFollowUpService {
     }
 
     public StructuredFollowUpData specify(ConfirmedCaseSnapshotData snapshot) {
-        ProcedureVersionData procedure = procedureVersionService.requireApprovedCard();
         CardCaseFacts facts = CardCaseFactExtractor.fromSnapshot(snapshot);
+        ProcedureVersionData procedure = procedureVersionService.requireApprovedCard(facts);
         return specify(procedure, facts, snapshot == null ? 0 : snapshot.caseInputRevision());
     }
 
@@ -30,13 +30,13 @@ public class StructuredFollowUpService {
             Set<String> clarificationAskedKeys
     ) {
         ConsultationScenario scenario = scenario(snapshot);
-        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
-                ? procedureVersionService.requireApprovedCard()
-                : procedureVersionService.requireApproved(scenario.name(),
-                        "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
         CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
                 ? CardCaseFactExtractor.fromSnapshot(snapshot)
                 : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
+        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? procedureVersionService.requireApprovedCard(facts)
+                : procedureVersionService.requireApproved(scenario.name(),
+                        "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
         return specify(procedure, facts, snapshot == null ? 0 : snapshot.caseInputRevision(),
                 clarificationAskedKeys, scenario);
     }
@@ -110,6 +110,14 @@ public class StructuredFollowUpService {
                 && "FALSE".equalsIgnoreCase(facts.value("unauthorizedPayment"))) {
             return false;
         }
+        if (("compensationStatus".equals(factKey) || "resultDisputed".equals(factKey))
+                && !"TRUE".equalsIgnoreCase(facts.value("reported"))) {
+            return false;
+        }
+        if ("resultDisputed".equals(factKey)
+                && !"RESULT_RECEIVED".equalsIgnoreCase(facts.value("compensationStatus"))) {
+            return false;
+        }
         return true;
     }
 
@@ -131,8 +139,8 @@ public class StructuredFollowUpService {
             Map<String, String> explicitValues,
             long caseInputRevision
     ) {
-        return specify(procedureVersionService.requireApprovedCard(),
-                CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision);
+        CardCaseFacts facts = CardCaseFactExtractor.fromValues(explicitValues);
+        return specify(procedureVersionService.requireApprovedCard(facts), facts, caseInputRevision);
     }
 
     public StructuredFollowUpData specifyFromValues(
@@ -140,8 +148,8 @@ public class StructuredFollowUpService {
             long caseInputRevision,
             Set<String> clarificationAskedKeys
     ) {
-        return specify(procedureVersionService.requireApprovedCard(),
-                CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision,
+        CardCaseFacts facts = CardCaseFactExtractor.fromValues(explicitValues);
+        return specify(procedureVersionService.requireApprovedCard(facts), facts, caseInputRevision,
                 clarificationAskedKeys);
     }
 
@@ -156,8 +164,8 @@ public class StructuredFollowUpService {
             throw new IllegalArgumentException("supported scenario is required");
         }
         if (scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
-            return specify(procedureVersionService.requireApprovedCard(),
-                    CardCaseFactExtractor.fromValues(explicitValues), caseInputRevision,
+            CardCaseFacts facts = CardCaseFactExtractor.fromValues(explicitValues);
+            return specify(procedureVersionService.requireApprovedCard(facts), facts, caseInputRevision,
                     clarificationAskedKeys, scenario);
         }
         ProcedureVersionData procedure = procedureVersionService.requireApproved(
@@ -168,7 +176,15 @@ public class StructuredFollowUpService {
     }
 
     private boolean clarificationSupported(String factKey) {
-        return "institution".equals(factKey) || "productType".equals(factKey);
+        return Set.of(
+                "institution", "productType", "cardLost", "unauthorizedPayment",
+                "reported", "domestic", "transactionType", "incidentDate", "compensationStatus",
+                "resultDisputed", "transferCompleted", "userInitiatedTransfer",
+                "suspiciousTransfer", "reportedToFinancialInstitution", "policeReported",
+                "unauthorizedTransaction", "financialLossOccurred", "moneyMoved",
+                "suspiciousLinkClicked", "maliciousAppInstalled", "remoteControlUsed",
+                "personalInfoExposed", "authenticationInfoExposed", "accessCredentialExposed")
+                .contains(factKey);
     }
 
     private FollowUpQuestionSpec clarificationSpecFor(ProcedureVersionData.RequiredFact fact,
@@ -195,11 +211,126 @@ public class StructuredFollowUpService {
                             option("UNKNOWN", "잘 모르겠어요", "카드 종류를 확인하기 어려워요.")
                     ), "카드 앞면이나 앱에서 '신용' 또는 '체크' 표시를 확인할 수 있나요?",
                     "확인할 수 있으면 해당 카드 종류를 선택해 주세요.", true, "CLARIFY_PRODUCT", false);
+            case "cardLost" -> clarificationYesNoUnknown(
+                    fact, "지금 실제 카드를 가지고 있는지 확인해 주세요.",
+                    "카드가 손에 없으면 분실·도난으로 선택해 주세요.",
+                    "CLARIFY_CARD_LOSS",
+                    "지금 카드를 가지고 있지 않아요", "지금 카드를 가지고 있어요");
+            case "unauthorizedPayment" -> clarificationYesNoUnknown(
+                    fact, "최근 카드 이용내역에서 기억나지 않는 결제가 있는지 확인해 주세요.",
+                    "모르는 결제가 있으면 해당돼요를 선택해 주세요.",
+                    "CLARIFY_UNAUTHORIZED_PAYMENT",
+                    "기억나지 않는 결제가 있어요", "모두 제가 한 결제예요");
+            case "reported" -> clarificationYesNoUnknown(
+                    fact, "KB국민카드에 카드 분실 사실을 이미 접수했는지 확인해 주세요.",
+                    "접수한 기록이 있으면 이미 접수했어요를 선택해 주세요.",
+                    "CLARIFY_LOSS_REPORT",
+                    "이미 접수했어요", "아직 접수하지 않았어요");
+            case "domestic" -> clarificationYesNoUnknown(
+                    fact, "카드 이용내역에서 국내 가맹점인지 확인해 주세요.",
+                    "국내 거래인지 확인하기 어려우면 잘 모르겠어요를 선택해 주세요.",
+                    "CLARIFY_DOMESTIC",
+                    "국내에서 발생한 거래예요", "해외에서 발생한 거래예요");
+            case "incidentDate" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.DATE,
+                    List.of(option("UNKNOWN", "정확히 기억나지 않아요", "사고 날짜를 확인하기 어려워요.")),
+                    "사고가 발생한 날짜를 확인해 주세요.",
+                    "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.",
+                    fact.requiredForDecision(), "CLARIFY_INCIDENT_DATE", true);
+            case "transactionType" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.ENUM_SELECT,
+                    List.of(
+                            option("CREDIT_SALE", "일반 카드 결제예요", "이용내역에서 일반적인 카드 결제로 확인돼요."),
+                            option("UNKNOWN", "확인해도 잘 모르겠어요", "거래 유형을 확인하기 어려워요.")
+                    ), "최근 카드 이용내역에서 거래 유형을 확인해 주세요.",
+                    "카드 결제인지 다른 거래인지 확인해 주세요.", fact.requiredForDecision(),
+                    "CLARIFY_TRANSACTION", false);
+            case "compensationStatus" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.ENUM_SELECT,
+                    List.of(
+                            option("NOT_SUBMITTED", "아직 보상 신청하지 않았어요", "보상 신청 전이에요."),
+                            option("SUBMITTED", "보상 신청을 제출했어요", "신청서를 제출했어요."),
+                            option("INVESTIGATING", "조사 중이라고 안내받았어요", "사고 조사가 진행 중이에요."),
+                            option("RESULT_RECEIVED", "처리 결과를 받았어요", "처리 결과를 안내받았어요."),
+                            option("UNKNOWN", "확인해도 잘 모르겠어요", "보상 처리 단계를 확인하기 어려워요.")
+                    ), "KB국민카드에서 보상 신청이 어느 단계인지 확인해 주세요.",
+                    "신청서나 안내 문자를 확인해 주세요.", fact.requiredForDecision(),
+                    "CLARIFY_COMPENSATION_STATUS", false);
+            case "resultDisputed" -> clarificationYesNoUnknown(
+                    fact, "받은 처리 결과에 대해 다시 확인을 요청할지 확인해 주세요.",
+                    "이견이 있으면 해당돼요를 선택해 주세요.",
+                    "CLARIFY_RESULT_DISPUTED",
+                    "처리 결과를 다시 확인하고 싶어요", "처리 결과에 이견이 없어요");
+            case "transferCompleted" -> clarificationYesNoUnknown(
+                    fact, "최근 실제로 돈을 보냈는지 확인해 주세요.",
+                    "송금 내역을 확인한 뒤 선택해 주세요.", "CLARIFY_TRANSFER_COMPLETED",
+                    "이미 송금했어요", "아직 송금하지 않았어요");
+            case "userInitiatedTransfer" -> clarificationYesNoUnknown(
+                    fact, "송금한 사람이 본인인지 확인해 주세요.",
+                    "본인이 직접 보낸 돈인지 선택해 주세요.", "CLARIFY_USER_INITIATED_TRANSFER",
+                    "제가 직접 송금했어요", "제가 송금하지 않았어요");
+            case "suspiciousTransfer" -> clarificationYesNoUnknown(
+                    fact, "사기나 보이스피싱이 의심되는지 확인해 주세요.",
+                    "상대방의 말이나 송금 경위를 확인해 주세요.", "CLARIFY_SUSPICIOUS_TRANSFER",
+                    "사기나 보이스피싱이 의심돼요", "사기나 보이스피싱이 의심되지 않아요");
+            case "reportedToFinancialInstitution" -> clarificationYesNoUnknown(
+                    fact, "금융회사에 이미 신고했는지 확인해 주세요.",
+                    "신고 접수 기록이나 안내 문자를 확인해 주세요.", "CLARIFY_FINANCIAL_INSTITUTION_REPORT",
+                    "이미 신고했어요", "아직 신고하지 않았어요");
+            case "policeReported" -> clarificationYesNoUnknown(
+                    fact, "경찰에 이미 신고했는지 확인해 주세요.",
+                    "경찰 신고 접수 여부를 확인해 주세요.", "CLARIFY_POLICE_REPORT",
+                    "이미 신고했어요", "아직 신고하지 않았어요");
+            case "unauthorizedTransaction" -> clarificationYesNoUnknown(
+                    fact, "그 계좌 거래를 본인이 했는지 확인해 주세요.",
+                    "거래 내역을 보고 본인 거래인지 선택해 주세요.", "CLARIFY_UNAUTHORIZED_TRANSACTION",
+                    "제가 하지 않은 거래예요", "제가 한 거래예요");
+            case "financialLossOccurred", "moneyMoved" -> clarificationYesNoUnknown(
+                    fact, "실제로 돈이 이동했는지 확인해 주세요.",
+                    "계좌나 결제 내역에서 돈의 이동을 확인해 주세요.", "CLARIFY_MONEY_MOVED",
+                    "금전 피해가 발생했어요", "금전 피해가 발생하지 않았어요");
+            case "suspiciousLinkClicked" -> clarificationYesNoUnknown(
+                    fact, "의심스러운 링크를 눌렀는지 확인해 주세요.",
+                    "문자나 메시지의 링크를 열었는지 선택해 주세요.", "CLARIFY_SUSPICIOUS_LINK",
+                    "의심스러운 링크를 눌렀어요", "의심스러운 링크를 누르지 않았어요");
+            case "maliciousAppInstalled" -> clarificationYesNoUnknown(
+                    fact, "의심스러운 앱을 설치했는지 확인해 주세요.",
+                    "휴대전화에 설치된 앱을 확인해 주세요.", "CLARIFY_MALICIOUS_APP",
+                    "의심스러운 앱을 설치했어요", "의심스러운 앱을 설치하지 않았어요");
+            case "remoteControlUsed" -> clarificationYesNoUnknown(
+                    fact, "원격제어 앱이 사용됐는지 확인해 주세요.",
+                    "다른 사람이 휴대전화를 조작했는지 선택해 주세요.", "CLARIFY_REMOTE_CONTROL",
+                    "원격제어 앱이 사용됐어요", "원격제어 앱이 사용되지 않았어요");
+            case "personalInfoExposed" -> clarificationYesNoUnknown(
+                    fact, "개인정보를 전달했는지 확인해 주세요.",
+                    "주민등록번호나 개인정보를 보냈는지 선택해 주세요.", "CLARIFY_PERSONAL_INFO",
+                    "개인정보를 전달했어요", "개인정보를 전달하지 않았어요");
+            case "authenticationInfoExposed", "accessCredentialExposed" -> clarificationYesNoUnknown(
+                    fact, "인증정보나 비밀번호가 노출됐는지 확인해 주세요.",
+                    "인증번호나 비밀번호를 입력하거나 전달했는지 선택해 주세요.", "CLARIFY_AUTH_EXPOSURE",
+                    "인증정보가 노출됐어요", "인증정보가 노출되지 않았어요");
             default -> new FollowUpQuestionSpec(fact.key(), FollowUpInputType.SHORT_TEXT,
                     List.of(option("UNKNOWN", "정확히 모르겠어요", "확인하기 어려워요.")),
                     "이 내용을 확인할 수 있나요?", "확인하기 어렵다면 모르겠어요를 선택해 주세요.",
                     fact.requiredForDecision(), "CLARIFY_" + fact.key().toUpperCase(), false);
         };
+    }
+
+    private FollowUpQuestionSpec clarificationYesNoUnknown(
+            ProcedureVersionData.RequiredFact fact,
+            String question,
+            String description,
+            String intent,
+            String trueLabel,
+            String falseLabel
+    ) {
+        return new FollowUpQuestionSpec(
+                fact.key(), FollowUpInputType.YES_NO_UNKNOWN,
+                List.of(
+                        option("TRUE", trueLabel, "확인된 내용에 해당해요."),
+                        option("FALSE", falseLabel, "확인된 내용에 해당하지 않아요."),
+                        option("UNKNOWN", "확인해도 잘 모르겠어요", "확인했지만 판단하기 어려워요.")),
+                question, description, fact.requiredForDecision(), intent, false);
     }
 
     private FollowUpQuestionSpec specFor(ProcedureVersionData.RequiredFact fact) {
@@ -230,16 +361,24 @@ public class StructuredFollowUpService {
                             option("UNKNOWN", "잘 모르겠어요", "카드 종류를 확인하기 어려워요.")
                     ), "어떤 종류의 카드인가요?", "카드 종류를 선택해 주세요.", true, "IDENTIFY_PRODUCT", false);
             case "cardLost" -> yesNoUnknown(fact.key(), "카드를 잃어버렸거나 도난당했나요?", "분실 또는 도난 여부를 선택해 주세요.", "CARD_LOSS");
-            case "unauthorizedPayment" -> yesNoUnknown(fact.key(), "본인이 하지 않은 결제가 있나요?", "모르는 신용판매 결제가 있는지 선택해 주세요.", "UNAUTHORIZED_PAYMENT");
+            case "unauthorizedPayment" -> yesNoUnknown(fact.key(), "본인이 하지 않은 카드 결제가 있나요?", "모르는 카드 결제가 있는지 선택해 주세요.", "UNAUTHORIZED_PAYMENT");
             case "domestic" -> yesNoUnknown(fact.key(), "그 결제는 국내에서 발생했나요?", "해외 결제라면 이 절차의 범위 밖이에요.", "DOMESTIC_SCOPE");
             case "reported" -> yesNoUnknown(fact.key(), "분실·도난 신고를 했나요?", "아직 신고하지 않았다면 '아니요'를 선택해 주세요.", "LOSS_REPORT_STATUS");
+            case "compensationStatus" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.ENUM_SELECT,
+                    List.of(
+                            option("NOT_SUBMITTED", "아직 보상 신청하지 않았어요", "분실 신고만 했고 보상 신청은 하지 않았어요."),
+                            option("SUBMITTED", "보상 신청을 제출했어요", "보상 신청서를 제출했어요."),
+                            option("INVESTIGATING", "조사 중이라고 안내받았어요", "사고 조사가 진행 중이라고 안내받았어요."),
+                            option("RESULT_RECEIVED", "처리 결과를 받았어요", "보상 또는 조사 결과를 받았어요."),
+                            option("UNKNOWN", "잘 모르겠어요", "보상 처리 단계를 확인하기 어려워요.")
+                    ), "보상 처리는 어느 단계인가요?", "현재 확인되는 단계를 선택해 주세요.", true,
+                    "COMPENSATION_STATUS", false);
+            case "resultDisputed" -> yesNoUnknown(fact.key(), "처리 결과에 이견이 있나요?", "결과에 대한 의견을 선택해 주세요.", "RESULT_DISPUTED");
             case "transactionType" -> new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(
-                            option("CREDIT_SALE", "신용판매 결제", "일반적인 카드 결제예요."),
-                            option("CASH_ADVANCE", "현금서비스", "현금서비스는 이 절차의 범위 밖이에요."),
-                            option("CARD_LOAN", "카드대출", "카드대출은 이 절차의 범위 밖이에요."),
-                            option("TRANSFER", "계좌이체·송금", "송금은 이 절차의 범위 밖이에요."),
+                            option("CREDIT_SALE", "일반 카드 결제", "일반적인 카드 결제예요."),
                             option("UNKNOWN", "모르겠어요", "거래 유형을 확인하기 어려워요.")
                     ), "어떤 거래 유형인가요?", "거래 내역에서 유형을 확인해 주세요.", true, "IDENTIFY_TRANSACTION", false);
             case "incidentDate" -> new FollowUpQuestionSpec(
@@ -303,6 +442,7 @@ public class StructuredFollowUpService {
             case "domestic" -> "국내에서 발생한 거래예요";
             case "reported", "reportedToFinancialInstitution", "policeReported" -> "이미 신고했어요";
             case "cardLost" -> "카드를 잃어버렸어요";
+            case "resultDisputed" -> "처리 결과에 이견이 있어요";
             case "transferCompleted" -> "이미 송금했어요";
             case "userInitiatedTransfer" -> "제가 직접 송금했어요";
             case "unauthorizedTransaction" -> "제가 하지 않은 거래예요";
@@ -319,6 +459,7 @@ public class StructuredFollowUpService {
             case "domestic" -> "해외에서 발생한 거래예요";
             case "reported", "reportedToFinancialInstitution", "policeReported" -> "아직 신고하지 않았어요";
             case "cardLost" -> "카드는 가지고 있어요";
+            case "resultDisputed" -> "처리 결과에 이견이 없어요";
             case "transferCompleted" -> "아직 송금하지 않았어요";
             case "userInitiatedTransfer" -> "제가 송금하지 않았어요";
             case "unauthorizedTransaction" -> "제가 한 거래예요";

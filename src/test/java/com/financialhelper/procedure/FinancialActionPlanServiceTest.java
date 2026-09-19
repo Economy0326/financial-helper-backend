@@ -173,7 +173,7 @@ class FinancialActionPlanServiceTest {
     }
 
     @Test
-    void breadthSafeActionSurvivesBlockingUnknownAsPartialGuidance() {
+    void breadthSafeActionIsFullWhenUnrelatedUnknownDoesNotAffectAction() {
         ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
         EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
         when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
@@ -206,11 +206,11 @@ class FinancialActionPlanServiceTest {
                 snapshot(), procedure, new CardCaseFacts(Map.of(
                         "suspiciousTransfer", "TRUE", "transferCompleted", "UNKNOWN")));
 
-        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.status()).isEqualTo(PlanStatus.READY);
         assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
                 .containsExactly("voice-secure-contact");
-        assertThat(result.unresolvedFacts()).contains("transferCompleted");
-        assertThat(result.warnings()).contains("PARTIAL_GUIDANCE_ONLY");
+        assertThat(result.unresolvedFacts()).isEmpty();
+        assertThat(result.warnings()).isEmpty();
     }
 
     @Test
@@ -251,6 +251,140 @@ class FinancialActionPlanServiceTest {
         assertThat(result.coverageGaps()).contains("CARD_SCOPE_OUT_OF_SCOPE");
     }
 
+    @Test
+    void heldCardBranchProducesOnlyItsApprovedConfirmationAction() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+
+        FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), cardBranchProcedure(ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO),
+                new CardCaseFacts(Map.of(
+                        "institution", ProcedureVersionService.KB_INSTITUTION,
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "FALSE", "unauthorizedPayment", "TRUE",
+                        "transactionType", "CREDIT_SALE", "domestic", "TRUE",
+                        "incidentDate", "2026-09-01")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.READY);
+        assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("confirm-held-card-payment");
+    }
+
+    @Test
+    void independentLossActionSurvivesUnknownUnauthorizedPayment() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+
+        FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), procedure(true), new CardCaseFacts(Map.of(
+                        "institution", ProcedureVersionService.KB_INSTITUTION,
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "TRUE",
+                        "unauthorizedPayment", "UNKNOWN",
+                        "reported", "FALSE",
+                        "incidentDate", "2026-09-01")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("report-loss");
+        assertThat(result.unresolvedFacts()).contains("unauthorizedPayment");
+        assertThat(result.warnings()).contains("PARTIAL_GUIDANCE_ONLY");
+    }
+
+    @Test
+    void dependentHeldCardTransactionTypeUnknownBlocksOnlyHeldCardAction() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+
+        FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), cardBranchProcedure(ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO),
+                new CardCaseFacts(Map.of(
+                        "institution", ProcedureVersionService.KB_INSTITUTION,
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "FALSE", "unauthorizedPayment", "TRUE",
+                        "transactionType", "UNKNOWN", "domestic", "TRUE",
+                        "incidentDate", "2026-09-01")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.unresolvedFacts()).contains("transactionType");
+    }
+
+    @Test
+    void cardSpecificActionIsWithheldWhenIssuerIsUnknown() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+
+        FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), cardBranchProcedure(ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO),
+                new CardCaseFacts(Map.of(
+                        "institution", "UNKNOWN",
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "FALSE", "unauthorizedPayment", "TRUE",
+                        "transactionType", "CREDIT_SALE", "domestic", "TRUE",
+                        "incidentDate", "2026-09-01")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.warnings()).contains("CARD_INSTITUTION_OR_PRODUCT_REQUIRED");
+    }
+
+    @Test
+    void knownFactsWithoutAnApprovedActionBecomeExplicitPartialGuidance() {
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(true);
+        when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                UUID.randomUUID(), ProcedureVersionService.CARD_LOSS_ONLY_SCENARIO,
+                ProcedureVersionService.KB_INSTITUTION, ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                1, ProcedureStatus.APPROVED, null, null,
+                List.of(
+                        new ProcedureVersionData.RequiredFact("institution", "INSTITUTION", true),
+                        new ProcedureVersionData.RequiredFact("productType", "ENUM", true),
+                        new ProcedureVersionData.RequiredFact("cardLost", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("unauthorizedPayment", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("reported", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("incidentDate", "DATE", true)),
+                List.of(new ProcedureVersionData.ConditionRule(
+                        "report-loss",
+                        new ConditionExpression(null, "reported", ConditionOperator.EQ, "FALSE", List.of()))),
+                List.of(new ProcedureVersionData.ActionStep(
+                        "report-loss", 1, "분실·도난 신고", "신고", "channel", List.of())),
+                List.of(), List.of(), List.of(), List.of(), List.of(), "test", "test", null);
+
+        FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), procedure, new CardCaseFacts(Map.of(
+                        "institution", ProcedureVersionService.KB_INSTITUTION,
+                        "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                        "cardLost", "TRUE",
+                        "unauthorizedPayment", "FALSE",
+                        "reported", "TRUE",
+                        "incidentDate", "2026-09-01")));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.coverageGaps()).isEmpty();
+        assertThat(result.warnings()).containsExactly("NO_APPROVED_SAFE_ACTION");
+    }
+
     private FinancialActionPlanService service(
             ProcedureVersionService procedureService,
             EvidenceBindingResolver resolver
@@ -287,5 +421,30 @@ class FinancialActionPlanServiceTest {
                 List.of(new ProcedureVersionData.ConditionRule("report-loss", report)),
                 List.of(new ProcedureVersionData.ActionStep("report-loss", 1, "분실·도난 신고", "신고", "channel", List.of())),
                 List.of(), List.of(), List.of(), List.of(), List.of(), "", "test", null);
+    }
+
+    private ProcedureVersionData cardBranchProcedure(String scenario) {
+        ConditionExpression condition = new ConditionExpression("AND", null, null, null, List.of(
+                new ConditionExpression(null, "cardLost", ConditionOperator.EQ, "FALSE", List.of()),
+                new ConditionExpression(null, "unauthorizedPayment", ConditionOperator.EQ, "TRUE", List.of()),
+                new ConditionExpression(null, "transactionType", ConditionOperator.EQ, "CREDIT_SALE", List.of()),
+                new ConditionExpression(null, "domestic", ConditionOperator.EQ, "TRUE", List.of())));
+        return new ProcedureVersionData(
+                UUID.randomUUID(), scenario, ProcedureVersionService.KB_INSTITUTION,
+                ProcedureVersionService.PERSONAL_CREDIT_CARD, 1, ProcedureStatus.APPROVED,
+                null, null,
+                List.of(
+                        new ProcedureVersionData.RequiredFact("institution", "INSTITUTION", true),
+                        new ProcedureVersionData.RequiredFact("productType", "ENUM", true),
+                        new ProcedureVersionData.RequiredFact("cardLost", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("unauthorizedPayment", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("transactionType", "ENUM", true),
+                        new ProcedureVersionData.RequiredFact("domestic", "BOOLEAN", true),
+                        new ProcedureVersionData.RequiredFact("incidentDate", "DATE", true)),
+                List.of(new ProcedureVersionData.ConditionRule("confirm-held-card-payment", condition)),
+                List.of(new ProcedureVersionData.ActionStep("confirm-held-card-payment", 1,
+                        "미인지 신용판매 확인", "공식 접수 대상인지 확인합니다.",
+                        "kb-card-compensation-process", List.of("PROCEDURE"))),
+                List.of(), List.of(), List.of(), List.of(), List.of(), "test", "test", null);
     }
 }

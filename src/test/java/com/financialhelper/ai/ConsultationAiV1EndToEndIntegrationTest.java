@@ -338,9 +338,21 @@ class ConsultationAiV1EndToEndIntegrationTest {
                 understandingRepository.count()
         ).isEqualTo(1);
 
-        assertThat(
-                followUpQuestionRepository.count()
-        ).isEqualTo(1);
+        List<FollowUpQuestion> followUpQuestions =
+                followUpQuestionRepository
+                        .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                                latest.getId(),
+                                latest.getCaseInputRevision()
+                        );
+
+        // This fixture deliberately exercises the legacy AI V1 follow-up
+        // route. Scope the assertion to its consultation and revision: the
+        // test database can contain questions belonging to other tests.
+        assertThat(followUpQuestions).hasSize(1);
+        assertThat(followUpQuestions.getFirst().getFactKey()).isNull();
+        assertThat(followUpQuestions.getFirst().getInputType()).isNull();
+        assertThat(followUpQuestions.getFirst().getQuestionIntent()).isNull();
+        assertThat(followUpQuestions.getFirst().getAnswerValue()).isEqualTo("YES");
 
         assertThat(
                 summaryRepository.count()

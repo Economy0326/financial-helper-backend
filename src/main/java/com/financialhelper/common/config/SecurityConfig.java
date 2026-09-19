@@ -2,6 +2,11 @@ package com.financialhelper.common.config;
 
 import com.financialhelper.account.AccountSessionAuthenticationFilter;
 import com.financialhelper.account.RateLimitFilter;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,6 +19,7 @@ import org.springframework.security.config.annotation.web
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
+import org.springframework.security.web.csrf.CsrfException;
 import org.springframework.security.web.csrf
         .CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf
@@ -22,22 +28,34 @@ import org.springframework.security.web.csrf
 @Configuration
 public class SecurityConfig {
 
+    private static final Logger log =
+            LoggerFactory.getLogger(SecurityConfig.class);
+
+    @Bean
+    public CookieCsrfTokenRepository csrfTokenRepository() {
+        CookieCsrfTokenRepository repository =
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+        repository.setCookieName("XSRF-TOKEN");
+        repository.setCookiePath("/");
+        repository.setHeaderName("X-XSRF-TOKEN");
+        return repository;
+    }
+
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             AccountSessionAuthenticationFilter accountSessionAuthenticationFilter,
-            RateLimitFilter rateLimitFilter
+            RateLimitFilter rateLimitFilter,
+            CookieCsrfTokenRepository csrfTokenRepository
     ) throws Exception {
 
         // The browser client reads the double-submit token to mirror it in
         // X-XSRF-TOKEN. It is not an authentication credential, and keeping
         // it readable is required for the configured cookie/header contract.
-        CookieCsrfTokenRepository csrfTokenRepository =
-                CookieCsrfTokenRepository.withHttpOnlyFalse();
         CsrfTokenRequestAttributeHandler csrfRequestHandler =
                 new CsrfTokenRequestAttributeHandler();
+        csrfRequestHandler.setCsrfRequestAttributeName("_csrf");
 
-        csrfTokenRepository.setCookiePath("/");
         http
                 .cors(Customizer.withDefaults())
 
@@ -46,6 +64,22 @@ public class SecurityConfig {
                                 csrfTokenRepository
                         )
                         .csrfTokenRequestHandler(csrfRequestHandler)
+                )
+
+                .exceptionHandling(exceptions -> exceptions
+                        .accessDeniedHandler((request, response, exception) -> {
+                            if (exception instanceof CsrfException) {
+                                log.warn(
+                                        "CSRF rejected request method={} path={} headerPresent={} cookiePresent={} authenticated={}",
+                                        request.getMethod(),
+                                        request.getRequestURI(),
+                                        request.getHeader("X-XSRF-TOKEN") != null,
+                                        hasCookie(request, "XSRF-TOKEN"),
+                                        request.getUserPrincipal() != null
+                                );
+                            }
+                            response.sendError(HttpServletResponse.SC_FORBIDDEN);
+                        })
                 )
 
                 .sessionManagement(session -> session
@@ -198,5 +232,21 @@ public class SecurityConfig {
                 );
 
         return http.build();
+    }
+
+    private static boolean hasCookie(
+            HttpServletRequest request,
+            String name
+    ) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return false;
+        }
+        for (Cookie cookie : cookies) {
+            if (name.equals(cookie.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -65,7 +65,7 @@ public class ConsultationController {
     }
 
     @GetMapping("/active")
-    public ActiveConsultationResponse
+    public ActiveConsultationStateResponse
     getActiveConsultation(
             @CookieValue(
                     name = GuestSessionCookie.NAME,

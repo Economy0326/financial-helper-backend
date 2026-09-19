@@ -97,7 +97,7 @@ public record AccountProperties(
                     true,
                     false,
                     1000,
-                    3,
+                    5,
                     7,
                     1
             );

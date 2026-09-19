@@ -6,6 +6,7 @@ import com.financialhelper.account.AccountProperties;
 import com.financialhelper.account.AccountSessionService;
 import com.financialhelper.account.AccountConsultationQuotaService;
 import com.financialhelper.account.AccountRepository;
+import com.financialhelper.procedure.CardCaseFactExtractor;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
@@ -187,7 +188,7 @@ public class ConsultationService {
 
     // 이어서하기 조회
     @Transactional(readOnly = true)
-    public ActiveConsultationResponse getActiveConsultation(
+    public ActiveConsultationStateResponse getActiveConsultation(
             String rawToken
     ) {
         Account account = accountSessionService == null ? null
@@ -197,18 +198,26 @@ public class ConsultationService {
             consultation = consultationRepository
                     .findFirstByAccount_IdAndStatusInOrderByUpdatedAtDesc(
                             account.getId(), ConsultationStatus.resumableStatuses())
-                    .orElseThrow(ConsultationNotFoundException::new);
+                    .orElse(null);
         } else {
-            GuestSession guestSession = guestSessionService.requireValidSession(rawToken);
+            // A browser without a guest cookie is also simply at the entry state.
+            if (rawToken == null || rawToken.isBlank()) {
+                return ActiveConsultationStateResponse.none();
+            }
+            GuestSession guestSession;
+            try {
+                guestSession = guestSessionService.requireValidSession(rawToken);
+            } catch (RuntimeException exception) {
+                return ActiveConsultationStateResponse.none();
+            }
             consultation = consultationRepository
                     .findFirstByGuestSession_IdAndStatusInOrderByUpdatedAtDesc(
                             guestSession.getId(), ConsultationStatus.resumableStatuses())
-                    .orElseThrow(ConsultationNotFoundException::new);
+                    .orElse(null);
         }
-
-        return ActiveConsultationResponse.from(
-                consultation
-        );
+        return consultation == null
+                ? ActiveConsultationStateResponse.none()
+                : ActiveConsultationStateResponse.active(consultation);
     }
 
     // Consultation 상세 조회
@@ -318,6 +327,14 @@ public class ConsultationService {
         if (accountProperties != null && request.situationText().length()
                 > accountProperties.limits().maxSituationCharacters()) {
             throw new InputLimitException("situation");
+        }
+
+        // A direct user statement such as "체크카드" is neither an inferred
+        // candidate nor a missing value.  Stop before the credit-card
+        // follow-up can overwrite it with a supported product selection.
+        if (consultation.getCategory() == ConsultationCategory.CARD
+                && CardCaseFactExtractor.hasExplicitUnsupportedProduct(request.situationText())) {
+            throw new UnsupportedConsultationScopeException();
         }
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);

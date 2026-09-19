@@ -104,6 +104,27 @@ class ConsultationApiIntegrationTest {
         );
     }
 
+    private void assertCsrfBootstrapCookieHeaders(
+            MvcResult result
+    ) {
+        Cookie standardCookie = result.getResponse()
+                .getCookie("XSRF-TOKEN");
+        List<String> setCookies = result.getResponse()
+                .getHeaders(HttpHeaders.SET_COOKIE);
+
+        assertThat(standardCookie).isNotNull();
+        assertThat(standardCookie.getValue()).isNotBlank();
+        assertThat(standardCookie.getPath()).isEqualTo("/");
+        assertThat(standardCookie.getMaxAge()).isEqualTo(-1);
+        assertThat(result.getResponse().getHeader("X-XSRF-TOKEN"))
+                .isEqualTo(standardCookie.getValue());
+        assertThat(setCookies).anyMatch(value ->
+                value.startsWith("XSRF-TOKEN=")
+                        && value.contains("Path=/api/v1")
+                        && value.contains("Max-Age=0")
+        );
+    }
+
     private record TestGuest(
             GuestSession session,
             Cookie cookie
@@ -115,7 +136,7 @@ class ConsultationApiIntegrationTest {
     void sessionWithoutCookieHasNoActiveConsultation()
             throws Exception {
 
-        mockMvc.perform(
+        MvcResult result = mockMvc.perform(
                         get("/api/v1/session")
                 )
                 .andExpect(status().isOk())
@@ -127,7 +148,10 @@ class ConsultationApiIntegrationTest {
                         jsonPath(
                                 "$.hasActiveConsultation"
                         ).value(false)
-                );
+                )
+                .andReturn();
+
+        assertCsrfBootstrapCookieHeaders(result);
     }
 
     // 브라우저가 Session bootstrap에서 받은 쿠키/헤더로 첫 write를 수행하는 경로
@@ -152,6 +176,7 @@ class ConsultationApiIntegrationTest {
 
         assertThat(csrfHeader).isNotBlank();
         assertThat(csrfCookie).isNotNull();
+        assertCsrfBootstrapCookieHeaders(sessionResult);
 
         MvcResult consultationResult =
                 mockMvc.perform(
@@ -180,6 +205,22 @@ class ConsultationApiIntegrationTest {
                                 .header("X-XSRF-TOKEN", csrfHeader)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"category\":\"CARD\"}")
+                )
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        put("/api/v1/consultations/{id}/situation", consultationId)
+                                .cookie(csrfCookie, guestCookie)
+                                .header("X-XSRF-TOKEN", csrfHeader)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"situationText\":\"카드를 잃어버렸어요.\"}")
+                )
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        post("/api/v1/consultations/{id}/follow-up/prepare", consultationId)
+                                .cookie(csrfCookie, guestCookie)
+                                .header("X-XSRF-TOKEN", csrfHeader)
                 )
                 .andExpect(status().isOk());
     }

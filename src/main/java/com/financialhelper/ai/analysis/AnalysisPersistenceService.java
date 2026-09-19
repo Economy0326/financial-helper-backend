@@ -419,6 +419,19 @@ public class AnalysisPersistenceService {
         complete(snapshot, result, null);
     }
 
+    /**
+     * Completes a deterministic partial result without opening the separate
+     * one-time free-form information supplement flow. This is used when the
+     * structured follow-up clarification budget has already been exhausted.
+     */
+    @Transactional
+    public void completeWithoutSupplement(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result
+    ) {
+        complete(snapshot, result, null, true);
+    }
+
     private int accountAiAttemptsLimit() {
         // The existing per-job max-attempt policy remains authoritative. The
         // account-level guard is supplied by AccountProperties through the
@@ -432,6 +445,16 @@ public class AnalysisPersistenceService {
             AnalysisData.Snapshot snapshot,
             AnalysisAiResult result,
             AnalysisEvidenceSnapshotData evidenceSnapshot
+    ) {
+
+        complete(snapshot, result, evidenceSnapshot, false);
+    }
+
+    private void complete(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result,
+            AnalysisEvidenceSnapshotData evidenceSnapshot,
+            boolean forceInsufficientInformation
     ) {
 
         if (evidenceSnapshot != null) {
@@ -507,6 +530,8 @@ public class AnalysisPersistenceService {
         }
 
         if (
+                forceInsufficientInformation
+                ||
                 consultation
                         .getInformationSupplementCount()
                         >= 1
@@ -626,6 +651,24 @@ public class AnalysisPersistenceService {
 
         if (job.isEmpty()) {
 
+            // Resolve a known out-of-scope procedure before the user reaches
+            // the Analysis start button.  This is a read-only deterministic
+            // check; it creates no job, spends no AI quota, and never calls
+            // OpenAI.
+            if (isStructuredScenario(consultation)) {
+                try {
+                    FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultationId);
+                    if (plan.status() == PlanStatus.UNSUPPORTED) {
+                        return AnalysisStateResponse.unsupported(
+                                consultation.getInformationSupplementCount());
+                    }
+                } catch (RuntimeException ignored) {
+                    // Keep normal NOT_STARTED behavior when the plan cannot
+                    // yet be evaluated; reserveStart remains the final
+                    // fail-closed guard.
+                }
+            }
+
             return AnalysisStateResponse
                     .notStarted(
                             consultation
@@ -665,9 +708,16 @@ public class AnalysisPersistenceService {
                                 consultationId,
                                 guestSession.getId()
                         )
-                        .orElseThrow(
-                                ConsultationNotFoundException::new
-                        );
+                .orElseThrow(
+                        ConsultationNotFoundException::new
+                );
+
+        // Structured General Consultation scenarios finish their missing-fact
+        // collection before Analysis. A legacy NEEDS_MORE_INFO row must not
+        // reopen Situation or create a second supplement question.
+        if (isStructuredScenario(consultation)) {
+            throw new InvalidConsultationStateException();
+        }
 
         ensureAnalysisStep(
                 consultation
@@ -714,6 +764,11 @@ public class AnalysisPersistenceService {
                         consultationId,
                         rawToken
                 );
+
+        if (isStructuredScenario(consultation)) {
+            return InformationSupplementContextResponse.inactive(
+                    consultation.getInformationSupplementCount());
+        }
 
         // 일반 Situation 수정 화면이면 추가정보 Context가 아님
         if (
@@ -998,20 +1053,46 @@ public class AnalysisPersistenceService {
                     );
         }
 
-        return AnalysisStateResponse.from(
+        AnalysisStateResponse response = AnalysisStateResponse.from(
                 job,
                 result,
                 consultation
                         .getInformationSupplementCount()
                 , partialSafeActions(job, consultation)
         );
+        if (isStructuredScenario(consultation)
+                && job.getStatus() == AnalysisJobStatus.NEEDS_MORE_INFO) {
+            return new AnalysisStateResponse(
+                    AnalysisJobStatus.INSUFFICIENT_INFORMATION.name(),
+                    response.failureCode(),
+                    response.attemptCount(),
+                    response.informationSupplementCount(),
+                    false,
+                    response.additionalInformationNeeded(),
+                    response.safeActions());
+        }
+        return response;
+    }
+
+    private boolean isStructuredScenario(Consultation consultation) {
+        return switch (ConsultationScenarioResolver.resolve(consultation)) {
+            case CARD_LOSS_UNAUTHORIZED_USE,
+                    VOICE_PHISHING_SUSPICIOUS_TRANSFER,
+                    UNAUTHORIZED_ACCOUNT_TRANSFER,
+                    PERSONAL_INFO_SMISHING_MALICIOUS_APP -> true;
+            case UNKNOWN -> false;
+        };
     }
 
     private java.util.List<AnalysisStateResponse.SafeAction> partialSafeActions(
             AnalysisJob job,
             Consultation consultation
     ) {
+        // After the single information-supplement opportunity the job moves
+        // to INSUFFICIENT_INFORMATION.  Independent reviewed safe actions are
+        // still valid in that terminal state and must remain visible.
         if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
+                && job.getStatus() != AnalysisJobStatus.INSUFFICIENT_INFORMATION
                 || com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
                 == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
             return java.util.List.of();
