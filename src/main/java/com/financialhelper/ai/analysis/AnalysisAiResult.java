@@ -43,7 +43,7 @@ public class AnalysisAiResult {
     )
     public List<AdditionalInformation> additionalInformationNeeded;
 
-    /** Required for procedure-backed grounded runs; optional for legacy AI V1 runs. */
+    /** Procedure 기반 grounded 실행에는 필수이며 legacy AI V1 실행에는 optional이다. */
     @Size(max = 20)
     @Valid
     @JsonPropertyDescription(

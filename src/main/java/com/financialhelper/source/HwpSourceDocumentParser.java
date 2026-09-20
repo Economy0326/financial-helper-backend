@@ -19,16 +19,15 @@ import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
 /**
- * Minimal HWP 5.0 text extraction for official source documents.  It reads
- * only the OLE FileHeader and BodyText/Section streams, preserves the input
- * bytes unchanged, and fails closed when the expected HWP structure is not
- * present.  It is deliberately not a general office/OCR parser.
+ * 공식 source document를 위한 최소 HWP 5.0 문장 추출기다. OLE FileHeader와
+ * BodyText/Section stream만 읽고 입력 byte를 변경 없이 유지한다. 예상한 HWP
+ * 구조가 없으면 fail-closed로 처리하며 범용 office/OCR parser가 아니다.
  */
 @Component
 public class HwpSourceDocumentParser implements SourceDocumentParser {
 
     private static final int FILE_HEADER_COMPRESSION_OFFSET = 36;
-    // HWP 5.0 record tags: 0x42 is PARA_HEADER and 0x43 is PARA_TEXT.
+    // HWP 5.0 record tag에서 0x42는 PARA_HEADER, 0x43은 PARA_TEXT다.
     private static final int PARA_TEXT_TAG = 0x43;
     private static final int MAX_INFLATED_BYTES = 20 * 1024 * 1024;
     private static final int MIN_NORMALIZED_LENGTH = 120;

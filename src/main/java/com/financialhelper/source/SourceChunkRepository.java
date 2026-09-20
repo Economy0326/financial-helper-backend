@@ -32,9 +32,9 @@ public interface SourceChunkRepository
     Optional<SourceChunk> findWithDocumentById(@Param("id") UUID id);
 
     /**
-     * Parameter-safe PostgreSQL full-text lookup for approved chunks in the
-     * active document corpus.  The simple configuration is intentionally
-     * language-neutral and leaves aliases/synonyms to a later layer.
+     * approved chunk를 대상으로 parameter-safe PostgreSQL full-text 조회를 수행한다.
+     * active document corpus만 대상으로 한다. simple configuration은 의도적으로
+     * language-neutral하게 유지하고 alias/synonym 처리는 이후 layer에 맡긴다.
      */
     @Query(
             value = """

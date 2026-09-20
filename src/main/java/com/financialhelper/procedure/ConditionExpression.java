@@ -5,7 +5,7 @@ import tools.jackson.databind.JsonNode;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Restricted, data-only condition tree. It is never evaluated as code. */
+/** 제한된 data-only 조건 tree이며 code로 평가하지 않는다. */
 public record ConditionExpression(
         String op,
         String factKey,

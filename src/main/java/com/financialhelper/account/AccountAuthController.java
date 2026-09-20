@@ -132,8 +132,8 @@ public class AccountAuthController {
         String token = cookie(request, properties.cookieName());
         sessionService.revoke(token);
         response.addHeader(HttpHeaders.SET_COOKIE, sessionCookie("", true).toString());
-        // The guest session may be bound to the account that just logged out.
-        // Clear it so the next account starts with a fresh browser session.
+        // guest session이 방금 logout한 account에 묶여 있을 수 있다.
+        // 다음 account가 새로운 browser session으로 시작하도록 삭제한다.
         response.addHeader(HttpHeaders.SET_COOKIE, guestSessionCookieService.clear().toString());
         return ResponseEntity.noContent().build();
     }

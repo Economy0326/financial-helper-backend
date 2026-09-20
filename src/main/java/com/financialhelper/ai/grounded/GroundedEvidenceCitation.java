@@ -3,7 +3,7 @@ package com.financialhelper.ai.grounded;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-/** Typed citation reference. It never carries an unvalidated URL or text. */
+/** typed citation reference이며 검증하지 않은 URL이나 문장을 담지 않는다. */
 public class GroundedEvidenceCitation {
     @NotBlank
     @Size(max = 220)

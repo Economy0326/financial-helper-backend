@@ -15,9 +15,9 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The reviewed CARD law allowlist is deliberately narrow.  Runtime law text
- * is accepted only when the direct Work 5.5 adapter validates the exact statute
- * and locator; this class never turns a law response into a financial action.
+ * 검토된 CARD law allowlist는 의도적으로 제한한다. direct Work 5.5 adapter가
+ * 정확한 법령과 locator를 검증한 경우에만 runtime 법령 text를 허용한다.
+ * 이 class는 법령 응답을 financial action으로 변환하지 않는다.
  */
 @Service
 public class ReviewedCardLawEvidenceService {
@@ -52,10 +52,9 @@ public class ReviewedCardLawEvidenceService {
     }
 
     /**
-     * Loads only the narrow, manually reviewed law identities for a breadth
-     * scenario.  A missing incident date intentionally returns no law
-     * evidence: current law must never be silently applied to a historical
-     * incident whose version has not been established.
+     * breadth scenario에 대해 수동 검토한 제한된 law identity만 불러온다.
+     * incident date가 없으면 의도적으로 law evidence를 반환하지 않는다.
+     * version을 확정하지 않은 과거 incident에 현재 법령을 암묵적으로 적용해서는 안 된다.
      */
     public List<AnalysisEvidenceSnapshotData.ReviewedLawEvidence> loadForScenario(
             String scenario, LocalDate incidentDate) {

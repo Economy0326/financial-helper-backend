@@ -2,7 +2,7 @@ package com.financialhelper.law;
 
 import java.time.LocalDate;
 
-/** Structured law lookup input; raw consultation text never crosses the law API boundary. */
+/** 구조화된 법령 조회 입력이며 상담 원문은 law API 경계를 넘지 않는다. */
 public record LawEvidenceRequest(
         String lawName,
         String articleLocator,

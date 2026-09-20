@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Shared explicit fact vocabulary for non-CARD procedure-backed scenarios. */
+/** CARD 이외의 Procedure 기반 scenario가 공유하는 명시적 fact 어휘다. */
 public final class ScenarioCaseFactExtractor {
     public static final Set<String> ALLOWED_FACT_KEYS = Set.of(
             "institution", "productType", "incidentDate", "transactionDate", "reported",
@@ -51,7 +51,7 @@ public final class ScenarioCaseFactExtractor {
         return new CardCaseFacts(result);
     }
 
-    /** Keep equivalent structured-answer names on one canonical vocabulary. */
+    /** 같은 의미의 structured answer 이름을 하나의 canonical 어휘로 유지한다. */
     public static String canonicalKey(String rawKey) {
         if (rawKey == null) return null;
         return switch (rawKey.trim()) {

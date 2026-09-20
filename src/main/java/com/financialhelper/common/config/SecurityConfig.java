@@ -49,9 +49,8 @@ public class SecurityConfig {
             CookieCsrfTokenRepository csrfTokenRepository
     ) throws Exception {
 
-        // The browser client reads the double-submit token to mirror it in
-        // X-XSRF-TOKEN. It is not an authentication credential, and keeping
-        // it readable is required for the configured cookie/header contract.
+        // browser client가 double-submit token을 읽어 X-XSRF-TOKEN에 담는다.
+        // 인증 credential이 아니며 설정된 cookie/header contract를 위해 읽을 수 있어야 한다.
         CsrfTokenRequestAttributeHandler csrfRequestHandler =
                 new CsrfTokenRequestAttributeHandler();
         csrfRequestHandler.setCsrfRequestAttributeName("_csrf");

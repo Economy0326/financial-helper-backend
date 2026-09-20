@@ -4,8 +4,7 @@ import com.financialhelper.common.error.ApiException;
 import org.springframework.http.HttpStatus;
 
 /**
- * Raised before an analysis job is created when confirmed facts are outside
- * the currently approved ProcedureVersion scope.
+ * 확정 fact가 현재 승인된 ProcedureVersion 범위 밖이면 analysis job 생성 전에 발생한다.
  */
 public class UnsupportedConsultationScopeException extends ApiException {
     public UnsupportedConsultationScopeException() {

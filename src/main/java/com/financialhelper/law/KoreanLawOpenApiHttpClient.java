@@ -25,7 +25,7 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** JSON client for the official lawSearch/lawService Open API endpoints. */
+/** 공식 lawSearch/lawService Open API endpoint용 JSON client다. */
 @Component
 public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
 
@@ -120,8 +120,8 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
         log.info("Korean Law Open API article request endpoint=lawService.do articleCode={}",
                 jo == null ? "FULL_TEXT" : jo);
         List<String> params = new ArrayList<>();
-        // The eflaw body endpoint is required for a specific effective-date version;
-        // target=law resolves the current body and can disagree with historical metadata.
+        // 특정 시행일 version에는 eflaw 본문 endpoint가 필요하다.
+        // target=law는 현재 본문을 조회하므로 과거 metadata와 다를 수 있다.
         params.add(param("target", "eflaw"));
         params.add(param("type", JSON));
         params.add(param("MST", version.mst()));

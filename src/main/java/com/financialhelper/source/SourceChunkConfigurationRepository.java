@@ -9,8 +9,8 @@ public interface SourceChunkConfigurationRepository
         extends JpaRepository<SourceChunkConfiguration, String> {
 
     /**
-     * Let the database serialize first-writer-wins creation of a config
-     * version.  The caller compares the resulting JSON tree before use.
+     * config version 생성은 먼저 쓴 요청이 이기도록 database가 직렬화한다.
+     * caller는 사용 전에 생성된 JSON tree를 비교한다.
      */
     @Modifying(flushAutomatically = true)
     @Query(

@@ -171,10 +171,9 @@ public class AnalysisWorker {
                 FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
                 if (plan.status() == PlanStatus.NEEDS_CLARIFICATION) {
                     AnalysisAiResult partial = partialResult(plan);
-                    // All procedure-backed scenarios use structured
-                    // follow-up. Information gaps and coverage gaps are
-                    // terminal partial/limited guidance here; they must not
-                    // reopen the legacy Situation supplement flow.
+        // 모든 Procedure 기반 scenario는 structured follow-up을 사용한다.
+        // 정보 및 coverage 부족은 여기서 terminal partial/limited guidance이며
+        // legacy Situation 보완 flow를 다시 열어서는 안 된다.
                     persistenceService.completeWithoutSupplement(snapshot, partial);
                     return;
                 }
@@ -193,9 +192,9 @@ public class AnalysisWorker {
                                     AnalysisAiResult.class
                             );
 
-            // Structured scenarios finish missing-fact collection before the
-            // analysis job starts. Normalize model output before validation so
-            // it cannot reopen the legacy free-form supplement flow.
+        // Structured scenario는 analysis job 시작 전에 missing fact 수집을 마친다.
+        // validation 전에 model 출력을 normalize해 legacy free-form 보완 flow를
+        // 다시 열 수 없게 한다.
             if (snapshot.scenario() != null
                     && snapshot.scenario() != ConsultationScenario.UNKNOWN
                     && result != null) {
@@ -242,8 +241,8 @@ public class AnalysisWorker {
 
             String failureCode = groundedFailureCode(exception);
             log.warn("Analysis job evidence unavailable. jobId={}, category={}", jobId, failureCode);
-            // Keep the public API contract stable while preserving the precise
-            // root category in the server log for diagnosis.
+        // public API contract를 안정적으로 유지하면서 진단용 server log에는
+        // 정확한 root category를 보존한다.
             persistenceService.fail(jobId, publicFailureCode(failureCode));
 
         } catch (AiProviderException exception) {

@@ -22,8 +22,8 @@ public class AccountConsultationQuotaService {
     @Transactional
     public void recordNewConsultation(Account account, Consultation consultation, OffsetDateTime now) {
         if (account == null || consultation == null) return;
-        // Retries for the same consultation are idempotent and do not consume
-        // another rolling-window start.
+        // 같은 consultation의 재시도는 멱등이며 rolling window의
+        // 신규 시작 횟수를 추가로 소비하지 않는다.
         if (startRepository.existsByConsultation_Id(consultation.getId())) {
             return;
         }

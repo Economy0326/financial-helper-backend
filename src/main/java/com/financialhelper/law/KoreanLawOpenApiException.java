@@ -1,6 +1,6 @@
 package com.financialhelper.law;
 
-/** Fail-closed exception for the direct Korean Law Open API boundary. */
+/** Direct Korean Law Open API 경계의 fail-closed 예외다. */
 public class KoreanLawOpenApiException extends RuntimeException {
 
     public KoreanLawOpenApiException(String message) {

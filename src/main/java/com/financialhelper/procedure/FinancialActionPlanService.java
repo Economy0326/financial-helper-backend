@@ -32,8 +32,8 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Owns the deterministic financial action decision. LLM output and
- * retrieval rank are intentionally absent from this service's inputs.
+ * 결정적인 금융 행동 판단을 담당한다. 이 service 입력에는 의도적으로
+ * LLM 출력과 retrieval 순위가 없다.
  */
 @Service
 public class FinancialActionPlanService {
@@ -89,11 +89,9 @@ public class FinancialActionPlanService {
     }
 
     /**
-     * Internal orchestration entry point used after the consultation has
-     * already passed its guest-owned state transition.  It deliberately does
-     * not accept a user token because the analysis worker has no request
-     * credentials; callers must keep this method behind the analysis state
-     * machine.
+     * 상담이 guest 소유 상태 전환을 통과한 뒤 사용하는 내부 orchestration 진입점이다.
+     * analysis worker에는 request credential이 없으므로 의도적으로 user token을
+     * 받지 않는다. caller는 이 메서드를 analysis 상태 machine 뒤에서 호출해야 한다.
      */
     @Transactional
     public FinancialActionPlanData buildForCurrent(UUID consultationId) {
@@ -143,7 +141,7 @@ public class FinancialActionPlanService {
                 .orElseThrow(() -> new IllegalStateException("financial action plan does not exist"));
     }
 
-    /** Pure decision entry point used by unit tests and future orchestration. */
+    /** unit test와 향후 orchestration에서 사용하는 순수 판단 진입점이다. */
     public FinancialActionPlanData buildFromSnapshot(
             ConfirmedCaseSnapshotData snapshot,
             ProcedureVersionData procedure,
@@ -176,12 +174,10 @@ public class FinancialActionPlanService {
             return data(snapshot, procedure, PlanStatus.UNSUPPORTED, List.of(), List.of(),
                     List.of(), unresolved, List.of(scopeGap), warnings);
         }
-        // A procedure catalog can list facts that are useful for later
-        // branches without making them relevant to the action currently
-        // selected.  Only retain a required fact when it participates in an
-        // action or document condition (scope and temporal guards are
-        // handled separately above).  This keeps optional UNKNOWN values
-        // from downgrading an otherwise grounded report.
+        // Procedure catalog에는 이후 branch에 유용하지만 현재 선택된 action과는
+        // 무관한 fact가 있을 수 있다. action 또는 document 조건에 참여하는 required
+        // fact만 유지한다. scope와 기간 guard는 위에서 별도로 처리한다.
+        // 따라서 optional UNKNOWN 때문에 grounded report가 낮은 상태로 바뀌지 않는다.
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
             if (required.requiredForDecision()
                     && !facts.hasKnownValue(required.key())
@@ -200,18 +196,17 @@ public class FinancialActionPlanService {
                     List.of(), unresolved, coverageGaps,
                     List.of("BLOCKING_INFORMATION_REQUIRED"));
         }
-        // A breadth Procedure definition is not executable until its reviewed
-        // official corpus is bound.  Keeping this guard in the deterministic
-        // plan layer prevents an approved-looking catalog row from producing
-        // unsupported actions while source acquisition/review is pending.
+        // breadth Procedure 정의는 검토된 공식 corpus가 binding되기 전에는 실행할 수 없다.
+        // 결정적 plan layer의 이 guard는 source 확보/검토 대기 중 승인된 것처럼 보이는
+        // catalog row가 미지원 action을 생성하지 못하게 한다.
         if (!cardProcedure
                 && procedure.evidenceReferences().isEmpty()) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, List.of("OFFICIAL_EVIDENCE_UNAVAILABLE"),
                     List.of("SCENARIO_CORPUS_NOT_ACTIVATED"));
         }
-        // If no action can be determined yet, do not spend evidence resolution
-        // work or manufacture a partial result from an UNKNOWN condition.
+        // 아직 action을 결정할 수 없다면 Evidence 판정 작업을 수행하거나
+        // UNKNOWN 조건에서 partial 결과를 만들어내지 않는다.
         if (!unresolved.isEmpty() && !hasDefinitelyTrueAction(procedure, facts)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps,
@@ -224,10 +219,9 @@ public class FinancialActionPlanService {
 
         List<ProcedureVersionData.EvidenceReference> applicableReferences = procedure.evidenceReferences()
                 .stream()
-                // K5 is an operational form with no independently verified
-                // historical effective date. It is needed once compensation
-                // submission is selected, but must not block the immediate
-                // loss-report branch for an already-known FALSE report state.
+                // K5는 과거 시행일을 독립적으로 검증하지 못한 업무 양식이다.
+                // 보상 신청을 선택한 뒤에는 필요하지만 신고 여부가 FALSE로 확인된
+                // 즉시 분실 신고 branch를 막아서는 안 된다.
                 .filter(reference -> !cardProcedure
                         || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
                         || "TRUE".equalsIgnoreCase(facts.value("reported"))
@@ -478,9 +472,8 @@ public class FinancialActionPlanService {
                 "PERSONAL_INFO_SMISHING_MALICIOUS_APP").contains(scenario)) return false;
         String institution = facts.value("institution");
         if (institution == null || "UNKNOWN".equalsIgnoreCase(institution)) {
-            // Institution-specific channels are never guessed. Generic safe
-            // actions may still be returned because the procedure uses only
-            // the reviewed, institution-neutral wording.
+            // 기관별 channel은 추측하지 않는다. Procedure가 검토된 기관 중립적
+            // 표현만 사용하므로 일반 safe action은 계속 반환할 수 있다.
         }
         if ("VOICE_PHISHING_SUSPICIOUS_TRANSFER".equals(scenario)) {
             String suspicious = facts.value("suspiciousTransfer");
@@ -668,7 +661,7 @@ public class FinancialActionPlanService {
         }
     }
 
-    /** Keeps the dependency boundary explicit while avoiding a second snapshot implementation. */
+    /** 두 번째 snapshot 구현을 만들지 않으면서 dependency 경계를 명확하게 유지한다. */
     private static final class ConfirmedCaseSnapshotServiceAdapter {
         private final com.financialhelper.retrieval.ConfirmedCaseSnapshotService delegate;
 

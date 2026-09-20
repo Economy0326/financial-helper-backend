@@ -23,7 +23,7 @@ public record AccountProperties(
         }
     }
 
-    /** Compatibility constructor for existing callers that only configure Kakao. */
+    /** Kakao만 설정하는 기존 caller를 위한 호환 생성자다. */
     public AccountProperties(boolean generalConsultationRequired,
                              Duration sessionTtl,
                              String cookieName,
@@ -103,7 +103,7 @@ public record AccountProperties(
             );
         }
 
-        /** Compatibility constructor for the Work 7 AI guard settings. */
+        /** Work 7 AI guard 설정을 위한 호환 생성자다. */
         public Limits(int maxSituationCharacters, int maxFollowUpCharacters,
                       int maxAiInputCharacters, int maxRequestBytes,
                       int aiAttemptsPerWindow, Duration aiQuotaWindow,

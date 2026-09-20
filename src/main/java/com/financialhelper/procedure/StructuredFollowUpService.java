@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Determines WHAT must be asked; a language model may only render HOW later. */
+/** 무엇을 물을지는 여기서 결정하고 language model은 이후 표현 방식만 담당한다. */
 @Service
 public class StructuredFollowUpService {
     private final ProcedureVersionService procedureVersionService;
@@ -50,8 +50,8 @@ public class StructuredFollowUpService {
     }
 
     /**
-     * Selects the next question from the current facts. Clarification keys are
-     * supplied by persistence so an UNKNOWN answer cannot create a loop.
+     * 현재 fact에서 다음 질문을 선택한다. UNKNOWN 응답이 반복되지 않도록
+     * persistence가 clarification key를 제공한다.
      */
     public StructuredFollowUpData specify(
             ProcedureVersionData procedure,
@@ -79,19 +79,18 @@ public class StructuredFollowUpService {
         List<FollowUpQuestionSpec> questions = new ArrayList<>();
         for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
             if (!isRelevant(required.key(), facts, scenario)) {
-                // The approved procedure may list a fact for the positive CARD
-                // branch. Once the user explicitly says there is no
-                // unauthorized payment, transaction details cannot affect any
-                // supported action and must not be asked as a dead-end question.
+                // 승인된 Procedure가 CARD positive branch용 fact를 포함할 수 있다.
+                // 사용자가 미인지 결제가 없다고 명시하면 거래 상세는 지원 action에
+                // 영향을 주지 않으므로 막다른 질문으로 다시 물어서는 안 된다.
                 continue;
             }
             if (!required.requiredForDecision() || facts.hasKnownValue(required.key())) {
                 continue;
             }
             missing.add(required.key());
-            // UNKNOWN is an explicit user answer. Keep it as a missing fact for
-            // deterministic planning. Only blocking facts get one useful,
-            // deterministic clarification and never the original question again.
+            // UNKNOWN은 명시적인 사용자 응답이므로 결정적 planning을 위한 missing fact로
+            // 유지한다. blocking fact만 유용한 결정적 clarification을 한 번 받고
+            // 원래 질문은 다시 하지 않는다.
             if (facts.value(required.key()) == null) {
                 questions.add(specFor(required, scenario));
             } else if ("UNKNOWN".equalsIgnoreCase(facts.value(required.key()))
@@ -153,7 +152,7 @@ public class StructuredFollowUpService {
                 clarificationAskedKeys);
     }
 
-    /** Deterministic entry point for breadth scenarios and focused tests. */
+    /** breadth scenario와 focused test를 위한 결정적 진입점이다. */
     public StructuredFollowUpData specifyForScenario(
             ConsultationScenario scenario,
             Map<String, String> explicitValues,

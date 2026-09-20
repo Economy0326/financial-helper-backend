@@ -14,9 +14,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Converts only explicit user wording or typed follow-up values into the
- * small CARD fact vocabulary.  It deliberately does not infer facts from
- * retrieval text, AI explanations, or implied circumstances.
+ * 명시적인 사용자 표현이나 typed follow-up 값만 작은 CARD fact 어휘로 변환한다.
+ * retrieval 문장, AI 설명, 암시된 상황에서는 fact를 추론하지 않는다.
  */
 public final class CardCaseFactExtractor {
     public static final Set<String> ALLOWED_FACT_KEYS = Set.of(
@@ -106,12 +105,12 @@ public final class CardCaseFactExtractor {
                         Integer.parseInt(matcher.group(3)));
                 target.put("incidentDate", date.toString());
             } catch (DateTimeException ignored) {
-                // Invalid dates remain absent and therefore UNKNOWN.
+                // 유효하지 않은 날짜는 값 없이 남으므로 UNKNOWN으로 처리된다.
             }
         }
     }
 
-    /** Explicit unsupported product wording must never be silently coerced to credit-card scope. */
+    /** 명시적인 미지원 product 표현을 신용카드 범위로 조용히 강제 변환해서는 안 된다. */
     public static boolean hasExplicitUnsupportedProduct(String text) {
         if (text == null) return false;
         return containsAny(text, "체크카드", "선불카드", "법인카드", "가족카드");

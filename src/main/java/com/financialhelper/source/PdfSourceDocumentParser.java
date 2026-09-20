@@ -9,9 +9,8 @@ import java.io.IOException;
 import java.util.regex.Pattern;
 
 /**
- * Text extraction for official, text-bearing PDFs.  The original PDF bytes
- * are passed through unchanged; page markers provide a stable locator for
- * chunking without treating a PDF as HTML.
+ * 문장이 포함된 공식 PDF용 문장 추출기다. 원본 PDF byte는 변경 없이 전달하며
+ * PDF를 HTML로 취급하지 않고 page marker로 안정적인 chunk locator를 제공한다.
  */
 @Component
 public class PdfSourceDocumentParser implements SourceDocumentParser {
@@ -101,8 +100,8 @@ public class PdfSourceDocumentParser implements SourceDocumentParser {
     ) {
         try (PDDocument document = Loader.loadPDF(originalContent)) {
             String title = document.getDocumentInformation().getTitle();
-            // Some office-exported PDFs carry an unrelated application title
-            // (for example, "PowerPoint").  Never use that as evidence title.
+            // office에서 export한 일부 PDF에는 관련 없는 application title이 있다.
+            // 예를 들어 "PowerPoint" 같은 값은 Evidence 제목으로 사용하지 않는다.
             if (title != null && !title.isBlank()
                     && !title.contains("PowerPoint")
                     && !title.contains("?")
@@ -110,7 +109,7 @@ public class PdfSourceDocumentParser implements SourceDocumentParser {
                 return title.trim();
             }
         } catch (IOException | RuntimeException ignored) {
-            // Text parsing above is the trust boundary; title metadata is optional.
+            // 위 문장 parsing이 trust boundary이며 title metadata는 optional이다.
         }
         return source.sourceKey();
     }

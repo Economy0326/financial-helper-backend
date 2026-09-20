@@ -59,7 +59,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static String clientIp(HttpServletRequest request) {
-        // Do not trust forwarded headers unless a trusted proxy is configured.
+        // 신뢰할 수 있는 proxy를 설정하지 않았다면 forwarded header를 신뢰하지 않는다.
         return request.getRemoteAddr() == null ? "unknown" : request.getRemoteAddr();
     }
 

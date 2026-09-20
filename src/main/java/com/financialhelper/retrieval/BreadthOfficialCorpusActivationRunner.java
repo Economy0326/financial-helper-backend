@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-/** Opt-in runner for the frozen, reviewed breadth MVP corpus. */
+/** 동결 및 검토된 breadth MVP corpus의 선택 실행 runner다. */
 @Component
 @Profile("!test")
 @ConditionalOnProperty(

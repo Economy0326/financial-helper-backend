@@ -15,9 +15,9 @@ import java.util.UUID;
 public interface SourceDocumentRepository
         extends JpaRepository<SourceDocument, UUID> {
 
-    // Chunk creation is serialized per document version so two concurrent
-    // writers cannot create conflicting definitions for the same sequence or
-    // chunk configuration.
+    // 두 concurrent writer가 충돌하지 않도록 document version별 chunk 생성을 직렬화한다.
+    // writer가 같은 sequence에 대해 충돌하는 정의를 만들 수 없도록 한다.
+    // 같은 chunk configuration에도 적용된다.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query(
             """

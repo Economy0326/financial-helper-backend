@@ -9,8 +9,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Creates the one mapping row that an external index can use for a chunk and
- * retrieval generation.  It does not execute indexing.
+ * 외부 index가 chunk와 retrieval generation에 사용할 mapping row 하나를 만든다.
+ * indexing 자체는 실행하지 않는다.
  */
 @Service
 public class SourceChunkIndexingPersistenceService {
@@ -99,9 +99,8 @@ public class SourceChunkIndexingPersistenceService {
     }
 
     /**
-     * Claim an existing mapping for indexing only after its generation has
-     * entered PROCESSING.  Both mapping and generation are read from the
-     * locked persistence graph.
+     * generation이 PROCESSING에 진입한 뒤에만 기존 mapping을 indexing 대상으로 점유한다.
+     * mapping과 generation 모두 lock된 persistence graph에서 읽는다.
      */
     @Transactional
     public SourceChunkIndexing markProcessing(
@@ -142,7 +141,7 @@ public class SourceChunkIndexingPersistenceService {
         return sourceChunkIndexingRepository.save(current);
     }
 
-    /** Record a failed attempt without changing the immutable chunk mapping. */
+    /** immutable chunk mapping을 변경하지 않고 실패한 attempt를 기록한다. */
     @Transactional
     public SourceChunkIndexing markFailed(
             SourceChunkIndexing indexing,
@@ -171,8 +170,8 @@ public class SourceChunkIndexingPersistenceService {
             );
         }
 
-        // Never trust a detached status or review association supplied by a
-        // caller.  Reload and lock the current mapping before changing it.
+        // caller가 전달한 분리된 status나 review association을 신뢰하지 않는다.
+        // 변경 전에 현재 mapping을 다시 읽고 lock한다.
         return sourceChunkIndexingRepository
                 .findForUpdateById(indexing.getId())
                 .orElseThrow(() ->

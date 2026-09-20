@@ -181,11 +181,9 @@ public class ConsultationReportService {
                                     ConsultationReportAiResult.class
                             );
 
-            // The action plan is Backend authority.  Keep narrative fields
-            // model-authored, but compose the procedure fields from the
-            // immutable evidence snapshot before validating the result.  This
-            // prevents harmless wording/ordering drift in a model response
-            // from turning an otherwise grounded report into a 502.
+            // action plan은 Backend가 결정한다. narrative field는 model 작성으로 유지하되
+            // 결과 검증 전에 immutable Evidence snapshot에서 Procedure field를 조합한다.
+            // model 응답의 무해한 문구나 순서 차이로 grounded report가 502가 되는 것을 막는다.
             if (snapshot.groundedEvidence() != null && result != null) {
                 result = composeProcedureFields(
                         result, snapshot.groundedEvidence().actionPlan());
@@ -214,9 +212,8 @@ public class ConsultationReportService {
                         exception
         ) {
 
-            // Keep the public 502 contract stable, but retain a safe machine
-            // category for diagnosis.  Do not log the prompt, user situation,
-            // model output, or provider credentials.
+            // public 502 contract는 안정적으로 유지하되 진단용 안전한 machine category는
+            // 보존한다. prompt, 사용자 situation, model 출력, provider credential은 log로 남기지 않는다.
             log.warn(
                     "Report generation failed consultationId={} caseRevision={} followUpRevision={} stage={} category={} rule={} type={}",
                     consultationId,
@@ -314,10 +311,9 @@ public class ConsultationReportService {
     }
 
     /**
-     * Copies only Backend-authoritative procedure fields.  The model still
-     * supplies the explanation, terms and draft, while action identity,
-     * ordering and approved document identity come from the plan captured in
-     * the evidence snapshot.
+     * Backend가 결정하는 Procedure field만 복사한다. 설명, 용어, 초안은 model이
+     * 제공하고 action identity, 순서, 승인 document identity는 Evidence snapshot에
+     * capture된 plan에서 가져온다.
      */
     static ConsultationReportAiResult composeProcedureFields(
             ConsultationReportAiResult result,
@@ -337,11 +333,9 @@ public class ConsultationReportService {
         }
         result.firstAction = first;
 
-        // The plan list is the authoritative order.  Do not carry the
-        // persisted/model-facing order field through here: an old row or a
-        // model response may contain gaps, duplicates, or a reordered value.
-        // Re-number the final public report from the deterministic plan
-        // position so the validator sees exactly 1..N.
+        // plan list가 기준 순서다. 오래된 row나 model 응답에는 누락, 중복, 재정렬된
+        // 값이 있을 수 있으므로 저장된/model-facing order field를 전달하지 않는다.
+        // validator가 정확히 1..N을 보도록 최종 public report를 결정적 plan 위치로 다시 번호 매긴다.
         result.actionSteps = java.util.stream.IntStream.range(0, plan.actions().size())
                 .mapToObj(index -> {
             FinancialActionPlanData.Action action = plan.actions().get(index);
@@ -380,8 +374,8 @@ public class ConsultationReportService {
                 || exception.getMessage().isBlank()) {
             return "UNSPECIFIED";
         }
-        // Validator messages are static rule identifiers/descriptions.  Keep
-        // the diagnostic bounded and never include model output or prompt text.
+        // Validator message는 정적 rule 식별자/설명이다. 진단 범위를 제한하고
+        // model 출력이나 prompt 문장을 포함하지 않는다.
         String safe = exception.getMessage().replaceAll("[\\r\\n]+", " ");
         return safe.substring(0, Math.min(safe.length(), 160));
     }

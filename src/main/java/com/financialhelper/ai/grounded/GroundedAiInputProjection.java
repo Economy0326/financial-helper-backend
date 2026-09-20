@@ -10,12 +10,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Purpose-specific, bounded input for the explanatory AI calls.
+ * 설명용 AI 호출에 사용하는 목적별 제한 입력이다.
  *
- * <p>The persisted {@link AnalysisEvidenceSnapshotData} remains the complete
- * audit/replay record. This projection deliberately keeps only the identity,
- * locator and clause-sized text needed by the model and the grounded output
- * contract.</p>
+ * <p>저장된 {@link AnalysisEvidenceSnapshotData}는 완전한 audit/replay record로
+ * 유지한다. 이 projection은 model과 grounded output contract에 필요한 identity,
+ * locator, 조항 단위 문장만 의도적으로 유지한다.</p>
  */
 public final class GroundedAiInputProjection {
 
@@ -136,7 +135,7 @@ public final class GroundedAiInputProjection {
         return List.copyOf(result);
     }
 
-    /** Allocate a bounded text budget without dropping an evidence identity. */
+    /** Evidence identity를 누락하지 않고 제한된 문장 budget을 할당한다. */
     private static List<Integer> allocate(List<String> texts, int budget) {
         if (texts.isEmpty()) {
             return List.of();
@@ -163,10 +162,8 @@ public final class GroundedAiInputProjection {
     }
 
     /**
-     * Keeps complete sentence/paragraph units. When a body is larger than its
-     * allocation, condition/exception units are preferred and the remaining
-     * units are taken in source order. No arbitrary character-prefix slice is
-     * used.
+     * 완전한 문장/문단 단위를 유지한다. 본문이 할당량보다 크면 condition/exception
+     * 단위를 우선하고 나머지는 source 순서로 가져온다. 임의 문자 prefix slice는 사용하지 않는다.
      */
     private static String clauseAwareExcerpt(String text, int limit) {
         if (text == null || text.isBlank() || text.length() <= limit) {
@@ -200,8 +197,7 @@ public final class GroundedAiInputProjection {
             }
         }
         if (selected.isEmpty()) {
-            // A single indivisible clause is retained in full rather than
-            // cutting through its legal meaning.
+        // 나눌 수 없는 단일 조항은 법적 의미를 자르지 않고 전체를 유지한다.
             return units[0].trim();
         }
         return String.join(" ", selected);

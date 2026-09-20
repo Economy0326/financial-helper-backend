@@ -108,8 +108,8 @@ class SourceFoundationPersistenceIntegrationTest {
 
     @AfterEach
     void cleanOwnedRows() {
-        // Do not clear production-like corpus rows.  Every test records only
-        // rows it created and removes those rows in dependency order.
+        // production과 유사한 corpus row는 지우지 않는다. 각 test는 자신이 만든
+        // row만 기록하고 dependency 순서에 따라 제거한다.
         if (!ownedIndexingIds.isEmpty()) {
             sourceChunkIndexingRepository.deleteAllByIdInBatch(ownedIndexingIds);
         }
@@ -324,8 +324,8 @@ class SourceFoundationPersistenceIntegrationTest {
         ).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("membership is frozen");
 
-        // A retry for an already registered chunk remains idempotent after
-        // processing has started.
+        // 이미 등록한 chunk의 재시도는 이후에도 멱등성을 유지한다.
+        // processing이 시작된 뒤에도 동일하다.
         assertThat(sourceChunkIndexingPersistenceService.getOrCreate(
                 firstChunk,
                 processingGeneration

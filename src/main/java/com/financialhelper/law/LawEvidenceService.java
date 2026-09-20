@@ -10,8 +10,8 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Validates direct Korean Law Open API responses for later human review.
- * This service never creates or changes a ProcedureVersion or action plan.
+ * 추후 사람의 검토를 위해 Direct Korean Law Open API 응답을 검증한다.
+ * 이 service는 ProcedureVersion이나 action plan을 생성하거나 변경하지 않는다.
  */
 @Service
 public class LawEvidenceService {

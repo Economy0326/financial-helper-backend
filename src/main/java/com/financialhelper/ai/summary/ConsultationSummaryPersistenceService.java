@@ -246,9 +246,8 @@ public class ConsultationSummaryPersistenceService {
                         consultation.getFollowUpAnswerRevision()
                 );
 
-        // GET is a read-only retrieval operation. Once the owned current-revision
-        // Summary exists, downstream ANALYSIS/REPORT states must not turn that
-        // stored record into a state-transition request.
+        // GET은 read-only 조회 작업이다. 소유한 current-revision Summary가 있으면
+        // 후속 ANALYSIS/REPORT 상태가 저장 record를 상태 전환 요청으로 바꾸면 안 된다.
         if (stored.isPresent()) {
             return ConsultationSummaryStateResponse.ready(
                     toDocument(stored.get()),
@@ -258,9 +257,8 @@ public class ConsultationSummaryPersistenceService {
                             consultation.getFollowUpAnswerRevision()));
         }
 
-        // Keep the existing prepare contract for a genuinely absent Summary.
-        // `review` remains accepted for URL compatibility but does not widen
-        // mutation eligibility.
+        // 실제로 Summary가 없을 때는 기존 prepare contract를 유지한다.
+        // URL 호환을 위해 `review`를 받지만 mutation 허용 범위를 넓히지는 않는다.
         ensureReadyForSummary(consultation);
         return ConsultationSummaryStateResponse.notPrepared();
     }

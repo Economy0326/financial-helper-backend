@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
-/** Coordinates short DB phases with the potentially long external build. */
+/** 짧은 DB 단계와 오래 걸릴 수 있는 외부 build를 조정한다. */
 @Service
 public class RetrievalGenerationIndexingService {
 
@@ -28,7 +28,7 @@ public class RetrievalGenerationIndexingService {
         this.activeGeneration = activeGeneration;
     }
 
-    /** Build externally, persist the result, then switch the singleton pointer. */
+    /** 외부에서 build하고 결과를 저장한 뒤 singleton pointer를 전환한다. */
     public void buildAndActivate(UUID generationId) {
         RetrievalGeneration generation = persistence.inspect(generationId);
         compatibility.requireCompatible(generation, runtime.metadata());

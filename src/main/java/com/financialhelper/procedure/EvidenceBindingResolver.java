@@ -20,7 +20,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Resolves Procedure evidence to the exact approved, active corpus rows. */
+/** Procedure Evidence를 정확히 승인된 active corpus row로 판정한다. */
 @Service
 public class EvidenceBindingResolver {
     private final SourceRegistryRepository sourceRegistryRepository;

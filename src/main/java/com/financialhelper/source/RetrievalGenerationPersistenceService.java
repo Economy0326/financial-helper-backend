@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Idempotent persistence boundary for representation/index generations.
+ * representation/index generation을 위한 멱등 persistence 경계다.
  */
 @Service
 public class RetrievalGenerationPersistenceService {
@@ -32,9 +32,9 @@ public class RetrievalGenerationPersistenceService {
     }
 
     /**
-     * Return the generation for a key or create it once.  A generation key is
-     * an immutable identity; changed model/tokenizer/encoding/index metadata
-     * is a conflict rather than an update.
+     * key에 해당하는 generation을 반환하거나 한 번만 생성한다. generation key는
+     * 변경 불가능한 identity이므로 model/tokenizer/encoding/index metadata가
+     * 달라지면 update가 아니라 충돌로 처리한다.
      */
     @Transactional
     public RetrievalGeneration getOrCreate(
@@ -105,8 +105,8 @@ public class RetrievalGenerationPersistenceService {
     }
 
     /**
-     * Start a generation build against the current persisted lifecycle state.
-     * A detached caller object is never used as the source of truth.
+     * 현재 저장된 lifecycle 상태를 기준으로 generation build를 시작한다.
+     * 분리된 caller 객체는 Source of Truth로 사용하지 않는다.
      */
     @Transactional
     public RetrievalGeneration markProcessing(
@@ -118,8 +118,7 @@ public class RetrievalGenerationPersistenceService {
     }
 
     /**
-     * Record a generation build failure while preserving the same generation
-     * definition for a later retry.
+     * 이후 재시도를 위해 동일한 generation 정의를 유지하면서 build 실패를 기록한다.
      */
     @Transactional
     public RetrievalGeneration markFailed(
@@ -135,9 +134,9 @@ public class RetrievalGenerationPersistenceService {
     }
 
     /**
-     * Mark a build generation ready only after every member mapping is READY
-     * and its current SourceChunk review is APPROVED.  This is a persistence
-     * guard; active-generation switching remains a later orchestration task.
+     * 모든 member mapping이 READY이고 현재 SourceChunk review가 APPROVED인 경우에만
+     * build generation을 ready로 표시한다. 이는 persistence guard이며,
+     * active generation 전환은 이후 orchestration 작업으로 남긴다.
      */
     @Transactional
     public RetrievalGeneration markReady(

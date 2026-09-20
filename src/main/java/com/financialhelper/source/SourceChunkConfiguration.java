@@ -9,7 +9,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
 /**
- * Immutable chunking definition shared by all chunks that use one version.
+ * 하나의 version을 사용하는 모든 chunk가 공유하는 immutable chunking 정의다.
  */
 @Entity
 @Table(name = "source_chunk_configuration")

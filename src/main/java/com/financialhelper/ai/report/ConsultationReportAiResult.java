@@ -61,7 +61,7 @@ public class ConsultationReportAiResult {
     @Valid
     public ComplaintDraft complaintDraft;
 
-    /** Required for procedure-backed grounded reports; empty for legacy reports. */
+    /** Procedure 기반 grounded report에는 필수이며 legacy report에서는 비어 있다. */
     @Size(max = 20)
     @Valid
     @JsonPropertyDescription(

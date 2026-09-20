@@ -211,9 +211,8 @@ class ConsultationSummaryApiIntegrationTest {
                 ConsultationStep.ANALYSIS
         );
 
-        // The frontend can still have an in-flight ordinary GET while the
-        // confirm transition reaches ANALYSIS. It must remain a read-only
-        // stored-summary retrieval, not a 409 state mutation guard.
+        // confirm 전환이 ANALYSIS에 도달하는 동안 Frontend의 일반 GET이 진행 중일 수 있다.
+        // 409 상태 mutation guard가 아니라 저장된 Summary의 read-only 조회로 유지해야 한다.
         mockMvc.perform(
                         get("/api/v1/consultations/{id}/summary", consultation.getId())
                                 .cookie(guest.cookie())

@@ -3,7 +3,7 @@ package com.financialhelper.law;
 import java.time.LocalDate;
 import java.util.List;
 
-/** Typed boundary for the official Korean Law Open API. */
+/** 공식 Korean Law Open API의 typed 경계다. */
 public interface KoreanLawOpenApiClient {
 
     List<LawVersion> searchLaw(String lawName);

@@ -1,9 +1,8 @@
 package com.financialhelper.source;
 
 /**
- * Counts document tokens using the same tokenizer that the semantic runtime
- * uses for indexing.  Implementations must fail when that runtime is
- * unavailable; character length is not a token-count fallback.
+ * semantic runtime이 indexing에 사용하는 것과 같은 tokenizer로 document token을 센다.
+ * runtime을 사용할 수 없으면 구현은 실패해야 하며 문자 길이를 token 수 fallback으로 쓰지 않는다.
  */
 public interface SourceChunkTokenizer {
 

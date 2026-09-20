@@ -10,7 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-/** JSON-safe, replayable representation of the evidence used by one AI run. */
+    /** 한 번의 AI 실행에서 사용한 Evidence를 JSON-safe하고 replay 가능하게 표현한다. */
 public record AnalysisEvidenceSnapshotData(
         UUID id,
         UUID consultationId,
@@ -36,7 +36,7 @@ public record AnalysisEvidenceSnapshotData(
         OffsetDateTime capturedAt,
         ConsultationScenario scenario
 ) {
-    /** Compatibility constructor for legacy CARD snapshot fixtures. */
+    /** legacy CARD snapshot fixture를 위한 호환 생성자다. */
     public AnalysisEvidenceSnapshotData(
             UUID id,
             UUID consultationId,

@@ -42,9 +42,8 @@ public class SessionController {
             HttpServletRequest request,
             HttpServletResponse servletResponse
     ) {
-        // Materialize the token through the exact repository used by the
-        // Security filter chain. This writes the standard Path=/ cookie for
-        // both anonymous and authenticated session bootstrap requests.
+        // Security filter chain과 같은 repository를 통해 token을 materialize한다.
+        // 비인증 및 인증 session bootstrap 요청 모두에 표준 Path=/ cookie를 기록한다.
         CsrfToken csrfToken = csrfTokenRepository
                 .loadDeferredToken(request, servletResponse)
                 .get();

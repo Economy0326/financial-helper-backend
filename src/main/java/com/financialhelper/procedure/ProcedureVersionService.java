@@ -56,9 +56,8 @@ public class ProcedureVersionService {
     }
 
     /**
-     * Selects a CARD branch from confirmed facts only.  This keeps branch
-     * selection deterministic and prevents a newer branch row from replacing
-     * the established loss-plus-unauthorized-payment baseline.
+     * 확정 fact만으로 CARD branch를 선택한다. branch 선택을 결정적으로 유지하고
+     * 새로운 branch row가 기존 분실 및 미인지 결제 baseline을 대체하지 못하게 한다.
      */
     @Transactional(readOnly = true)
     public ProcedureVersionData requireApprovedCard(CardCaseFacts facts) {

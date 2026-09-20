@@ -2,14 +2,14 @@ package com.financialhelper.consultation;
 
 import java.util.Locale;
 
-/** Resolves only explicit scenario signals; it never infers a financial event from evidence. */
+/** 명시적 scenario 신호만 판정하며 Evidence에서 금융 사건을 추론하지 않는다. */
 public final class ConsultationScenarioResolver {
     private ConsultationScenarioResolver() {}
 
     public static ConsultationScenario resolve(Consultation consultation) {
         if (consultation == null) return ConsultationScenario.UNKNOWN;
-        // Situation is explicit current user input.  A category-selected cached
-        // scenario must never keep an account-transfer report on the CARD path.
+        // Situation은 현재 사용자의 명시적 입력이다. category 선택으로 cache된
+        // scenario 때문에 계좌이체 신고가 CARD 경로에 남아서는 안 된다.
         if (consultation.getSituationText() != null && !consultation.getSituationText().isBlank()) {
             return resolve(consultation.getCategory(), consultation.getSituationText());
         }

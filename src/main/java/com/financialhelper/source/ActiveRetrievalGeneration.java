@@ -11,7 +11,7 @@ import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
-/** Singleton pointer to the generation used by normal retrieval. */
+/** 일반 retrieval이 사용하는 generation의 singleton pointer다. */
 @Entity
 @Table(name = "active_retrieval_generation")
 public class ActiveRetrievalGeneration {

@@ -420,9 +420,8 @@ public class AnalysisPersistenceService {
     }
 
     /**
-     * Completes a deterministic partial result without opening the separate
-     * one-time free-form information supplement flow. This is used when the
-     * structured follow-up clarification budget has already been exhausted.
+     * 별도의 1회 free-form 정보 보완 flow를 열지 않고 결정적 partial 결과를 완료한다.
+     * structured follow-up clarification 횟수를 이미 소진했을 때 사용한다.
      */
     @Transactional
     public void completeWithoutSupplement(
@@ -433,10 +432,9 @@ public class AnalysisPersistenceService {
     }
 
     private int accountAiAttemptsLimit() {
-        // The existing per-job max-attempt policy remains authoritative. The
-        // account-level guard is supplied by AccountProperties through the
-        // quota service; this fallback keeps legacy callers bounded by the
-        // existing configured retry limit.
+        // 기존 job별 최대 시도 정책을 기준으로 삼는다. account 단위 guard는 quota
+        // service를 통해 AccountProperties가 제공하며, 이 fallback은 legacy caller를
+        // 기존 retry limit 안으로 제한한다.
         return Math.max(accountProperties.limits().consultationAiAttempts(), 1);
     }
 
@@ -651,10 +649,9 @@ public class AnalysisPersistenceService {
 
         if (job.isEmpty()) {
 
-            // Resolve a known out-of-scope procedure before the user reaches
-            // the Analysis start button.  This is a read-only deterministic
-            // check; it creates no job, spends no AI quota, and never calls
-            // OpenAI.
+            // 사용자가 Analysis 시작 버튼에 도달하기 전에 범위 밖으로 확인된
+            // Procedure를 판정한다. read-only 결정적 검사이며 job 생성, AI quota
+            // 소비 또는 OpenAI 호출을 하지 않는다.
             if (isStructuredScenario(consultation)) {
                 try {
                     FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultationId);
@@ -663,9 +660,8 @@ public class AnalysisPersistenceService {
                                 consultation.getInformationSupplementCount());
                     }
                 } catch (RuntimeException ignored) {
-                    // Keep normal NOT_STARTED behavior when the plan cannot
-                    // yet be evaluated; reserveStart remains the final
-                    // fail-closed guard.
+                    // 아직 plan을 평가할 수 없으면 일반 NOT_STARTED 동작을 유지한다.
+                    // reserveStart가 최종 fail-closed guard로 남는다.
                 }
             }
 
@@ -712,9 +708,9 @@ public class AnalysisPersistenceService {
                         ConsultationNotFoundException::new
                 );
 
-        // Structured General Consultation scenarios finish their missing-fact
-        // collection before Analysis. A legacy NEEDS_MORE_INFO row must not
-        // reopen Situation or create a second supplement question.
+        // Structured General Consultation scenario는 Analysis 전에 missing fact 수집을
+        // 마친다. legacy NEEDS_MORE_INFO row가 Situation을 다시 열거나 두 번째
+        // 보완 질문을 만들어서는 안 된다.
         if (isStructuredScenario(consultation)) {
             throw new InvalidConsultationStateException();
         }
@@ -1088,9 +1084,8 @@ public class AnalysisPersistenceService {
             AnalysisJob job,
             Consultation consultation
     ) {
-        // After the single information-supplement opportunity the job moves
-        // to INSUFFICIENT_INFORMATION.  Independent reviewed safe actions are
-        // still valid in that terminal state and must remain visible.
+        // 한 번의 정보 보완 기회 뒤 job은 INSUFFICIENT_INFORMATION으로 이동한다.
+        // 독립적으로 검토된 safe action은 이 terminal 상태에서도 유효하며 계속 보여야 한다.
         if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
                 && job.getStatus() != AnalysisJobStatus.INSUFFICIENT_INFORMATION
                 || com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
@@ -1107,8 +1102,8 @@ public class AnalysisPersistenceService {
                             action.actionId(), action.title(), action.description()))
                     .toList();
         } catch (RuntimeException ignored) {
-            // State polling must not turn a partial-information result into a
-            // technical failure when its optional guidance cannot be loaded.
+            // optional guidance를 불러오지 못해도 state polling이 정보 부족 결과를
+            // technical failure로 바꾸어서는 안 된다.
             return java.util.List.of();
         }
     }

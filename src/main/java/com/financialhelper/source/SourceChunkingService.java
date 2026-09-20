@@ -14,8 +14,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Structure-first chunk preparation for an immutable SourceDocument version.
- * Token counting is delegated to the pinned KURE tokenizer runtime.
+ * 변경 불가능한 SourceDocument version을 구조 우선으로 chunk 준비한다.
+ * token 계산은 고정된 KURE tokenizer runtime에 위임한다.
  */
 @Service
 public class SourceChunkingService {
@@ -54,8 +54,8 @@ public class SourceChunkingService {
     }
 
     /**
-     * Chunk one immutable document version.  Repeated calls use the existing
-     * SourceChunk persistence idempotency key and never inherit review state
+     * 변경 불가능한 document version 하나를 chunk로 나눈다. 반복 호출은 기존
+     * SourceChunk persistence 멱등 key를 사용하며 review state를 상속하지 않는다.
      * from another document version.
      */
     public List<SourceChunk> chunk(SourceDocument sourceDocument) {
@@ -196,8 +196,8 @@ public class SourceChunkingService {
             boolean article = ARTICLE_HEADING.matcher(line.text()).matches();
 
             if (section) {
-                // Keep a section heading with the following article so the
-                // parent locator is retained without creating a heading-only
+                // heading만 있는 chunk를 만들지 않으면서 parent locator를 유지하도록
+                // section heading을 뒤따르는 article과 함께 둔다.
                 // retrieval hit.
                 if (unitStart >= 0 && articleReference != null) {
                     units.add(
@@ -259,9 +259,9 @@ public class SourceChunkingService {
     }
 
     /**
-     * HWP paragraphs can contain an entire article clause on the same line as
-     * its heading.  Keep the full line in the chunk body, but keep the
-     * article locator bounded to the schema's 255-character column.
+     * HWP paragraph에서는 heading과 같은 줄에 article clause 전체가 들어갈 수 있다.
+     * chunk body에는 전체 줄을 유지하되 article locator는 schema의 255자 column
+     * 범위 안으로 제한한다.
      */
     private String normalizedArticleReference(String line) {
         if (line.length() <= 255) {
@@ -348,9 +348,9 @@ public class SourceChunkingService {
 
     /**
      * Some official HTML pages expose their whole article as one text node.
-     * Keep the original offsets and split only at punctuation/whitespace
-     * boundaries when that structural line exceeds the token budget.  This is
-     * deliberately a boundary split, never a substring truncation.
+     * 구조적 line이 token budget을 넘으면 원래 offset을 유지하고 문장부호나
+     * whitespace 경계에서만 나눈다. substring을 잘라내지 않고 의도적으로
+     * 경계에서 분리한다.
      */
     private List<Segment> splitOversizedLine(
             int startOffset,
@@ -438,7 +438,7 @@ public class SourceChunkingService {
         return count;
     }
 
-    /** Reads only explicit page markers emitted by a document parser. */
+    /** document parser가 만든 명시적 page marker만 읽는다. */
     private String pageReference(String content, int startOffset, int endOffset) {
         int firstPage = -1;
         int lastPage = -1;

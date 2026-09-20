@@ -17,7 +17,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Immutable representation/index definition with mutable build lifecycle.
+ * 변경 불가능한 representation/index 정의와 변경 가능한 build lifecycle을 표현한다.
  * There is intentionally no active flag or switch operation in this
  * foundation task.
  */
@@ -348,7 +348,7 @@ public class RetrievalGeneration {
         ));
     }
 
-    /** Bind the immutable corpus snapshot once before a build starts. */
+    /** build 시작 전에 immutable corpus snapshot을 한 번 binding한다. */
     public void bindCorpusSnapshot(
             String corpusSnapshotSha256,
             OffsetDateTime boundAt
@@ -406,8 +406,8 @@ public class RetrievalGeneration {
     }
 
     /**
-     * A generation cannot become READY without a non-empty indexed corpus.
-     * The active-generation switch remains a later orchestration concern.
+     * 비어 있지 않은 indexed corpus 없이는 generation이 READY가 될 수 없다.
+     * active-generation 전환은 이후 orchestration에서 처리한다.
      */
     public void markReady(
             long readyChunkCount,

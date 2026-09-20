@@ -50,7 +50,7 @@ public class ConsultationService {
         this.accountRepository = accountRepository;
     }
 
-    /** Compatibility constructor for existing unit tests and non-web callers. */
+    /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
     public ConsultationService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService,
@@ -61,7 +61,7 @@ public class ConsultationService {
                 accountProperties, null, null);
     }
 
-    /** Compatibility constructor for existing unit tests and non-web callers. */
+    /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
     public ConsultationService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService
@@ -93,8 +93,8 @@ public class ConsultationService {
         return startConsultation(rawToken, false);
     }
 
-    // Default start resumes the account's active consultation. Explicit new starts
-    // close the active consultation and consume one rolling-window start quota.
+    // 기본 시작은 account의 진행 중 상담을 이어간다. 명시적인 새 시작은
+    // 진행 중 상담을 종료하고 rolling window의 시작 quota를 한 번 소비한다.
     @Transactional
     public ConsultationStartResult startConsultation(
             String rawToken,
@@ -200,7 +200,7 @@ public class ConsultationService {
                             account.getId(), ConsultationStatus.resumableStatuses())
                     .orElse(null);
         } else {
-            // A browser without a guest cookie is also simply at the entry state.
+        // guest cookie가 없는 브라우저도 단순히 진입 상태로 처리한다.
             if (rawToken == null || rawToken.isBlank()) {
                 return ActiveConsultationStateResponse.none();
             }
@@ -329,9 +329,9 @@ public class ConsultationService {
             throw new InputLimitException("situation");
         }
 
-        // A direct user statement such as "체크카드" is neither an inferred
-        // candidate nor a missing value.  Stop before the credit-card
-        // follow-up can overwrite it with a supported product selection.
+        // "체크카드" 같은 직접적인 사용자 진술은 추론한 값이 아니다.
+        // 이 값은 추론 후보나 missing 값이 아니다. 신용카드 follow-up이
+        // 지원 product 선택으로 덮어쓰기 전에 종료한다.
         if (consultation.getCategory() == ConsultationCategory.CARD
                 && CardCaseFactExtractor.hasExplicitUnsupportedProduct(request.situationText())) {
             throw new UnsupportedConsultationScopeException();
@@ -346,15 +346,13 @@ public class ConsultationService {
                     request.situationText(), now);
         }
 
-        // Re-resolve from the newly submitted explicit situation.  The stored
-        // scenario is a cache for downstream reads and must not prevent a
-        // deliberate situation edit from moving between supported scenarios.
+        // 새로 제출된 명시적 situation으로 다시 판정한다. 저장된 scenario는 후속
+        // 조회용 cache이며 사용자의 명시적 수정이 지원 scenario 사이를 이동하는 것을 막아서는 안 된다.
         ConsultationScenario resolved = ConsultationScenarioResolver.resolve(
                 consultation.getCategory(), request.situationText());
-        // Clear a previously resolved breadth scenario when the edited
-        // situation no longer contains an explicit supported signal.  A
-        // stale scenario must never route the new text through an old
-        // Procedure/FAP scope.
+        // 수정된 situation에 명시적인 지원 신호가 더 이상 없으면 이전 breadth
+        // scenario 판정을 삭제한다. 오래된 scenario가 새 문장을 이전
+        // Procedure/FAP 범위로 연결해서는 안 된다.
         consultation.assignScenario(resolved, now);
 
         return UpdateConsultationSituationResponse.from(

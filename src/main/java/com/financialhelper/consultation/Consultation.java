@@ -204,7 +204,7 @@ public class Consultation {
     }
 
     // =========================
-    // Consultation Input
+    // 상담 입력
     // =========================
 
     public void updateCategory(
@@ -224,9 +224,9 @@ public class Consultation {
                 this.category != category || this.scenario != scenario;
 
         this.category = category;
-        // A category edit starts a new scenario resolution.  Keeping the old
-        // breadth scenario when the request omits one would route a later
-        // situation through stale Procedure/FAP scope.
+        // category를 수정하면 scenario를 새로 판정한다. 요청에 scenario가 없을 때
+        // 기존 breadth scenario를 유지하면 이후 situation이 오래된 Procedure/FAP
+        // 범위로 연결될 수 있다.
         this.scenario = scenario;
 
         if (changed) {
@@ -248,8 +248,7 @@ public class Consultation {
         this.updatedAt = updatedAt;
     }
 
-    /** Stores a deterministic scenario resolution for subsequent reads without
-     * treating the derived value as a second user input revision. */
+    /** 파생 값을 두 번째 사용자 입력 revision으로 처리하지 않고 이후 조회를 위해 결정적 scenario 판정을 저장한다. */
     public void assignScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
         if (scenario != null && this.scenario != scenario) this.scenario = scenario;
         this.updatedAt = updatedAt;
@@ -332,7 +331,7 @@ public class Consultation {
 
 
     // =========================
-    // Analysis State
+    // 분석 상태
     // =========================
 
     public void startAnalysis(
@@ -395,8 +394,8 @@ public class Consultation {
         }
 
         if (Objects.equals(this.situationText, situationText)) {
-            // Reopening a failed analysis with the same input is a read-only
-            // no-op. Do not create a new revision or restart downstream work.
+            // 같은 입력으로 실패한 분석을 다시 열면 read-only no-op이다.
+            // 새 revision을 만들거나 후속 작업을 다시 시작하지 않는다.
             return;
         }
 

@@ -3,7 +3,7 @@ package com.financialhelper.procedure;
 import java.util.List;
 import java.util.Locale;
 
-/** Deterministic three-valued evaluator for the small Procedure DSL. */
+/** 작은 Procedure DSL을 위한 결정적 3값 evaluator다. */
 public final class ConditionEvaluator {
     private ConditionEvaluator() {
     }

@@ -102,9 +102,8 @@ public class SourceDocument {
     private LocalDate publishedAt;
 
     /**
-     * Optional, explicitly curated applicability window.  It is deliberately
-     * separate from publication/retrieval dates; null means temporal scope
-     * cannot be established from the corpus.
+     * 선택적으로 명시하여 검토한 applicability 기간이다. publication/retrieval
+     * date와 의도적으로 분리하며, null이면 corpus에서 시간 범위를 확정할 수 없다.
      */
     @Column(name = "applicability_start_date")
     private LocalDate applicabilityStartDate;
@@ -295,7 +294,7 @@ public class SourceDocument {
         return applicabilityEndDate;
     }
 
-    /** Sets an explicitly reviewed applicability window; null start remains unknown. */
+    /** 명시적으로 검토된 적용 기간을 설정하며 null 시작일은 unknown으로 유지한다. */
     public void setApplicabilityWindow(
             LocalDate applicabilityStartDate,
             LocalDate applicabilityEndDate

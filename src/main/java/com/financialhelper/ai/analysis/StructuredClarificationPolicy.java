@@ -4,8 +4,7 @@ import java.util.Collection;
 import java.util.Set;
 
 /**
- * Keeps structured follow-up clarification separate from the one-time
- * free-form Analysis information supplement.
+ * structured follow-up clarification과 1회 free-form Analysis 정보 보완을 분리한다.
  */
 final class StructuredClarificationPolicy {
 
