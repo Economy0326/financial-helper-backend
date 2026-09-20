@@ -1,137 +1,160 @@
-# 고령층 금융 도우미
+# 금융도우미 Backend
 
-금융 상담의 진행 상태와 AI 파생 데이터를 저장하고,
-긴급 금융 피해 대응 API를 제공하는 Spring Boot 서버입니다.
+금융 피해 상담에서 사용자 사실을 구조화하고,
+검토된 공식 근거와 승인된 절차를 기반으로 다음 행동을 결정하는 Spring Boot Backend입니다.
 
-AI가 생성한 결과를 바로 서비스 상태로 사용하지 않고,
-Backend에서 검증한 뒤 저장하고 다음 상담 단계로 이동하도록 구성했습니다.
-
-> 현재 AI V1까지 구현했습니다.  
-> 공식 금융자료 Source Ingestion과 RAG, 근거 검증은 다음 단계에서 진행합니다.
+AI가 금융 행동을 자유롭게 생성하지 않도록
+상담 상태, Fact, Evidence, Procedure, Action Plan을 Backend가 관리합니다.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    FE[Next.js] -->|REST API| BE[Spring Boot]
-    BE --> DB[(PostgreSQL)]
-    BE -->|Consultation AI| AI[OpenAI API]
+```text
+Next.js
+  ↓
+Spring Boot
+  ↓
+PostgreSQL
+
+Spring Boot
+├─ OpenAI
+├─ KURE-v2 Retrieval Runtime
+└─ Korean Law Open API
 ```
 
-일반 상담에서만 OpenAI를 사용합니다.
-
-긴급 금융 피해 대응은 runtime AI를 사용하지 않고
-서버에 저장된 `EmergencyScenario`를 조회합니다.
-
-## 상담 처리 흐름
+## Grounded Consultation
 
 ```text
-Consultation
-→ Case Understanding
-→ Follow-up Question
-→ Summary
-→ 사용자 확인
-→ Analysis Job
-→ Report
+User Input
+→ ConfirmedCaseSnapshot
+→ Adaptive Follow-up
+→ Approved Evidence Retrieval
+→ ProcedureVersion
+→ FinancialActionPlan
+→ AnalysisEvidenceSnapshot
+→ AI Explanation
+→ Backend Validation
+→ Stored Report
 ```
 
-사용자가 입력한 원본 데이터와 AI가 생성한 결과를 구분하고,
-입력 내용이 변경되면 이전 AI 결과를 그대로 사용하지 않도록 revision을 확인합니다.
+Backend가 금융 행동의 **WHAT**을 결정하고,
+AI는 승인된 행동과 근거를 사용자가 이해하기 쉬운 문장으로 설명합니다.
 
-## 구현에서 중요하게 본 부분
+행동, 기한, 금액, 연락처, 필요 서류, 법 적용을
+AI가 임의로 만들어낼 수 없습니다.
 
-### Guest Session과 상담 소유권
+## Confirmed Facts
 
-로그인을 요구하지 않고 상담을 시작할 수 있도록 Guest Session을 사용했습니다.
+사용자가 명시적으로 확인한 사실만 `ConfirmedCaseSnapshot`에 저장합니다.
 
-Cookie에는 임의로 생성한 Guest Token만 전달하고,
-DB에는 원본 Token 대신 SHA-256 Hash를 저장합니다.
+`UNKNOWN`도 정상적인 domain value로 유지하며,
+같은 핵심 사실을 반복해서 묻거나 AI 추론으로 값을 채우지 않습니다.
 
-상담 조회와 수정 시에는 Consultation ID만 확인하지 않고
-현재 Guest가 소유한 상담인지 함께 확인합니다.
+Situation과 Follow-up이 변경되면 revision을 갱신하고,
+이전 revision의 Summary / Analysis / Report를 현재 결과로 재사용하지 않습니다.
 
-### AI 결과 검증
+## Evidence / Retrieval
+
+공식 자료는 바로 검색에 사용하지 않습니다.
 
 ```text
-OpenAI Structured Output
-→ DTO 변환
-→ Bean Validation
-→ Business Validation
-→ 저장
+SourceRegistry
+→ SourceDocument / Version / Hash
+→ Human Review
+→ APPROVED
+→ SourceChunk
+→ Retrieval Generation
+→ READY
 ```
 
-AI는 구조화된 결과 후보를 생성하고,
-실제 저장과 상담 상태 변경은 Backend에서 처리합니다.
+Retrieval은 다음 결과를 결합합니다.
 
-현재 입력 revision과 AI 결과의 revision도 비교해
-사용자가 입력을 수정한 뒤 이전 AI 결과가 저장되는 상황을 막았습니다.
+- KURE-v2 semantic retrieval
+- PostgreSQL keyword retrieval
+- Reciprocal Rank Fusion
+- Parent / Condition / Exception expansion
 
-### 비동기 분석
-
-AI 분석을 하나의 긴 DB Transaction 안에서 처리하지 않습니다.
+현재 frozen generation:
 
 ```text
-Analysis Job 생성 / 상태 저장
-→ Commit
-→ OpenAI 호출
-→ 결과 검증
-→ Report 저장
+mvp-breadth-cc6cf90a40c3b013
 ```
 
-Frontend는 Analysis 상태를 조회하며 진행 상황을 확인합니다.
+READY chunks: `117`
 
-실패한 분석은 retry할 수 있고,
-추가 정보가 필요한 경우에는 기존 상담 흐름으로 다시 연결합니다.
+## Law Evidence
 
-### 긴급 금융 피해 대응
+필요한 법령은 법제처 국가법령정보센터 Open API를 Backend에서 직접 조회합니다.
 
-긴급대응 내용은 AI가 자유롭게 생성하지 않습니다.
+사건 기준일과 법령 시행일을 비교해 검토된 version만 사용하며,
+법령 identity나 적용 시점을 확인할 수 없으면 fail closed 처리합니다.
 
-피해 유형별 `EmergencyScenario`를 서버에서 관리하고,
-사용자가 선택한 유형에 맞는 즉시 행동, 금지 행동,
-연락처와 증거 보존 방법을 반환합니다.
+## Supported Scope
 
-## Security
+- KB국민카드 개인 본인 신용카드의 국내 분실·도난 / 본인 아닌 결제
+- 보이스피싱 / 의심 송금
+- 본인이 하지 않은 계좌이체·출금
+- 스미싱 / 개인정보 노출 / 악성·원격제어 앱
+- Public / Guest Emergency Response
 
-- Guest Token 원문 DB 저장 금지
-- Production Cookie: `HttpOnly`, `Secure`, `SameSite`
-- CSRF 검증
-- 허용된 Frontend Origin 기준 CORS
-- Consultation 조회 시 Guest Ownership 확인
-- 상담 원문과 민감정보 Log 기록 제한
-- 정의하지 않은 Endpoint는 기본 차단
+공식 Procedure나 Evidence가 없는 범위는
+다른 Scenario의 근거를 섞지 않고 unsupported / coverage gap으로 처리합니다.
 
-## Test
+## Authentication / Security
 
-상담, Guest Session, Follow-up, Summary,
-Analysis, Report, Emergency 흐름을 Integration Test로 확인했습니다.
+- Kakao / Naver Social Login
+- `(provider, providerSubject)` 기반 AccountIdentity
+- Backend HttpOnly service session
+- CSRF / CORS
+- Account ownership 검증
+- Account당 ACTIVE Consultation 최대 1개
+- 최근 7일 새 일반 상담 최대 5회
+- request / rate / AI attempt guard
+- 상담 원문과 secret 로그 제한
+
+Emergency는 일반 상담 인증과 분리된 Public / Guest flow입니다.
 
 ## Tech Stack
 
-`Java 21` `Spring Boot` `Spring Web MVC`  
-`Spring Data JPA` `Spring Security` `PostgreSQL`  
-`Flyway` `OpenAI Java SDK`
+`Java 21` `Spring Boot` `Spring Security`  
+`PostgreSQL` `Flyway` `JPA`  
+`OpenAI Structured Output`  
+`KURE-v2` `Korean Law Open API`
 
 ## Run
+
+필수 환경변수 예:
 
 ```text
 DB_URL
 DB_USERNAME
 DB_PASSWORD
 OPENAI_API_KEY
-AI_ENABLED=true
+LAW_OC
+KURE_RUNTIME_ENDPOINT
 ```
 
 ```bash
-./gradlew bootRun
+gradlew.bat bootRun
 ```
+
+KURE local runtime:
+
+```bash
+py -m retrieval_runtime.runtime --host 127.0.0.1 --port 8091
+```
+
+## Verification
+
+```bash
+gradlew.bat clean test --no-daemon
+gradlew.bat clean build --no-daemon
+```
+
+CARD와 지원 Scenario는
+PostgreSQL → Retrieval → Procedure → Law Evidence → OpenAI → Stored Report까지
+grounded E2E로 검증했습니다.
 
 ## Links
 
 - [Frontend Repository](https://github.com/Economy0326/financial-helper-frontend)
 - [Project Documentation](https://cute-quit-4fd.notion.site/3bd25931ce3580ae8ad8f0fa3acdf41a)
-
-## Next
-
-다음 단계에서는 Backend에서 공식 금융자료를 수집하고,
-검색 결과를 AI 분석의 근거로 사용할 수 있도록 RAG를 추가할 예정입니다.
