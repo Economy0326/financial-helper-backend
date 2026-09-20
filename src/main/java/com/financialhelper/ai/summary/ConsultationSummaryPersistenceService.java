@@ -42,6 +42,9 @@ public class ConsultationSummaryPersistenceService {
     private final ConsultationSummaryRepository
             consultationSummaryRepository;
 
+    private final ConsultationSummaryFactService
+            summaryFactService;
+
     private final JsonMapper jsonMapper;
 
     public ConsultationSummaryPersistenceService(
@@ -49,6 +52,7 @@ public class ConsultationSummaryPersistenceService {
             GuestSessionService guestSessionService,
             FollowUpQuestionRepository followUpQuestionRepository,
             ConsultationSummaryRepository consultationSummaryRepository,
+            ConsultationSummaryFactService summaryFactService,
             JsonMapper jsonMapper
     ) {
         this.consultationRepository =
@@ -62,6 +66,8 @@ public class ConsultationSummaryPersistenceService {
 
         this.consultationSummaryRepository =
                 consultationSummaryRepository;
+
+        this.summaryFactService = summaryFactService;
 
         this.jsonMapper =
                 jsonMapper;
@@ -244,7 +250,12 @@ public class ConsultationSummaryPersistenceService {
         // Summary exists, downstream ANALYSIS/REPORT states must not turn that
         // stored record into a state-transition request.
         if (stored.isPresent()) {
-            return ConsultationSummaryStateResponse.ready(toDocument(stored.get()));
+            return ConsultationSummaryStateResponse.ready(
+                    toDocument(stored.get()),
+                    summaryFactService.currentFacts(
+                            consultation.getId(),
+                            consultation.getCaseInputRevision(),
+                            consultation.getFollowUpAnswerRevision()));
         }
 
         // Keep the existing prepare contract for a genuinely absent Summary.

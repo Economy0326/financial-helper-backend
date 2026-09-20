@@ -69,6 +69,9 @@ public class ConsultationSummaryService {
     private final ConsultationSummaryPersistenceService
             persistenceService;
 
+    private final ConsultationSummaryFactService
+            summaryFactService;
+
     private final JsonMapper jsonMapper;
 
     public ConsultationSummaryService(
@@ -76,6 +79,7 @@ public class ConsultationSummaryService {
             OpenAiProperties openAiProperties,
             ConsultationSummaryBusinessValidator businessValidator,
             ConsultationSummaryPersistenceService persistenceService,
+            ConsultationSummaryFactService summaryFactService,
             JsonMapper jsonMapper
     ) {
         this.openAiStructuredClient =
@@ -89,6 +93,8 @@ public class ConsultationSummaryService {
 
         this.persistenceService =
                 persistenceService;
+
+        this.summaryFactService = summaryFactService;
 
         this.jsonMapper =
                 jsonMapper;
@@ -133,7 +139,11 @@ public class ConsultationSummaryService {
 
         if (existing.isPresent()) {
             return ConsultationSummaryStateResponse.ready(
-                    existing.get()
+                    existing.get(),
+                    summaryFactService.currentFacts(
+                            snapshot.consultationId(),
+                            snapshot.caseInputRevision(),
+                            snapshot.followUpAnswerRevision())
             );
         }
 
@@ -171,7 +181,11 @@ public class ConsultationSummaryService {
                 );
 
         return ConsultationSummaryStateResponse.ready(
-                saved
+                saved,
+                summaryFactService.currentFacts(
+                        snapshot.consultationId(),
+                        snapshot.caseInputRevision(),
+                        snapshot.followUpAnswerRevision())
         );
     }
 

@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Builds immutable consultation-scoped context from user-owned inputs only. */
@@ -63,6 +64,21 @@ public class ConfirmedCaseSnapshotService {
         return snapshotRepository.findLatest(consultationId)
                 .map(this::toData)
                 .orElseThrow(() -> new IllegalArgumentException("confirmed case snapshot does not exist"));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<ConfirmedCaseSnapshotData> findCurrent(
+            UUID consultationId,
+            long caseInputRevision,
+            long followUpAnswerRevision
+    ) {
+        if (consultationId == null) {
+            throw new IllegalArgumentException("consultationId must not be null");
+        }
+        return snapshotRepository
+                .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                        consultationId, caseInputRevision, followUpAnswerRevision)
+                .map(this::toData);
     }
 
     private ConfirmedCaseSnapshotData saveSnapshot(
