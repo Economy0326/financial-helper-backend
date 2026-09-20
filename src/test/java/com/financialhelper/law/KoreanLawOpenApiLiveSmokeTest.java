@@ -3,6 +3,7 @@ package com.financialhelper.law;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import tools.jackson.databind.json.JsonMapper;
+import com.financialhelper.ai.grounded.ReviewedCardLawEvidenceService;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -11,7 +12,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Opt-in live smoke; never runs in the normal test suite or stores LAW_OC. */
+/** 선택 실행 live smoke이며 일반 test suite에서는 실행하거나 LAW_OC를 저장하지 않는다. */
 @EnabledIfEnvironmentVariable(named = "LAW_OPEN_API_LIVE_SMOKE", matches = "true")
 class KoreanLawOpenApiLiveSmokeTest {
 
@@ -73,5 +74,8 @@ class KoreanLawOpenApiLiveSmokeTest {
             assertThat(historical.lawIdentifier()).isEqualTo(current.lawIdentifier());
             assertThat(historical.mst()).isEqualTo(identity.get(2));
         }
+
+        var reviewedCard = new ReviewedCardLawEvidenceService(service, properties);
+        assertThat(reviewedCard.load(LocalDate.of(2026, 9, 17))).hasSize(5);
     }
 }

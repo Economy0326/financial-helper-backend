@@ -111,7 +111,7 @@ public class FollowUpQuestion {
     )
     private OffsetDateTime answeredAt;
 
-    // Backend-owned metadata used by deterministic structured follow-up.
+    // 결정적 structured follow-up에서 사용하는 Backend 소유 metadata다.
     @Column(
             name = "fact_key",
             length = 64

@@ -15,7 +15,8 @@ public record ConsultationSummaryStateResponse(
     }
 
     public static ConsultationSummaryStateResponse ready(
-            ConsultationSummaryData.Document document
+            ConsultationSummaryData.Document document,
+            List<Fact> facts
     ) {
 
         return new ConsultationSummaryStateResponse(
@@ -27,7 +28,8 @@ public record ConsultationSummaryStateResponse(
                                 .keyPoints
                                 .stream()
                                 .map(keyPoint -> keyPoint.text)
-                                .toList()
+                                .toList(),
+                        facts
                 )
         );
     }
@@ -35,7 +37,16 @@ public record ConsultationSummaryStateResponse(
     public record Summary(
             String headline,
             String summaryText,
-            List<String> keyPoints
+            List<String> keyPoints,
+            List<Fact> facts
+    ) {
+    }
+
+    public record Fact(
+            String key,
+            String label,
+            String value,
+            String displayValue
     ) {
     }
 }

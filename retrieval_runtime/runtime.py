@@ -458,16 +458,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        # The JVM client may keep an HTTP/1.1 connection in its pool.  Close
-        # each short JSON request explicitly so a server-side close cannot be
-        # mistaken for a reusable connection and surfaced as an EOF retry.
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(data)
-        self.close_connection = True
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            # The JVM client may keep an HTTP/1.1 connection in its pool.  Close
+            # each short JSON request explicitly so a server-side close cannot be
+            # mistaken for a reusable connection and surfaced as an EOF retry.
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # A caller can close a health/metadata connection while the response
+            # is being written.  That is a client disconnect, not a runtime or
+            # retrieval failure; never attempt a second error response.
+            pass
+        finally:
+            self.close_connection = True
 
     def _json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))

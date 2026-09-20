@@ -15,6 +15,8 @@ import com.financialhelper.consultation.ConsultationRepository;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -36,12 +38,13 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Coordinates the two retrieval branches and owns the search-scoped
- * candidate boundary.  It deliberately returns candidates rather than
- * financial advice or a procedure.
+ * 두 retrieval branch를 조정하고 검색 범위 candidate 경계를 담당한다.
+ * 금융 조언이나 Procedure 대신 의도적으로 candidate를 반환한다.
  */
 @Service
 public class OfficialSourceRetrievalService {
+
+    private static final Logger log = LoggerFactory.getLogger(OfficialSourceRetrievalService.class);
 
     private final ActiveRetrievalGenerationPersistenceService activeGeneration;
     private final RetrievalCorpusSnapshotService corpusSnapshot;
@@ -101,7 +104,7 @@ public class OfficialSourceRetrievalService {
         return search(request);
     }
 
-    /** Captures the current consultation revision before using it as context. */
+    /** context로 사용하기 전에 현재 consultation revision을 capture한다. */
     public OfficialSearchResponse search(UUID consultationId, OfficialSearchRequest request) {
         if (confirmedCaseSnapshotService == null) {
             throw new IllegalStateException("confirmed case snapshot service is required");
@@ -208,16 +211,17 @@ public class OfficialSourceRetrievalService {
             semantic = List.copyOf(semanticHits);
         } catch (RuntimeException exception) {
             semanticFailed = true;
+            log.warn("Official retrieval semantic branch unavailable. category={}, type={}",
+                    semanticFailureCategory(exception), exception.getClass().getSimpleName());
         }
 
         try {
             List<SourceChunk> keywordChunks = keywordSearch.searchApproved(
                     request.query().isBlank() ? request.institution() : request.query(),
-                    // The keyword repository is intentionally generation
-                    // agnostic.  Fetch its bounded maximum before applying
-                    // the immutable, generation-scoped eligibility set;
-                    // otherwise an older chunk version can consume the
-                    // caller's small limit and hide all eligible chunks.
+                    // keyword repository는 의도적으로 generation에 독립적이다. immutable한
+                    // generation 범위 eligibility set을 적용하기 전에 제한된 최댓값을 조회한다.
+                    // 그렇지 않으면 오래된 chunk version이 caller의 작은 limit을 소비해
+                    // 모든 eligible chunk를 가릴 수 있다.
                     100);
             List<ReciprocalRankFusion.RankedHit> keywordHits = new ArrayList<>();
             int rank = 0;
@@ -232,6 +236,8 @@ public class OfficialSourceRetrievalService {
             keyword = List.copyOf(keywordHits);
         } catch (RuntimeException exception) {
             keywordFailed = true;
+            log.warn("Official retrieval keyword branch unavailable. category=KEYWORD_RETRIEVAL_FAILED, type={}",
+                    exception.getClass().getSimpleName());
         }
 
         List<ReciprocalRankFusion.FusedHit> fused = ReciprocalRankFusion.fuse(
@@ -283,7 +289,7 @@ public class OfficialSourceRetrievalService {
         return response;
     }
 
-    /** Returns expanded passages only for candidate IDs issued by this search. */
+    /** 이 검색에서 발급한 candidate ID에 대해서만 확장 passage를 반환한다. */
     @Transactional(readOnly = true)
     public List<SourcePassage> getPassages(UUID searchId, Collection<UUID> candidateIds) {
         if (searchId == null || candidateIds == null || candidateIds.isEmpty()) {
@@ -293,7 +299,7 @@ public class OfficialSourceRetrievalService {
         return expand(context, candidateIds);
     }
 
-    /** Ownership-aware variant used by public consultation flows. */
+    /** 공개 상담 flow에서 사용하는 소유권 인식 variant다. */
     @Transactional(readOnly = true)
     public List<SourcePassage> getPassages(UUID consultationId, UUID searchId,
                                            Collection<UUID> candidateIds) {
@@ -365,6 +371,13 @@ public class OfficialSourceRetrievalService {
             return false;
         }
         return true;
+    }
+
+    private String semanticFailureCategory(RuntimeException exception) {
+        String message = exception.getMessage() == null ? "" : exception.getMessage().toLowerCase(java.util.Locale.ROOT);
+        return message.contains("generation") || message.contains("ineligible")
+                ? "RETRIEVAL_GENERATION_MISMATCH"
+                : "RETRIEVAL_QUERY_FAILED";
     }
 
     private boolean isSupportedScenario(String scenario) {
@@ -448,10 +461,9 @@ public class OfficialSourceRetrievalService {
                 && candidate.articleReference().equals(chunk.getArticleReference());
         boolean sameParent = candidate.parentSection() != null
                 && candidate.parentSection().equals(chunk.getParentSection());
-        // Parent section chunks are retained together with explicit
-        // condition/exception chunks.  Expansion is bounded to one immutable
-        // document version, so similarly worded clauses from another source
-        // cannot be pulled into the passage.
+        // 상위 section chunk를 명시적 condition/exception chunk와 함께 유지한다.
+        // 확장은 하나의 immutable document version으로 제한하므로 다른 source의
+        // 비슷한 문구가 passage에 포함될 수 없다.
         boolean heading = chunk.getArticleReference() == null;
         boolean explicitConditionOrException = chunk.getBody() != null
                 && (chunk.getBody().contains("조건")
@@ -461,7 +473,7 @@ public class OfficialSourceRetrievalService {
         return sameArticle || (sameParent && (heading || explicitConditionOrException));
     }
 
-    /** Reads only explicit UUID links supplied by reviewed chunk metadata. */
+    /** 검토된 chunk metadata가 제공한 명시적 UUID link만 읽는다. */
     private Set<UUID> referencedChunkIds(OfficialEvidenceCandidate candidate) {
         if (candidate.representationMetadataJson() == null
                 || candidate.representationMetadataJson().isBlank()) {
@@ -480,7 +492,7 @@ public class OfficialSourceRetrievalService {
                     try {
                         result.add(UUID.fromString(reference.asString()));
                     } catch (IllegalArgumentException ignored) {
-                        // Invalid explicit links are ignored, never inferred.
+                        // 유효하지 않은 명시적 link는 무시하며 추론하지 않는다.
                     }
                 }
             }
@@ -540,8 +552,8 @@ public class OfficialSourceRetrievalService {
                     jsonMapper.writeValueAsString(response), jsonMapper.writeValueAsString(response.candidates()),
                     created, created.plus(contextTtl)));
         } catch (RuntimeException exception) {
-            // A persistence failure must never expose an unbound context in production.
-            // The in-memory fallback is limited to constructor-based unit tests.
+            // persistence 실패가 production에서 binding되지 않은 context를 노출해서는 안 된다.
+            // in-memory fallback은 생성자 기반 unit test로 제한한다.
             if (consultationId == null) {
                 legacyContexts.put(searchId, new SearchContext(response, candidates));
             } else {

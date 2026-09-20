@@ -15,6 +15,10 @@ import java.util.Locale;
 @Service
 public class ProcedureVersionService {
     public static final String CARD_SCENARIO = "CARD_LOSS_UNAUTHORIZED_USE";
+    public static final String CARD_LOSS_ONLY_SCENARIO = "CARD_LOSS_ONLY";
+    public static final String CARD_HELD_UNAUTHORIZED_SCENARIO = "CARD_HELD_UNAUTHORIZED_USE";
+    public static final String CARD_COMPENSATION_PROCESS_SCENARIO = "CARD_COMPENSATION_PROCESS";
+    public static final String CARD_COMPENSATION_RESULT_SCENARIO = "CARD_COMPENSATION_RESULT";
     public static final String KB_INSTITUTION = "㈜KB국민카드";
     public static final String PERSONAL_CREDIT_CARD = "PERSONAL_CREDIT_CARD";
 
@@ -49,6 +53,45 @@ public class ProcedureVersionService {
     @Transactional(readOnly = true)
     public ProcedureVersionData requireApprovedCard() {
         return requireApproved(CARD_SCENARIO, KB_INSTITUTION, PERSONAL_CREDIT_CARD);
+    }
+
+    /**
+     * 확정 fact만으로 CARD branch를 선택한다. branch 선택을 결정적으로 유지하고
+     * 새로운 branch row가 기존 분실 및 미인지 결제 baseline을 대체하지 못하게 한다.
+     */
+    @Transactional(readOnly = true)
+    public ProcedureVersionData requireApprovedCard(CardCaseFacts facts) {
+        String branch = selectCardProcedureScenario(facts);
+        return requireApproved(branch, KB_INSTITUTION, PERSONAL_CREDIT_CARD);
+    }
+
+    public String selectCardProcedureScenario(CardCaseFacts facts) {
+        if (facts == null) return CARD_SCENARIO;
+        String cardLost = facts.value("cardLost");
+        String unauthorized = facts.value("unauthorizedPayment");
+        String reported = facts.value("reported");
+        if ("TRUE".equalsIgnoreCase(cardLost) && "FALSE".equalsIgnoreCase(unauthorized)) {
+            return CARD_LOSS_ONLY_SCENARIO;
+        }
+        if ("FALSE".equalsIgnoreCase(cardLost) && "TRUE".equalsIgnoreCase(unauthorized)) {
+            return CARD_HELD_UNAUTHORIZED_SCENARIO;
+        }
+        if ("TRUE".equalsIgnoreCase(cardLost)
+                && "TRUE".equalsIgnoreCase(unauthorized)
+                && "TRUE".equalsIgnoreCase(reported)) {
+            return "RESULT_RECEIVED".equalsIgnoreCase(facts.value("compensationStatus"))
+                    ? CARD_COMPENSATION_RESULT_SCENARIO
+                    : CARD_COMPENSATION_PROCESS_SCENARIO;
+        }
+        return CARD_SCENARIO;
+    }
+
+    public static boolean isCardProcedureScenario(String scenario) {
+        return CARD_SCENARIO.equals(scenario)
+                || CARD_LOSS_ONLY_SCENARIO.equals(scenario)
+                || CARD_HELD_UNAUTHORIZED_SCENARIO.equals(scenario)
+                || CARD_COMPENSATION_PROCESS_SCENARIO.equals(scenario)
+                || CARD_COMPENSATION_RESULT_SCENARIO.equals(scenario);
     }
 
     public ProcedureVersionData toData(ProcedureVersion entity) {
@@ -94,7 +137,7 @@ public class ProcedureVersionService {
             return null;
         }
         String normalized = value.trim().replace(" ", "");
-        if (normalized.equals("KB국민카드") || normalized.equals("㈜KB국민카드")
+        if (normalized.equals("KB_KOOKMIN_CARD") || normalized.equals("KB국민카드") || normalized.equals("㈜KB국민카드")
                 || normalized.equals("주식회사KB국민카드")) {
             return KB_INSTITUTION;
         }

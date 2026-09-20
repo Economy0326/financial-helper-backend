@@ -3,8 +3,8 @@ package com.financialhelper.law;
 import java.time.Instant;
 
 /**
- * Validated law response with provenance. It remains pending human review;
- * Provider success alone never makes this an approved evidence record.
+ * provenance를 포함한 검증된 법령 응답이다. 사람의 검토 전까지 대기 상태이며
+ * provider 성공만으로 승인된 Evidence record가 되지 않는다.
  */
 public record LawEvidence(
         String statuteName,
@@ -27,7 +27,7 @@ public record LawEvidence(
 ) {
 
     /**
-     * Compatibility constructor for callers that have no derived navigation URL.
+     * 파생 navigation URL이 없는 caller를 위한 호환 생성자다.
      */
     public LawEvidence(
             String statuteName,
@@ -97,12 +97,12 @@ public record LawEvidence(
         }
     }
 
-    /** Compatibility alias retained for the Work 6 snapshot contract. */
+    /** Work 6 snapshot contract 호환을 위해 유지하는 alias다. */
     public String serverVersion() {
         return providerVersion;
     }
 
-    /** Compatibility alias retained for the Work 6 snapshot contract. */
+    /** Work 6 snapshot contract 호환을 위해 유지하는 alias다. */
     public String serverCommit() {
         return providerRevision;
     }

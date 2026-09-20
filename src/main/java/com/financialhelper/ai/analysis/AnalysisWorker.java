@@ -10,6 +10,7 @@ import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
 import com.financialhelper.ai.grounded.GroundedAiInputProjection;
 import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
 import com.financialhelper.ai.grounded.GroundedOutputValidator;
+import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.procedure.FinancialActionPlanData;
 import com.financialhelper.procedure.FinancialActionPlanService;
 import com.financialhelper.procedure.PlanStatus;
@@ -30,6 +31,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Locale;
 
 @Component
 @ConditionalOnProperty(
@@ -110,6 +112,7 @@ public class AnalysisWorker {
     private final GroundedOutputValidator groundedOutputValidator;
     private final AccountProperties accountProperties;
     private final FinancialActionPlanService actionPlanService;
+    private final FollowUpQuestionRepository followUpQuestionRepository;
 
     public AnalysisWorker(
             AnalysisPersistenceService persistenceService,
@@ -119,7 +122,8 @@ public class AnalysisWorker {
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
             GroundedOutputValidator groundedOutputValidator,
             AccountProperties accountProperties,
-            FinancialActionPlanService actionPlanService
+            FinancialActionPlanService actionPlanService,
+            FollowUpQuestionRepository followUpQuestionRepository
     ) {
         this.persistenceService =
                 persistenceService;
@@ -138,6 +142,7 @@ public class AnalysisWorker {
         this.groundedOutputValidator = groundedOutputValidator;
         this.accountProperties = accountProperties;
         this.actionPlanService = actionPlanService;
+        this.followUpQuestionRepository = followUpQuestionRepository;
     }
 
     // OpenAI 요청을 다른 스레드에 넘겨서 실행
@@ -164,9 +169,12 @@ public class AnalysisWorker {
 
             if (snapshot.scenario() != null && snapshot.scenario() != ConsultationScenario.UNKNOWN) {
                 FinancialActionPlanData plan = actionPlanService.buildForCurrent(snapshot.consultationId());
-                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION
-                        && plan.coverageGaps().isEmpty()) {
-                    persistenceService.complete(snapshot, partialResult(plan));
+                if (plan.status() == PlanStatus.NEEDS_CLARIFICATION) {
+                    AnalysisAiResult partial = partialResult(plan);
+        // 모든 Procedure 기반 scenario는 structured follow-up을 사용한다.
+        // 정보 및 coverage 부족은 여기서 terminal partial/limited guidance이며
+        // legacy Situation 보완 flow를 다시 열어서는 안 된다.
+                    persistenceService.completeWithoutSupplement(snapshot, partial);
                     return;
                 }
             }
@@ -183,6 +191,26 @@ public class AnalysisWorker {
                                     , evidenceSnapshot),
                                     AnalysisAiResult.class
                             );
+
+        // Structured scenario는 analysis job 시작 전에 missing fact 수집을 마친다.
+        // validation 전에 model 출력을 normalize해 legacy free-form 보완 flow를
+        // 다시 열 수 없게 한다.
+            if (snapshot.scenario() != null
+                    && snapshot.scenario() != ConsultationScenario.UNKNOWN
+                    && result != null) {
+                if (result.additionalInformationNeeded == null) {
+                    result.additionalInformationNeeded = java.util.List.of();
+                }
+                if (result.outcome == AnalysisAiResult.Outcome.NEEDS_MORE_INFO) {
+                    log.info("Structured scenario supplement suppressed scenario={} caseRevision={} followUpRevision={}",
+                            snapshot.scenario(), snapshot.caseInputRevision(),
+                            snapshot.followUpAnswerRevision());
+                    result.outcome = AnalysisAiResult.Outcome.READY_FOR_REPORT;
+                    result.additionalInformationNeeded = java.util.List.of();
+                } else if (result.outcome == AnalysisAiResult.Outcome.READY_FOR_REPORT) {
+                    result.additionalInformationNeeded = java.util.List.of();
+                }
+            }
 
             result =
                     businessValidator
@@ -204,12 +232,20 @@ public class AnalysisWorker {
             log.warn("Analysis job input exceeded configured limit. jobId={}", jobId);
             persistenceService.fail(jobId, "AI_INPUT_TOO_LARGE");
 
-        } catch (
-                AiProviderException
-                | AiOutputContractException
-                | GroundedEvidenceUnavailableException
-                        exception
-        ) {
+        } catch (AiOutputContractException exception) {
+
+            log.warn("Analysis job failed validation. jobId={}", jobId);
+            persistenceService.fail(jobId, "AI_VALIDATION_FAILED");
+
+        } catch (GroundedEvidenceUnavailableException exception) {
+
+            String failureCode = groundedFailureCode(exception);
+            log.warn("Analysis job evidence unavailable. jobId={}, category={}", jobId, failureCode);
+        // public API contract를 안정적으로 유지하면서 진단용 server log에는
+        // 정확한 root category를 보존한다.
+            persistenceService.fail(jobId, publicFailureCode(failureCode));
+
+        } catch (AiProviderException exception) {
 
             // Provider response, 상담 원문,
             // AI output을 로그로 남기지 않는다
@@ -244,12 +280,107 @@ public class AnalysisWorker {
         }
     }
 
+    static String groundedFailureCode(
+            GroundedEvidenceUnavailableException exception
+    ) {
+        String message = exceptionMessages(exception);
+
+        if (message.contains("law")) {
+            return lawFailureCode(message);
+        }
+
+        if (message.contains("financial action plan")) {
+            return "FAP_UNAVAILABLE";
+        }
+
+        if (message.contains("procedure")) {
+            return "PROCEDURE_UNAVAILABLE";
+        }
+
+        if (message.contains("generation")) {
+            return "RETRIEVAL_GENERATION_MISMATCH";
+        }
+
+        if (message.contains("index")) {
+            return "RETRIEVAL_MAPPING_MISSING";
+        }
+
+        if (message.contains("official evidence") || message.contains("source chunk")) {
+            return "NO_APPROVED_EVIDENCE";
+        }
+
+        if (message.contains("snapshot")
+                || message.contains("confirmed case")
+                || message.contains("analysis job")
+                || message.contains("source evidence changed")) {
+            return "SNAPSHOT_UNAVAILABLE";
+        }
+
+        return "RETRIEVAL_UNAVAILABLE";
+    }
+
+    private static String lawFailureCode(String message) {
+        if (message.contains("disabled") || message.contains("law_oc")
+                || message.contains("configuration")) {
+            return "LAW_API_CONFIGURATION_MISSING";
+        }
+        if (message.contains("http error 401") || message.contains("http error 403")
+                || message.contains("unauthorized") || message.contains("forbidden")) {
+            return "LAW_API_AUTH_FAILED";
+        }
+        if (message.contains("http error")) {
+            return "LAW_API_HTTP_FAILED";
+        }
+        if (message.contains("search returned") || message.contains("search failed")) {
+            return "LAW_SEARCH_FAILED";
+        }
+        if (message.contains("requested article") || message.contains("no article")
+                || message.contains("article number is missing")) {
+            return "LAW_REQUIRED_ARTICLE_NOT_FOUND";
+        }
+        if (message.contains("no version applicable") || message.contains("no current statute")
+                || message.contains("future law version")) {
+            return "LAW_EFFECTIVE_VERSION_NOT_FOUND";
+        }
+        if (message.contains("identity") || message.contains("provenance")
+                || message.contains("effective date") || message.contains("allowlist")) {
+            return "LAW_EVIDENCE_VALIDATION_FAILED";
+        }
+        if (message.contains("malformed") || message.contains("missing law")
+                || message.contains("empty response") || message.contains("invalid ")) {
+            return "LAW_RESPONSE_PARSE_FAILED";
+        }
+        return "LAW_EVIDENCE_UNAVAILABLE";
+    }
+
+    private static String publicFailureCode(String internalCategory) {
+        return internalCategory != null && internalCategory.startsWith("LAW_")
+                ? "LAW_EVIDENCE_UNAVAILABLE"
+                : internalCategory;
+    }
+
+    private static String exceptionMessages(Throwable root) {
+        StringBuilder messages = new StringBuilder();
+        Throwable current = root;
+        while (current != null) {
+            if (current.getMessage() != null) {
+                messages.append(' ').append(current.getMessage());
+            }
+            current = current.getCause();
+        }
+        return messages.toString().toLowerCase(Locale.ROOT);
+    }
+
     private AnalysisAiResult partialResult(FinancialActionPlanData plan) {
         AnalysisAiResult result = new AnalysisAiResult();
         result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
         result.analysisSummary = "현재 확인된 내용으로 안내할 수 있는 부분만 먼저 정리했습니다.";
         result.keyIssues = plan.actions().isEmpty()
-                ? java.util.List.of(issue("추가 확인이 필요해요", "중요한 정보가 확인되지 않아 이 상황에 맞는 행동을 아직 확정할 수 없습니다."))
+                ? java.util.List.of(issue(
+                plan.unresolvedFacts().isEmpty() ? "확정 가능한 안내가 없어요" : "추가 확인이 필요해요",
+                plan.unresolvedFacts().isEmpty()
+                        ? "현재 확인된 공식 자료만으로는 이 상황에 맞는 구체적인 행동을 확정하기 어렵습니다."
+                        : "중요한 정보가 확인되지 않아 이 상황에 맞는 행동을 아직 확정할 수 없습니다."))
                 : plan.actions().stream()
                         .map(action -> issue(action.title(), action.description()))
                         .toList();

@@ -1,5 +1,7 @@
 package com.financialhelper.law;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -8,12 +10,13 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Validates direct Korean Law Open API responses for later human review.
- * This service never creates or changes a ProcedureVersion or action plan.
+ * 추후 사람의 검토를 위해 Direct Korean Law Open API 응답을 검증한다.
+ * 이 service는 ProcedureVersion이나 action plan을 생성하거나 변경하지 않는다.
  */
 @Service
 public class LawEvidenceService {
 
+    private static final Logger log = LoggerFactory.getLogger(LawEvidenceService.class);
     public static final String ACQUISITION_KIND = "DIRECT_KOREAN_LAW_OPEN_API";
     private static final String TOOL_NAME = "lawService.do";
     private static final DateTimeFormatter BASIC = DateTimeFormatter.BASIC_ISO_DATE;
@@ -33,6 +36,8 @@ public class LawEvidenceService {
         if (request == null) throw new IllegalArgumentException("request is required");
         List<KoreanLawOpenApiClient.LawVersion> versions = client.searchLaw(request.lawName());
         KoreanLawOpenApiClient.LawVersion selected = selectVersion(versions, request);
+        log.info("Law evidence version selected lawId={}, mst={}, article={}, effectiveDate={}",
+                selected.lawIdentifier(), selected.mst(), request.articleLocator(), selected.effectiveDate());
         KoreanLawOpenApiClient.LawDocument document = client.getLawText(selected, request.articleLocator());
 
         if (!sameLaw(document.statuteName(), request.lawName())

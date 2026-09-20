@@ -23,4 +23,15 @@ class ScenarioCaseFactExtractorTest {
         assertThat(facts.value("suspiciousTransfer")).isEqualTo("TRUE");
         assertThat(facts.value("unauthorizedTransaction")).isNull();
     }
+
+    @Test
+    void normalizesEquivalentStructuredFactKeysWithoutLosingExplicitValues() {
+        CardCaseFacts facts = ScenarioCaseFactExtractor.fromValues(Map.of(
+                "transferMade", "FALSE",
+                "financialInstitutionReported", "FALSE"));
+
+        assertThat(facts.value("transferCompleted")).isEqualTo("FALSE");
+        assertThat(facts.value("reportedToFinancialInstitution")).isEqualTo("FALSE");
+        assertThat(facts.value("reported")).isEqualTo("FALSE");
+    }
 }

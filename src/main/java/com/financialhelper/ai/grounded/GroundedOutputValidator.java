@@ -11,7 +11,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Validates model references against the immutable snapshot and procedure. */
+/** model reference를 immutable snapshot 및 Procedure와 대조해 검증한다. */
 @Component
 public class GroundedOutputValidator {
     public void validateAnalysis(
@@ -54,8 +54,11 @@ public class GroundedOutputValidator {
         for (int i = 0; i < actions.size(); i++) {
             FinancialActionPlanData.Action expected = actions.get(i);
             ConsultationReportAiResult.ActionStep actual = result.actionSteps.get(i);
+            // Report 번호는 Backend 조합 단계가 소유하는 presentation field다.
+            // 저장된 Procedure에 legacy 누락이나 중복 order 값이 있을 수 있으므로
+            // public report contract는 항상 결정적인 list 위치 1..N을 사용한다.
             if (!expected.actionId().equals(actual.actionId)
-                    || expected.order() != actual.order
+                    || (i + 1) != actual.order
                     || !expected.title().equals(actual.title)
                     || !expected.description().equals(actual.description)) {
                 throw new AiOutputContractException("grounded report action differs from the approved procedure");

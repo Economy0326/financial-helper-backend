@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-/** Adapter that connects Backend-owned WHAT to the existing follow-up store. */
+/** Backend가 결정한 내용을 기존 follow-up store에 연결하는 adapter다. */
 @Service
 public class ProcedureFollowUpService {
     private final FollowUpPersistenceService persistenceService;
@@ -49,7 +49,7 @@ public class ProcedureFollowUpService {
                 : toState(current);
     }
 
-    /** Backward-compatible adapter for the existing FollowUpController. */
+    /** 기존 FollowUpController를 위한 backward-compatible adapter다. */
     public FollowUpStateResponse prepareLegacy(UUID consultationId, String rawToken) {
         refresh(consultationId, rawToken);
         return persistenceService.getState(consultationId, rawToken, null);
@@ -63,7 +63,7 @@ public class ProcedureFollowUpService {
                 : toState(current);
     }
 
-    /** Legacy endpoint adapter that still uses the existing response contract. */
+    /** 기존 response contract를 계속 사용하는 legacy endpoint adapter다. */
     public FollowUpStateResponse getLegacyState(UUID consultationId, String rawToken) {
         return getLegacyState(consultationId, rawToken, null);
     }

@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.UUID;
 
-/** Reads a short, detached snapshot before any remote retrieval call. */
+/** remote retrieval 호출 전에 짧은 detached snapshot을 읽는다. */
 @Service
 public class RetrievalCorpusSnapshotService {
     private final SourceChunkIndexingRepository indexingRepository;
@@ -63,7 +63,7 @@ public class RetrievalCorpusSnapshotService {
             String canonicalUrl,
             String sourceKey
     ) {
-        /** Compatibility constructor for focused retrieval tests. */
+    /** focused retrieval test를 위한 호환 생성자다. */
         public EligibleChunk(
                 UUID sourceChunkId,
                 String body,

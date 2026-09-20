@@ -16,9 +16,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
-/** Builds immutable consultation-scoped context from user-owned inputs only. */
+/** 사용자 소유 입력만으로 consultation 범위의 immutable context를 만든다. */
 @Service
 public class ConfirmedCaseSnapshotService {
 
@@ -65,6 +66,21 @@ public class ConfirmedCaseSnapshotService {
                 .orElseThrow(() -> new IllegalArgumentException("confirmed case snapshot does not exist"));
     }
 
+    @Transactional(readOnly = true)
+    public Optional<ConfirmedCaseSnapshotData> findCurrent(
+            UUID consultationId,
+            long caseInputRevision,
+            long followUpAnswerRevision
+    ) {
+        if (consultationId == null) {
+            throw new IllegalArgumentException("consultationId must not be null");
+        }
+        return snapshotRepository
+                .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                        consultationId, caseInputRevision, followUpAnswerRevision)
+                .map(this::toData);
+    }
+
     private ConfirmedCaseSnapshotData saveSnapshot(
             Consultation consultation,
             long caseRevision,
@@ -80,10 +96,9 @@ public class ConfirmedCaseSnapshotService {
                     null, "USER_SELECTED", null));
         }
         var resolvedScenario = ConsultationScenarioResolver.resolve(consultation);
-        // Preserve the established CARD snapshot shape when the broad CARD
-        // category already determines the legacy scenario.  Breadth scenarios
-        // still carry an explicit scenario fact so downstream services can
-        // select the matching procedure and scope safely.
+        // 넓은 CARD category가 legacy scenario를 이미 결정하면 기존 CARD snapshot
+        // 형태를 유지한다. breadth scenario에는 명시적 scenario fact를 남겨 후속
+        // service가 맞는 Procedure와 범위를 안전하게 선택하게 한다.
         boolean legacyCardScenario = consultation.getCategory()
                 == com.financialhelper.consultation.ConsultationCategory.CARD
                 && resolvedScenario

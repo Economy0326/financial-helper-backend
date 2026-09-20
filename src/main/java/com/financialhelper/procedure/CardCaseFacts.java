@@ -4,9 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Consultation-scoped, user-confirmed values used by the deterministic
- * procedure evaluator.  Missing keys and the literal UNKNOWN are distinct
- * from FALSE and are never guessed by this value object.
+ * 결정적 Procedure evaluator가 사용하는 consultation 범위의 사용자 확정 값이다.
+ * 누락된 key와 literal UNKNOWN은 FALSE와 구분하며 이 value object가 추측하지 않는다.
  */
 public record CardCaseFacts(Map<String, String> values) {
     public CardCaseFacts {

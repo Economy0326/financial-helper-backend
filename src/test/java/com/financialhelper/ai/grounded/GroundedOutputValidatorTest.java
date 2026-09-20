@@ -53,7 +53,7 @@ class GroundedOutputValidatorTest {
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
                 "CARD_LOSS_UNAUTHORIZED_USE", 1, 1, 1, PlanStatus.READY,
                 List.of(new FinancialActionPlanData.Action(
-                        "report-loss", 1, "분실·도난 신고", "카드사 공식 채널에 신고하세요.",
+                        "report-loss", 7, "분실·도난 신고", "카드사 공식 채널에 신고하세요.",
                         ConditionResult.TRUE, "kb-card-loss")),
                 List.of(new FinancialActionPlanData.Document(
                         "incident-record", "거래 내역", "CONDITIONAL", ConditionResult.TRUE, "kb-form")),

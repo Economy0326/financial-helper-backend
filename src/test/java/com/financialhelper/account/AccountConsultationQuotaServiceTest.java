@@ -9,6 +9,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -36,9 +37,9 @@ class AccountConsultationQuotaServiceTest {
     }
 
     @Test
-    void rejects_the_fourth_new_consultation_inside_rolling_window() {
+    void rejects_the_sixth_new_consultation_inside_rolling_window() {
         AccountConsultationStartRepository starts = mock(AccountConsultationStartRepository.class);
-        when(starts.countSince(any(), any())).thenReturn(3L);
+        when(starts.countSince(any(), any())).thenReturn(5L);
         when(starts.findOldestSince(any(), any())).thenReturn(Optional.of(NOW.minusDays(2)));
 
         AccountConsultationQuotaService service =
@@ -67,6 +68,33 @@ class AccountConsultationQuotaServiceTest {
         verifyNoInteractions(account);
     }
 
+    @Test
+    void reports_zero_of_five_and_five_of_five_from_the_backend_limit() {
+        AccountConsultationStartRepository starts = mock(AccountConsultationStartRepository.class);
+        Account account = mock(Account.class);
+        AccountConsultationQuotaService service =
+                new AccountConsultationQuotaService(starts, properties());
+
+        when(starts.countSince(any(), any())).thenReturn(0L);
+        assertThat(service.status(account, NOW)).extracting(
+                AccountConsultationQuotaService.QuotaStatus::used,
+                AccountConsultationQuotaService.QuotaStatus::limit
+        ).containsExactly(0, 5);
+
+        when(starts.countSince(any(), any())).thenReturn(5L);
+        when(starts.findOldestSince(any(), any())).thenReturn(Optional.of(NOW.minusDays(2)));
+        assertThat(service.status(account, NOW)).extracting(
+                AccountConsultationQuotaService.QuotaStatus::used,
+                AccountConsultationQuotaService.QuotaStatus::limit
+        ).containsExactly(5, 5);
+    }
+
+    @Test
+    void default_account_limits_use_five_new_consultations() {
+        assertThat(AccountProperties.Limits.defaults().newConsultationLimit())
+                .isEqualTo(5);
+    }
+
     private static AccountProperties properties() {
         return new AccountProperties(
                 false, Duration.ofHours(12), "account", false, "Lax",
@@ -76,6 +104,6 @@ class AccountConsultationQuotaServiceTest {
                         "https://kapi.kakao.com/v2/user/me", Duration.ofSeconds(5)),
                 new AccountProperties.Limits(1000, 64, 12000, 262144, 10,
                         Duration.ofHours(1), 3, 60, Duration.ofMinutes(1), false,
-                        false, 1000, 3, 7, 1));
+                        false, 1000, 5, 7, 1));
     }
 }

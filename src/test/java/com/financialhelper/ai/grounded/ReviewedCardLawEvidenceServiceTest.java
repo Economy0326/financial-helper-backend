@@ -68,6 +68,23 @@ class ReviewedCardLawEvidenceServiceTest {
     }
 
     @Test
+    void accepts_the_live_current_card_law_versions_including_updated_electronic_finance_regulation() {
+        when(lawEvidenceService.lookup(any(LawEvidenceRequest.class)))
+                .thenAnswer(invocation -> currentCardEvidence(invocation.getArgument(0)));
+
+        var result = service.load(LocalDate.of(2026, 9, 17));
+
+        assertThat(result).hasSize(5)
+                .extracting(AnalysisEvidenceSnapshotData.ReviewedLawEvidence::evidenceId)
+                .containsExactly(
+                        "law:000536:277267:제16조",
+                        "law:004186:285799:제6조의9",
+                        "law:010199:280277:제9조",
+                        "law:010199:280277:제10조",
+                        "law:010366:285727:제8조");
+    }
+
+    @Test
     void unknown_incident_date_does_not_apply_current_law() {
         assertThat(service.loadForScenario(
                 "VOICE_PHISHING_SUSPICIOUS_TRANSFER", null)).isEmpty();
@@ -105,6 +122,30 @@ class ReviewedCardLawEvidenceServiceTest {
         return evidence(
                 request.lawName(), "011359", "251011", request.articleLocator(),
                 LocalDate.of(2023, 11, 17));
+    }
+
+    private LawEvidence currentCardEvidence(LawEvidenceRequest request) {
+        String lawId;
+        String mst;
+        LocalDate effective;
+        if (request.lawName().equals("여신전문금융업법")) {
+            lawId = "000536";
+            mst = "277267";
+            effective = LocalDate.of(2025, 10, 1);
+        } else if (request.lawName().equals("여신전문금융업법 시행령")) {
+            lawId = "004186";
+            mst = "285799";
+            effective = LocalDate.of(2026, 5, 6);
+        } else if (request.lawName().equals("전자금융거래법")) {
+            lawId = "010199";
+            mst = "280277";
+            effective = LocalDate.of(2025, 12, 16);
+        } else {
+            lawId = "010366";
+            mst = "285727";
+            effective = LocalDate.of(2026, 4, 28);
+        }
+        return evidence(request.lawName(), lawId, mst, request.articleLocator(), effective);
     }
 
     private LawEvidence evidence(

@@ -1,5 +1,7 @@
 package com.financialhelper.law;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -11,6 +13,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -18,14 +21,20 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-/** JSON client for the official lawSearch/lawService Open API endpoints. */
+/** 공식 lawSearch/lawService Open API endpoint용 JSON client다. */
 @Component
 public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
 
+    private static final Logger log = LoggerFactory.getLogger(KoreanLawOpenApiHttpClient.class);
     private static final String HOST = "https://www.law.go.kr";
     private static final String JSON = "JSON";
     private static final DateTimeFormatter BASIC = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final Pattern CHARSET = Pattern.compile("(?:^|;)\\s*charset\\s*=\\s*([^;]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ARTICLE = Pattern.compile("제(\\d+)조(?:의(\\d+))?");
 
     private final KoreanLawOpenApiProperties properties;
     private final JsonMapper jsonMapper;
@@ -41,6 +50,8 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
                 .connectTimeout(properties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
+        log.info("Korean Law Open API configured enabled={}, lawOcPresent={}",
+                properties.enabled(), properties.lawOc() != null && !properties.lawOc().isBlank());
     }
 
     @Override
@@ -106,9 +117,11 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
             throw new IllegalArgumentException("version is required");
         }
         String jo = articleLocator == null ? null : toArticleCode(articleLocator);
+        log.info("Korean Law Open API article request endpoint=lawService.do articleCode={}",
+                jo == null ? "FULL_TEXT" : jo);
         List<String> params = new ArrayList<>();
-        // The eflaw body endpoint is required for a specific effective-date version;
-        // target=law resolves the current body and can disagree with historical metadata.
+        // 특정 시행일 version에는 eflaw 본문 endpoint가 필요하다.
+        // target=law는 현재 본문을 조회하므로 과거 metadata와 다를 수 있다.
         params.add(param("target", "eflaw"));
         params.add(param("type", JSON));
         params.add(param("MST", version.mst()));
@@ -173,23 +186,35 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
                 .GET()
                 .build();
         try {
-            HttpResponse<String> response = httpClient.send(
-                    request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<byte[]> response = httpClient.send(
+                    request, HttpResponse.BodyHandlers.ofByteArray());
+            String contentType = response.headers().firstValue("Content-Type").orElse("absent");
+            Charset charset = responseCharset(contentType);
+            String body = new String(response.body(), charset);
+            log.info("Korean Law Open API response endpoint={}, status={}, contentType={}, charset={}",
+                    endpoint, response.statusCode(), contentType, charset.name());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new KoreanLawOpenApiException("Korean Law Open API HTTP error " + response.statusCode());
             }
-            if (response.body() == null || response.body().isBlank()) {
+            if (body.isBlank()) {
                 throw new KoreanLawOpenApiException("Korean Law Open API returned an empty response");
             }
             try {
-                return jsonMapper.readTree(response.body());
+                JsonNode parsed = jsonMapper.readTree(body);
+                log.info("Korean Law Open API response shape endpoint={}, rootFields={}, nestedShape={}",
+                        endpoint, fieldNames(parsed), nestedShape(endpoint, parsed));
+                return parsed;
             } catch (JacksonException exception) {
+                log.warn("Korean Law Open API response parse failed endpoint={}", endpoint);
                 throw new KoreanLawOpenApiException("Korean Law Open API returned malformed JSON", exception);
             }
         } catch (IOException exception) {
+            log.warn("Korean Law Open API request failed endpoint={}, type={}", endpoint,
+                    exception.getClass().getSimpleName());
             throw new KoreanLawOpenApiException("Korean Law Open API request failed", exception);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
+            log.warn("Korean Law Open API request interrupted endpoint={}", endpoint);
             throw new KoreanLawOpenApiException("Korean Law Open API request interrupted", exception);
         }
     }
@@ -251,8 +276,10 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
         String number = article.path("조문번호").asText("").trim();
         String branch = article.path("조문가지번호").asText("").trim();
         if (number.isBlank()) throw new KoreanLawOpenApiException("Open API article number is missing");
-        if (!branch.isBlank() && !"0".equals(branch)) return "제" + number + "조의" + branch;
-        return "제" + number + "조";
+        int articleNumber = parseArticleNumber(number, "조문번호");
+        int branchNumber = branch.isBlank() ? 0 : parseArticleNumber(branch, "조문가지번호");
+        if (branchNumber != 0) return "제" + articleNumber + "조의" + branchNumber;
+        return "제" + articleNumber + "조";
     }
 
     private static String flattenArticle(JsonNode article) {
@@ -279,13 +306,16 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
     }
 
     private static String normalizeLocator(String value) {
-        return value.replaceAll("\\s+", "");
+        String compact = value.replaceAll("\\s+", "");
+        Matcher matcher = ARTICLE.matcher(compact);
+        if (!matcher.matches()) return compact;
+        int article = Integer.parseInt(matcher.group(1));
+        int branch = matcher.group(2) == null ? 0 : Integer.parseInt(matcher.group(2));
+        return branch == 0 ? "제" + article + "조" : "제" + article + "조의" + branch;
     }
 
     private static String toArticleCode(String locator) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("제(\\d+)조(?:의(\\d+))?")
-                .matcher(normalizeLocator(locator));
+        Matcher matcher = ARTICLE.matcher(normalizeLocator(locator));
         if (!matcher.matches()) {
             throw new KoreanLawOpenApiException("unsupported article locator");
         }
@@ -327,6 +357,57 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
 
     private static String trimSlash(String value) {
         return value.replaceAll("/+$", "");
+    }
+
+    private static int parseArticleNumber(String value, String field) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < 0) throw new NumberFormatException();
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw new KoreanLawOpenApiException("Open API has invalid " + field, exception);
+        }
+    }
+
+    private static Charset responseCharset(String contentType) {
+        Matcher matcher = CHARSET.matcher(contentType == null ? "" : contentType);
+        if (!matcher.find()) return StandardCharsets.UTF_8;
+        try {
+            return Charset.forName(matcher.group(1).trim().replace("\"", ""));
+        } catch (IllegalArgumentException exception) {
+            throw new KoreanLawOpenApiException("Korean Law Open API response has unsupported charset", exception);
+        }
+    }
+
+    private static String fieldNames(JsonNode node) {
+        List<String> fields = new ArrayList<>();
+        if (node != null && node.isObject()) fields.addAll(node.propertyNames());
+        return fields.toString();
+    }
+
+    private static String nestedShape(String endpoint, JsonNode root) {
+        if ("lawSearch.do".equals(endpoint)) {
+            JsonNode search = root.path("LawSearch");
+            return "LawSearch=" + nodeShape(search) + ", law=" + nodeShape(search.path("law"));
+        }
+        JsonNode law = root.path("법령");
+        JsonNode basic = law.path("기본정보");
+        JsonNode article = law.path("조문").path("조문단위");
+        return "법령=" + nodeShape(law) + ", 기본정보=" + nodeShape(basic)
+                + ", 조문단위=" + nodeShape(article)
+                + (article.isArray() && !article.isEmpty()
+                ? ", articleFields=" + fieldNames(article.get(0))
+                : article.isObject() ? ", articleFields=" + fieldNames(article) : "");
+    }
+
+    private static String nodeShape(JsonNode node) {
+        if (node == null || node.isMissingNode()) return "missing";
+        if (node.isArray()) return "array[" + node.size() + "]";
+        if (node.isObject()) return "object";
+        if (node.isTextual()) return "text";
+        if (node.isNumber()) return "number";
+        if (node.isBoolean()) return "boolean";
+        return node.getNodeType().toString().toLowerCase(Locale.ROOT);
     }
 
     private static boolean sameLaw(String left, String right) {

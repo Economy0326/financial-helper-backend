@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.net.URI;
 import java.time.Duration;
 
-/** Server-side configuration for the official Korean Law Open API. */
+/** 공식 Korean Law Open API의 server-side 설정이다. */
 @ConfigurationProperties(prefix = "app.law-open-api")
 public record KoreanLawOpenApiProperties(
         boolean enabled,

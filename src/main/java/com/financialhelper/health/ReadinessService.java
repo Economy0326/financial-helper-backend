@@ -102,7 +102,7 @@ public class ReadinessService {
             }
             return new KureReadiness("READY", true);
         } catch (RuntimeException exception) {
-            // Readiness must fail closed without exposing external error text.
+            // 외부 오류 문구를 노출하지 않고 readiness를 fail-closed로 처리한다.
             return new KureReadiness("UNAVAILABLE", false);
         }
     }

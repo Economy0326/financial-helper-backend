@@ -245,4 +245,55 @@ class AnalysisInformationSupplementPolicyTest {
                 ConsultationStep.ANALYSIS
         );
     }
+
+    @Test
+    void structuredClarificationTerminalDoesNotOpenInformationSupplement() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        String rawToken = tokenService.generateRawToken();
+        GuestSession guest = guestSessionRepository.save(new GuestSession(
+                tokenService.hashToken(rawToken), now, now.plusHours(1)));
+
+        Consultation consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("카드를 잃어버렸지만 모르는 결제 여부는 확인하지 못했습니다.",
+                now.plusSeconds(2));
+        consultation.moveToAnalysis(now.plusSeconds(3));
+        consultation = consultationRepository.saveAndFlush(consultation);
+
+        AnalysisJob job = analysisJobRepository.saveAndFlush(new AnalysisJob(
+                consultation,
+                consultation.getCaseInputRevision(),
+                consultation.getFollowUpAnswerRevision(),
+                "gpt-5.6-luna",
+                now.plusSeconds(4)));
+        job.startProcessing(now.plusSeconds(5));
+        analysisJobRepository.saveAndFlush(job);
+
+        AnalysisAiResult result = new AnalysisAiResult();
+        result.outcome = AnalysisAiResult.Outcome.NEEDS_MORE_INFO;
+        result.analysisSummary = "확인된 안전 안내만 제공합니다.";
+        result.keyIssues = List.of();
+        result.additionalInformationNeeded = List.of();
+
+        persistenceService.completeWithoutSupplement(
+                new AnalysisData.Snapshot(
+                        job.getId(),
+                        consultation.getId(),
+                        consultation.getCategory(),
+                        consultation.getCaseInputRevision(),
+                        consultation.getFollowUpAnswerRevision(),
+                        null),
+                result);
+
+        AnalysisJob finishedJob = analysisJobRepository.findById(job.getId()).orElseThrow();
+        Consultation finishedConsultation = consultationRepository.findById(consultation.getId())
+                .orElseThrow();
+        AnalysisStateResponse state = AnalysisStateResponse.from(
+                finishedJob, result, finishedConsultation.getInformationSupplementCount(), List.of());
+
+        assertThat(finishedJob.getStatus()).isEqualTo(AnalysisJobStatus.INSUFFICIENT_INFORMATION);
+        assertThat(finishedConsultation.getStatus()).isEqualTo(ConsultationStatus.INSUFFICIENT_INFORMATION);
+        assertThat(finishedConsultation.getInformationSupplementCount()).isZero();
+        assertThat(state.canSupplementInformation()).isFalse();
+    }
 }

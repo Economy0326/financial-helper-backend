@@ -8,7 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
-/** Small persistence-only boundary for the PostgreSQL keyword foundation. */
+/** PostgreSQL keyword 기반을 위한 작은 persistence-only 경계다. */
 @Service
 public class SourceKeywordSearchService {
 

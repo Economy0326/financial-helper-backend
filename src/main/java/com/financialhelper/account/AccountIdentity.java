@@ -16,7 +16,7 @@ import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** Provider identity is separate from account ownership so providers can grow without email-based merging. */
+/** 이메일 기반 병합 없이 provider를 확장할 수 있도록 provider 식별자와 account 소유권을 분리한다. */
 @Entity
 @Table(name = "account_identity", uniqueConstraints = @UniqueConstraint(
         name = "uk_account_identity_provider_subject",

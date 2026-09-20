@@ -21,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.Clock;
 import java.time.LocalDate;
 
 import java.util.List;
@@ -41,11 +42,14 @@ public class FollowUpPersistenceService {
 
     private final JsonMapper jsonMapper;
 
+    private final Clock businessClock;
+
     public FollowUpPersistenceService(
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService,
             FollowUpQuestionRepository followUpQuestionRepository,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            Clock businessClock
     ) {
         this.consultationRepository =
                 consultationRepository;
@@ -58,6 +62,9 @@ public class FollowUpPersistenceService {
 
         this.jsonMapper =
                 jsonMapper;
+
+        this.businessClock =
+                businessClock;
     }
 
     @Transactional(readOnly = true)
@@ -242,7 +249,7 @@ public class FollowUpPersistenceService {
         );
     }
 
-    /** Stores Backend-owned structured questions without involving the LLM. */
+    /** LLM을 사용하지 않고 Backend가 소유한 structured question을 저장한다. */
     @Transactional
     public List<FollowUpQuestion> saveStructuredQuestionsIfCurrent(
             UUID consultationId,
@@ -264,7 +271,7 @@ public class FollowUpPersistenceService {
                 consultationId, rawToken, expectedCaseInputRevision, specs);
     }
 
-    /** Appends only the next backend-selected question to the current revision. */
+    /** Backend가 선택한 다음 질문만 현재 revision에 추가한다. */
     @Transactional
     public List<FollowUpQuestion> appendStructuredQuestionsIfCurrent(
             UUID consultationId,
@@ -364,8 +371,7 @@ public class FollowUpPersistenceService {
     }
 
     /**
-     * Saves an answer without closing the consultation when the procedure
-     * service still needs to select the next question.
+     * Procedure service가 다음 질문을 더 선택해야 하면 상담을 닫지 않고 응답을 저장한다.
      */
     @Transactional
     public FollowUpStateResponse saveAnswer(
@@ -452,9 +458,8 @@ public class FollowUpPersistenceService {
                             now
                     );
             if (deferCompletion) {
-                // A changed earlier answer can invalidate every later branch.
-                // Remove only current-revision dependent questions; the next
-                // deterministic question will be regenerated after commit.
+        // 앞선 응답의 변경으로 이후 모든 branch가 무효화될 수 있다.
+        // 현재 revision에 의존하는 질문만 삭제하고 commit 뒤 다음 결정적 질문을 다시 만든다.
                 List<FollowUpQuestion> dependentQuestions = questions.stream()
                         .filter(candidate -> candidate.getSequenceNo() > question.getSequenceNo())
                         .toList();
@@ -521,7 +526,7 @@ public class FollowUpPersistenceService {
         if ("DATE".equals(question.getInputType())) {
             try {
                 LocalDate date = LocalDate.parse(answerValue);
-                if (date.isAfter(LocalDate.now(ZoneOffset.UTC))) {
+                if (date.isAfter(LocalDate.now(businessClock))) {
                     throw new InvalidFollowUpAnswerException();
                 }
             } catch (java.time.format.DateTimeParseException exception) {

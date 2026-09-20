@@ -26,9 +26,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Explicit activation boundary for the approved KB CARD evidence set.
- * Nothing outside the allowlisted source keys is ingested, reviewed, or
- * admitted to the retrieval generation.
+ * 승인된 KB CARD Evidence set의 명시적 활성화 경계다.
+ * allowlist source key 밖의 항목은 ingestion, 검토 또는 retrieval generation에 포함하지 않는다.
  */
 @Service
 public class CardOfficialCorpusActivationService {
@@ -53,8 +52,8 @@ public class CardOfficialCorpusActivationService {
             KB_TERMS_AMENDMENT_SOURCE
     );
 
-    /* Hashes of the user-verified official files.  A changed download fails
-       closed instead of being silently promoted to an approved corpus. */
+    /* 사용자가 검증한 공식 file의 hash다. 변경된 download는 승인 corpus로
+       조용히 승격하지 않고 fail-closed로 처리한다. */
     private static final Map<String, String> VERIFIED_RAW_SHA256 = Map.of(
             KB_TERMS_SOURCE,
             "fa7261248a6ac0b30ada429f4a37947e6a8b31101db981ad66261c2ca29f3c33",
@@ -135,9 +134,9 @@ public class CardOfficialCorpusActivationService {
             throw new IllegalStateException("CARD activation produced no approved chunks");
         }
 
-        // Keep the activation definition identical to the persistence guard:
-        // document identity and content hash are part of the immutable corpus
-        // snapshot, so a chunk body cannot be silently reused across versions.
+        // 활성화 정의를 persistence guard와 동일하게 유지한다. document identity와
+        // content hash는 immutable corpus snapshot의 일부이므로 chunk 본문을
+        // version 사이에서 조용히 재사용할 수 없다.
         String corpusSnapshot = SourceHashing.sha256(approved.stream()
                 .map(chunk -> String.join("|",
                         chunk.getId().toString(),
@@ -206,8 +205,8 @@ public class CardOfficialCorpusActivationService {
                 document.getSourceRegistry().getSourceKey())) {
             document.setApplicabilityWindow(LocalDate.of(2022, 11, 28), null);
         } else {
-            // The form has no independently established effective date in the
-            // verified file.  A dated incident therefore fails closed.
+            // 검증된 file에서 이 양식의 시행일을 독립적으로 확인할 수 없다.
+            // 따라서 날짜가 있는 사고는 fail-closed로 처리한다.
             document.setApplicabilityWindow(null, null);
         }
         sourceDocumentRepository.save(document);

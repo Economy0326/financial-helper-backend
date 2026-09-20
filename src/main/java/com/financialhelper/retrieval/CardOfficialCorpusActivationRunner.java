@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-/** Opt-in runner for the explicit, human-approved CARD corpus activation. */
+/** 사람이 명시적으로 승인한 CARD corpus 활성화의 선택 실행 runner다. */
 @Component
 @Profile("!test")
 @ConditionalOnProperty(

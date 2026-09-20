@@ -29,7 +29,7 @@ app:
       rate-limit-enabled: false
       global-ai-budget-enabled: false
       global-ai-budget-units: 1000
-      new-consultation-limit: 3
+      new-consultation-limit: 5
       consultation-window-days: 7
       max-active-consultations: 1
   guest-session:

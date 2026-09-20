@@ -9,14 +9,15 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
 
 /**
- * The reviewed CARD law allowlist is deliberately narrow.  Runtime law text
- * is accepted only when the direct Work 5.5 adapter validates the exact statute
- * and locator; this class never turns a law response into a financial action.
+ * 검토된 CARD law allowlist는 의도적으로 제한한다. direct Work 5.5 adapter가
+ * 정확한 법령과 locator를 검증한 경우에만 runtime 법령 text를 허용한다.
+ * 이 class는 법령 응답을 financial action으로 변환하지 않는다.
  */
 @Service
 public class ReviewedCardLawEvidenceService {
@@ -51,10 +52,9 @@ public class ReviewedCardLawEvidenceService {
     }
 
     /**
-     * Loads only the narrow, manually reviewed law identities for a breadth
-     * scenario.  A missing incident date intentionally returns no law
-     * evidence: current law must never be silently applied to a historical
-     * incident whose version has not been established.
+     * breadth scenario에 대해 수동 검토한 제한된 law identity만 불러온다.
+     * incident date가 없으면 의도적으로 law evidence를 반환하지 않는다.
+     * version을 확정하지 않은 과거 incident에 현재 법령을 암묵적으로 적용해서는 안 된다.
      */
     public List<AnalysisEvidenceSnapshotData.ReviewedLawEvidence> loadForScenario(
             String scenario, LocalDate incidentDate) {
@@ -104,9 +104,10 @@ public class ReviewedCardLawEvidenceService {
             LocalDate effective = LocalDate.parse(evidence.effectiveDate(), DateTimeFormatter.BASIC_ISO_DATE);
             if (!identity.allowAnyCurrentEffectiveDate()
                     && !identity.acceptedEffectiveDates().contains(effective)) {
-                throw new IllegalArgumentException("law evidence effective date is outside reviewed versions");
+                throw new IllegalArgumentException(
+                        "law evidence effective date is outside reviewed versions: " + evidence.effectiveDate());
             }
-        } catch (RuntimeException exception) {
+        } catch (DateTimeParseException exception) {
             throw new IllegalArgumentException("law evidence effective date is invalid", exception);
         }
     }
@@ -153,7 +154,7 @@ public class ReviewedCardLawEvidenceService {
                             "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10))),
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|전자금융거래법시행령|제8조",
                     identity("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법 시행령", "제8조", "010366",
-                            "285727", LocalDate.of(2025, 12, 16), "256699", LocalDate.of(2020, 12, 10))),
+                            "285727", LocalDate.of(2026, 4, 28), "256699", LocalDate.of(2020, 12, 10))),
             Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해금환급에관한특별법|제3조",
                     identity("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제3조", "011359",
                             "289413", LocalDate.of(2026, 9, 8), "251011", LocalDate.of(2023, 11, 17))),

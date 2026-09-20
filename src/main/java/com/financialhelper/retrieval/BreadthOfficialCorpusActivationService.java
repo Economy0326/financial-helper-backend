@@ -26,10 +26,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Explicit activation boundary for the reviewed breadth MVP corpus.  The
- * registry remains a catalogue; only these hash-pinned documents are allowed
- * into the immutable generation, and every resulting chunk is approved here
- * as part of the development-stage human review decision.
+ * 검토된 breadth MVP corpus의 명시적 활성화 경계다. registry는 catalog로 남으며
+ * hash가 고정된 document만 immutable generation에 들어갈 수 있다. 생성된 모든
+ * chunk는 개발 단계의 사람 검토 결정에 따라 여기에서 승인한다.
  */
 @Service
 public class BreadthOfficialCorpusActivationService {
@@ -50,7 +49,7 @@ public class BreadthOfficialCorpusActivationService {
             POLICE_RESPONSE_SOURCE
     );
 
-    /* Hashes of the official originals reviewed for the MVP source freeze. */
+    /* MVP source 동결을 위해 검토한 공식 원문의 hash다. */
     private static final Map<String, String> VERIFIED_RAW_SHA256 = Map.of(
             FSC_ALERT_SOURCE,
             "076b08600a9ad15661e60417dfcd84ff7633f8e76f0e32ef81b7aa55d986cd26",
@@ -202,8 +201,8 @@ public class BreadthOfficialCorpusActivationService {
         } else if (FSC_PERSONAL_INFO_SOURCE.equals(sourceKey)) {
             document.setApplicabilityWindow(LocalDate.of(2023, 1, 12), null);
         } else {
-            // The current operational pages do not expose a reviewed effective
-            // window.  A dated incident therefore remains fail-closed.
+            // 현재 업무 page에는 검토된 적용 기간이 없다.
+            // 날짜가 있는 사고는 따라서 fail-closed로 유지한다.
             document.setApplicabilityWindow(null, null);
         }
         sourceDocumentRepository.save(document);

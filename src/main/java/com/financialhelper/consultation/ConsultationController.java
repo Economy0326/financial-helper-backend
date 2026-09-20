@@ -65,7 +65,7 @@ public class ConsultationController {
     }
 
     @GetMapping("/active")
-    public ActiveConsultationResponse
+    public ActiveConsultationStateResponse
     getActiveConsultation(
             @CookieValue(
                     name = GuestSessionCookie.NAME,
@@ -129,13 +129,13 @@ public class ConsultationController {
             UpdateConsultationSituationRequest request,
 
             @RequestParam(name = "edit", defaultValue = "false")
-            boolean editFromSummary
+            boolean explicitEdit
     ) {
         return consultationService.updateSituation(
                 id,
                 rawToken,
                 request,
-                editFromSummary
+                explicitEdit
         );
     }
 }

@@ -42,9 +42,9 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Captures the exact deterministic inputs used by a CARD analysis.  The
- * preparation method performs no external call inside a database transaction;
- * only the final short save transaction locks and rechecks current state.
+ * CARD analysis가 사용하는 정확한 결정적 입력을 capture한다. 준비 메서드는
+ * database transaction 안에서 외부 호출을 하지 않는다. 마지막 짧은 저장
+ * transaction만 lock을 걸고 현재 상태를 다시 확인한다.
  */
 @Service
 public class AnalysisEvidenceSnapshotService {
@@ -92,7 +92,7 @@ public class AnalysisEvidenceSnapshotService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    /** Returns null for legacy consultations without a supported scenario. */
+    /** 지원 scenario가 없는 legacy consultation에는 null을 반환한다. */
     public AnalysisEvidenceSnapshotData prepare(AnalysisData.Snapshot input) {
         if (input == null || input.scenario() == null
                 || input.scenario() == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
@@ -125,8 +125,8 @@ public class AnalysisEvidenceSnapshotService {
             throw new GroundedEvidenceUnavailableException("official evidence is unavailable");
         }
 
-        // This is intentionally outside saveSnapshot's transaction.  A live
-        // law API call can be slow or fail and must never hold a DB lock.
+        // 의도적으로 saveSnapshot transaction 밖에서 실행한다. live law API 호출은
+        // 느리거나 실패할 수 있으므로 DB lock을 점유해서는 안 된다.
         List<AnalysisEvidenceSnapshotData.ReviewedLawEvidence> lawEvidence =
                 lawEvidenceService.loadForScenario(input.scenario().name(), incidentDate);
         if (lawEvidence.isEmpty() && input.scenario()
@@ -190,7 +190,7 @@ public class AnalysisEvidenceSnapshotService {
                         "analysis evidence snapshot is unavailable"));
     }
 
-    /** Called at the analysis save boundary to reject stale evidence. */
+    /** 오래된 Evidence를 거부하기 위해 analysis 저장 경계에서 호출한다. */
     @Transactional(readOnly = true)
     public void assertCurrent(AnalysisEvidenceSnapshotData snapshot) {
         AnalysisJob job = analysisJobRepository.findById(snapshot.analysisJobId())
@@ -208,8 +208,8 @@ public class AnalysisEvidenceSnapshotService {
         }
     }
 
-    /** Report generation may read a completed analysis job, but the case and
-     * active generation still have to be the same as the captured snapshot. */
+    /** Report 생성은 완료된 analysis job을 읽을 수 있지만 case와 active generation은
+     * capture한 snapshot과 계속 같아야 한다. */
     @Transactional(readOnly = true)
     public void assertCurrentForReport(AnalysisEvidenceSnapshotData snapshot) {
         AnalysisJob job = analysisJobRepository.findById(snapshot.analysisJobId())
@@ -383,11 +383,9 @@ public class AnalysisEvidenceSnapshotService {
                     }
                 })
                 .orElseGet(() -> {
-                    // CARD reviewed law evidence requires a date to select an
-                    // applicable legal version. Breadth procedures currently
-                    // have no reviewed law allowlist, so an UNKNOWN date is
-                    // retained as UNKNOWN and does not block their approved
-                    // source evidence snapshot.
+        // 검토된 CARD 법령 Evidence는 적용 version 선택에 날짜가 필요하다.
+        // breadth Procedure에는 현재 검토된 법령 allowlist가 없으므로 UNKNOWN 날짜를
+        // 그대로 유지하며 승인된 source Evidence snapshot을 막지 않는다.
                     if (scenario == com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
                         throw new GroundedEvidenceUnavailableException(
                                 "incidentDate is required for reviewed law applicability");

@@ -10,7 +10,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Objects;
 
-/** Fails closed when the persisted generation and runtime disagree. */
+/** 저장된 generation과 runtime이 다르면 fail-closed로 처리한다. */
 @Component
 public class KureRuntimeCompatibility {
 

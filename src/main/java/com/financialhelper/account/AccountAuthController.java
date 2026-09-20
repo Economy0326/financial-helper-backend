@@ -1,6 +1,7 @@
 package com.financialhelper.account;
 
 import com.financialhelper.guest.GuestSessionTokenService;
+import com.financialhelper.guest.GuestSessionCookieService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -28,16 +29,19 @@ public class AccountAuthController {
     private final OAuthLoginStateRepository stateRepository;
     private final AccountSessionService sessionService;
     private final GuestSessionTokenService tokenService;
+    private final GuestSessionCookieService guestSessionCookieService;
     private final KakaoOAuthClient kakaoClient;
     private final NaverOAuthClient naverClient;
 
     public AccountAuthController(AccountProperties properties, OAuthLoginStateRepository stateRepository,
                                  AccountSessionService sessionService, GuestSessionTokenService tokenService,
+                                 GuestSessionCookieService guestSessionCookieService,
                                  KakaoOAuthClient kakaoClient, NaverOAuthClient naverClient) {
         this.properties = properties;
         this.stateRepository = stateRepository;
         this.sessionService = sessionService;
         this.tokenService = tokenService;
+        this.guestSessionCookieService = guestSessionCookieService;
         this.kakaoClient = kakaoClient;
         this.naverClient = naverClient;
     }
@@ -128,6 +132,9 @@ public class AccountAuthController {
         String token = cookie(request, properties.cookieName());
         sessionService.revoke(token);
         response.addHeader(HttpHeaders.SET_COOKIE, sessionCookie("", true).toString());
+        // guest session이 방금 logout한 account에 묶여 있을 수 있다.
+        // 다음 account가 새로운 browser session으로 시작하도록 삭제한다.
+        response.addHeader(HttpHeaders.SET_COOKIE, guestSessionCookieService.clear().toString());
         return ResponseEntity.noContent().build();
     }
 

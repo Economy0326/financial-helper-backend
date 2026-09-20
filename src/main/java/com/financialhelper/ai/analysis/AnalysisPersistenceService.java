@@ -26,6 +26,7 @@ import com.financialhelper.consultation.ConsultationStatus;
 import com.financialhelper.consultation.ConsultationStep;
 import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.consultation.InvalidConsultationStateException;
+import com.financialhelper.consultation.UnsupportedConsultationScopeException;
 
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionService;
@@ -181,6 +182,8 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        rejectUnsupportedProcedureScope(consultation);
+
         if (analysisJobRepository.sumAttemptCountByConsultationId(consultationId)
                 >= accountAiAttemptsLimit()) {
             throw new AnalysisRetryLimitExceededException();
@@ -291,6 +294,8 @@ public class AnalysisPersistenceService {
             throw new InvalidConsultationStateException();
         }
 
+        rejectUnsupportedProcedureScope(consultation);
+
         if (
                 job.getAttemptCount()
                         >= analysisProperties
@@ -323,6 +328,17 @@ public class AnalysisPersistenceService {
                         consultation
                 )
         );
+    }
+
+    private void rejectUnsupportedProcedureScope(Consultation consultation) {
+        if (ConsultationScenarioResolver.resolve(consultation)
+                == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
+            return;
+        }
+        FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultation.getId());
+        if (plan.status() == PlanStatus.UNSUPPORTED) {
+            throw new UnsupportedConsultationScopeException();
+        }
     }
 
     @Transactional
@@ -403,11 +419,22 @@ public class AnalysisPersistenceService {
         complete(snapshot, result, null);
     }
 
+    /**
+     * 별도의 1회 free-form 정보 보완 flow를 열지 않고 결정적 partial 결과를 완료한다.
+     * structured follow-up clarification 횟수를 이미 소진했을 때 사용한다.
+     */
+    @Transactional
+    public void completeWithoutSupplement(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result
+    ) {
+        complete(snapshot, result, null, true);
+    }
+
     private int accountAiAttemptsLimit() {
-        // The existing per-job max-attempt policy remains authoritative. The
-        // account-level guard is supplied by AccountProperties through the
-        // quota service; this fallback keeps legacy callers bounded by the
-        // existing configured retry limit.
+        // 기존 job별 최대 시도 정책을 기준으로 삼는다. account 단위 guard는 quota
+        // service를 통해 AccountProperties가 제공하며, 이 fallback은 legacy caller를
+        // 기존 retry limit 안으로 제한한다.
         return Math.max(accountProperties.limits().consultationAiAttempts(), 1);
     }
 
@@ -416,6 +443,16 @@ public class AnalysisPersistenceService {
             AnalysisData.Snapshot snapshot,
             AnalysisAiResult result,
             AnalysisEvidenceSnapshotData evidenceSnapshot
+    ) {
+
+        complete(snapshot, result, evidenceSnapshot, false);
+    }
+
+    private void complete(
+            AnalysisData.Snapshot snapshot,
+            AnalysisAiResult result,
+            AnalysisEvidenceSnapshotData evidenceSnapshot,
+            boolean forceInsufficientInformation
     ) {
 
         if (evidenceSnapshot != null) {
@@ -491,6 +528,8 @@ public class AnalysisPersistenceService {
         }
 
         if (
+                forceInsufficientInformation
+                ||
                 consultation
                         .getInformationSupplementCount()
                         >= 1
@@ -610,6 +649,22 @@ public class AnalysisPersistenceService {
 
         if (job.isEmpty()) {
 
+            // 사용자가 Analysis 시작 버튼에 도달하기 전에 범위 밖으로 확인된
+            // Procedure를 판정한다. read-only 결정적 검사이며 job 생성, AI quota
+            // 소비 또는 OpenAI 호출을 하지 않는다.
+            if (isStructuredScenario(consultation)) {
+                try {
+                    FinancialActionPlanData plan = actionPlanService.buildForCurrent(consultationId);
+                    if (plan.status() == PlanStatus.UNSUPPORTED) {
+                        return AnalysisStateResponse.unsupported(
+                                consultation.getInformationSupplementCount());
+                    }
+                } catch (RuntimeException ignored) {
+                    // 아직 plan을 평가할 수 없으면 일반 NOT_STARTED 동작을 유지한다.
+                    // reserveStart가 최종 fail-closed guard로 남는다.
+                }
+            }
+
             return AnalysisStateResponse
                     .notStarted(
                             consultation
@@ -649,9 +704,16 @@ public class AnalysisPersistenceService {
                                 consultationId,
                                 guestSession.getId()
                         )
-                        .orElseThrow(
-                                ConsultationNotFoundException::new
-                        );
+                .orElseThrow(
+                        ConsultationNotFoundException::new
+                );
+
+        // Structured General Consultation scenario는 Analysis 전에 missing fact 수집을
+        // 마친다. legacy NEEDS_MORE_INFO row가 Situation을 다시 열거나 두 번째
+        // 보완 질문을 만들어서는 안 된다.
+        if (isStructuredScenario(consultation)) {
+            throw new InvalidConsultationStateException();
+        }
 
         ensureAnalysisStep(
                 consultation
@@ -698,6 +760,11 @@ public class AnalysisPersistenceService {
                         consultationId,
                         rawToken
                 );
+
+        if (isStructuredScenario(consultation)) {
+            return InformationSupplementContextResponse.inactive(
+                    consultation.getInformationSupplementCount());
+        }
 
         // 일반 Situation 수정 화면이면 추가정보 Context가 아님
         if (
@@ -982,20 +1049,45 @@ public class AnalysisPersistenceService {
                     );
         }
 
-        return AnalysisStateResponse.from(
+        AnalysisStateResponse response = AnalysisStateResponse.from(
                 job,
                 result,
                 consultation
                         .getInformationSupplementCount()
                 , partialSafeActions(job, consultation)
         );
+        if (isStructuredScenario(consultation)
+                && job.getStatus() == AnalysisJobStatus.NEEDS_MORE_INFO) {
+            return new AnalysisStateResponse(
+                    AnalysisJobStatus.INSUFFICIENT_INFORMATION.name(),
+                    response.failureCode(),
+                    response.attemptCount(),
+                    response.informationSupplementCount(),
+                    false,
+                    response.additionalInformationNeeded(),
+                    response.safeActions());
+        }
+        return response;
+    }
+
+    private boolean isStructuredScenario(Consultation consultation) {
+        return switch (ConsultationScenarioResolver.resolve(consultation)) {
+            case CARD_LOSS_UNAUTHORIZED_USE,
+                    VOICE_PHISHING_SUSPICIOUS_TRANSFER,
+                    UNAUTHORIZED_ACCOUNT_TRANSFER,
+                    PERSONAL_INFO_SMISHING_MALICIOUS_APP -> true;
+            case UNKNOWN -> false;
+        };
     }
 
     private java.util.List<AnalysisStateResponse.SafeAction> partialSafeActions(
             AnalysisJob job,
             Consultation consultation
     ) {
+        // 한 번의 정보 보완 기회 뒤 job은 INSUFFICIENT_INFORMATION으로 이동한다.
+        // 독립적으로 검토된 safe action은 이 terminal 상태에서도 유효하며 계속 보여야 한다.
         if (job.getStatus() != AnalysisJobStatus.NEEDS_MORE_INFO
+                && job.getStatus() != AnalysisJobStatus.INSUFFICIENT_INFORMATION
                 || com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
                 == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
             return java.util.List.of();
@@ -1010,8 +1102,8 @@ public class AnalysisPersistenceService {
                             action.actionId(), action.title(), action.description()))
                     .toList();
         } catch (RuntimeException ignored) {
-            // State polling must not turn a partial-information result into a
-            // technical failure when its optional guidance cannot be loaded.
+            // optional guidance를 불러오지 못해도 state polling이 정보 부족 결과를
+            // technical failure로 바꾸어서는 안 된다.
             return java.util.List.of();
         }
     }

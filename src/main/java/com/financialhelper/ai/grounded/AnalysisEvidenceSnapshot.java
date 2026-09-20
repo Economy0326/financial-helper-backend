@@ -22,7 +22,7 @@ import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** Immutable-at-a-revision evidence boundary used by analysis and report. */
+    /** analysis와 report가 사용하는 revision 단위 immutable Evidence 경계다. */
 @Entity
 @Table(name = "analysis_evidence_snapshot", uniqueConstraints = @UniqueConstraint(
         name = "uk_analysis_evidence_snapshot_job_revision",

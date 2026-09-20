@@ -48,8 +48,8 @@ class ActiveRetrievalGenerationIntegrationTest {
 
     @AfterEach
     void cleanupOwnedRows() {
-        // Restore the production-like pointer before removing only the
-        // generations created by this test.
+        // 이 test가 만든 row만 제거하기 전에 production과 유사한 pointer를 복원한다.
+        // 이 test가 만든 generation만 제거한다.
         if (originalActiveGenerationId == null) {
             jdbcTemplate.update("DELETE FROM active_retrieval_generation");
         } else {

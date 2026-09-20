@@ -4,6 +4,7 @@ import java.util.List;
 
 public record AnalysisStateResponse(
         String status,
+        String failureCode,
         int attemptCount,
         int informationSupplementCount,
         boolean canSupplementInformation,
@@ -18,9 +19,24 @@ public record AnalysisStateResponse(
 
         return new AnalysisStateResponse(
                 "NOT_STARTED",
+                null,
                 0,
                 informationSupplementCount,
                 informationSupplementCount < 1,
+                List.of(),
+                List.of()
+        );
+    }
+
+    public static AnalysisStateResponse unsupported(
+            int informationSupplementCount
+    ) {
+        return new AnalysisStateResponse(
+                "UNSUPPORTED_SCOPE",
+                "CONSULTATION_SCOPE_UNSUPPORTED",
+                0,
+                informationSupplementCount,
+                false,
                 List.of(),
                 List.of()
         );
@@ -34,7 +50,7 @@ public record AnalysisStateResponse(
     ) {
 
         List<AdditionalInformation> information =
-                result == null
+                result == null || result.additionalInformationNeeded == null
                         ? List.of()
                         : result
                                 .additionalInformationNeeded
@@ -51,9 +67,11 @@ public record AnalysisStateResponse(
         // FE에 필요한 내용만 추려서 반환
         return new AnalysisStateResponse(
                 job.getStatus().name(),
+                job.getFailureCode(),
                 job.getAttemptCount(),
                 informationSupplementCount,
-                informationSupplementCount < 1,
+                job.getStatus() == AnalysisJobStatus.NEEDS_MORE_INFO
+                        && informationSupplementCount < 1,
                 information,
                 safeActions == null ? List.of() : safeActions
         );

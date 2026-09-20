@@ -13,6 +13,10 @@ spring:
 
 # local은 http://localhost이므로 Secure = false
 app:
+  law-open-api:
+    # Local grounded QA must exercise the direct law API when LAW_OC is present.
+    # Production keeps its own explicit profile setting.
+    enabled: ${LAW_OPEN_API_ENABLED:true}
   guest-session:
     cookie:
       secure: false

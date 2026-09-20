@@ -30,8 +30,8 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Short database transactions around the external KURE build.  No HTTP call
- * is made from this class; it only snapshots, validates and persists state.
+ * 외부 KURE build 전후에 짧은 database transaction을 사용한다. 이 class는
+ * HTTP를 호출하지 않고 상태를 snapshot, 검증 및 저장만 한다.
  */
 @Service
 public class RetrievalGenerationIndexingPersistenceService {
@@ -64,8 +64,8 @@ public class RetrievalGenerationIndexingPersistenceService {
     }
 
     /**
-     * Lock the generation, snapshot the currently approved active corpus,
-     * create missing mappings, then freeze membership and claim the attempt.
+     * generation을 lock하고 현재 승인된 active corpus를 snapshot한 뒤 누락 mapping을
+     * 생성한다. 이후 membership을 동결하고 attempt를 점유한다.
      */
     @Transactional
     public GenerationBuildPlan start(UUID generationId) {

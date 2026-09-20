@@ -5,6 +5,7 @@ import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -63,5 +64,23 @@ class CardCaseFactExtractorTest {
 
         assertThat(CardCaseFactExtractor.fromSnapshot(snapshot).value("reported"))
                 .isEqualTo("TRUE");
+    }
+
+    @Test
+    void acceptsTheStructuredKookminIssuerValueAsTheApprovedCardIssuer() {
+        assertThat(ProcedureVersionService.canonicalInstitution("KB_KOOKMIN_CARD"))
+                .isEqualTo(ProcedureVersionService.KB_INSTITUTION);
+    }
+
+    @Test
+    void normalizesCompensationLifecycleValuesWithoutInferringThem() {
+        CardCaseFacts facts = CardCaseFactExtractor.fromValues(Map.of(
+                "compensationStatus", "result received",
+                "resultDisputed", "네"));
+
+        assertThat(facts.value("compensationStatus")).isEqualTo("RESULT_RECEIVED");
+        assertThat(facts.value("resultDisputed")).isEqualTo("TRUE");
+        assertThat(CardCaseFactExtractor.fromValues(Map.of("compensationStatus", "보상 완료"))
+                .value("compensationStatus")).isEqualTo("UNKNOWN");
     }
 }

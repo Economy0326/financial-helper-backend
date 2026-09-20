@@ -2,14 +2,20 @@ package com.financialhelper.consultation;
 
 import java.util.Locale;
 
-/** Resolves only explicit scenario signals; it never infers a financial event from evidence. */
+/** 명시적 scenario 신호만 판정하며 Evidence에서 금융 사건을 추론하지 않는다. */
 public final class ConsultationScenarioResolver {
     private ConsultationScenarioResolver() {}
 
     public static ConsultationScenario resolve(Consultation consultation) {
         if (consultation == null) return ConsultationScenario.UNKNOWN;
-        if (consultation.getScenario() != null) return consultation.getScenario();
-        return resolve(consultation.getCategory(), consultation.getSituationText());
+        // Situation은 현재 사용자의 명시적 입력이다. category 선택으로 cache된
+        // scenario 때문에 계좌이체 신고가 CARD 경로에 남아서는 안 된다.
+        if (consultation.getSituationText() != null && !consultation.getSituationText().isBlank()) {
+            return resolve(consultation.getCategory(), consultation.getSituationText());
+        }
+        return consultation.getScenario() == null
+                ? resolve(consultation.getCategory(), null)
+                : consultation.getScenario();
     }
 
     public static ConsultationScenario resolve(ConsultationCategory category, String situation) {
@@ -18,8 +24,10 @@ public final class ConsultationScenarioResolver {
                     ? ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE : ConsultationScenario.UNKNOWN;
         }
         String value = situation.toLowerCase(Locale.ROOT);
-        if (containsAny(value, "내가 하지 않은 계좌", "제가 하지 않은 계좌", "본인이 하지 않은 계좌",
-                "내가 하지 않은", "제가 하지 않은", "본인이 하지 않은",
+        boolean explicitAccountTransfer = containsAny(value, "계좌이체", "계좌 이체", "계좌 출금", "무단이체", "무단 출금", "모르는 출금");
+        if (explicitAccountTransfer || containsAny(value,
+                "내가 하지 않은 계좌", "제가 하지 않은 계좌", "본인이 하지 않은 계좌",
+                "내가 하지 않은 계좌이체", "제가 하지 않은 계좌이체", "본인이 하지 않은 계좌이체",
                 "무단이체", "무단 출금", "모르는 계좌", "모르는 송금", "모르는 출금",
                 "하지 않은 출금", "제가 하지 않은 출금", "본인이 하지 않은 출금")) {
             return ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER;

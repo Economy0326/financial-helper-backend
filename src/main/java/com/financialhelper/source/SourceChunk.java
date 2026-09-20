@@ -19,8 +19,8 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
- * A persisted retrieval unit belonging to one immutable SourceDocument
- * version.  The UUID is the stable identity shared with an external index.
+ * 하나의 immutable SourceDocument version에 속하는 저장 retrieval unit이다.
+ * UUID는 외부 index와 공유하는 안정적인 identity다.
  */
 @Entity
 @Table(
@@ -106,7 +106,7 @@ public class SourceChunk {
     )
     private String locator;
 
-    // Java UTF-16 offsets into SourceDocument.normalizedContent.
+    // SourceDocument.normalizedContent에 대한 Java UTF-16 offset이다.
     @Column(
             name = "source_start_offset",
             nullable = false
@@ -282,7 +282,7 @@ public class SourceChunk {
             );
         }
 
-        // Do not split a UTF-16 surrogate pair.
+        // UTF-16 surrogate pair를 나누지 않는다.
         if (
                 Character.isLowSurrogate(
                         normalizedContent.charAt(startOffset)
@@ -458,10 +458,9 @@ public class SourceChunk {
     }
 
     /**
-     * Revoking approval makes the chunk unavailable to a later evidence
-     * query.  Existing index rows intentionally remain historical rows; a
-     * retrieval query must check this review status instead of treating READY
-     * as approval.
+     * 승인을 취소하면 이후 Evidence query에서 chunk를 사용할 수 없다. 기존 index
+     * row는 의도적으로 과거 기록으로 남으며 retrieval query는 READY를 승인으로
+     * 취급하지 않고 이 review status를 확인해야 한다.
      */
     public void revokeApproval(
             OffsetDateTime revokedAt

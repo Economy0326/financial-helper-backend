@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** HTTP boundary to the in-repository Python KURE runtime. */
+/** repository 내부 Python KURE runtime으로 향하는 HTTP 경계다. */
 @Component
 public class KureRuntimeHttpClient
         implements KureRuntimeClient, SourceChunkTokenizer {

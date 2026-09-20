@@ -4,7 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/** Immutable, consultation-scoped user context used as a retrieval input. */
+/** retrieval 입력으로 사용하는 consultation 범위의 immutable 사용자 context다. */
 public record ConfirmedCaseSnapshotData(
         UUID id,
         UUID consultationId,

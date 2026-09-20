@@ -38,9 +38,9 @@ public class SourceChunkPersistenceService {
     }
 
     /**
-     * Return an exact existing chunk or create it once.  A changed body or
-     * changed immutable metadata for the same document/config/sequence is a
-     * conflict and is never overwritten.
+     * 정확히 일치하는 기존 chunk를 반환하거나 한 번만 생성한다. 같은
+     * document/config/sequence의 body나 변경 불가능한 metadata가 달라지면
+     * 충돌로 처리하며 덮어쓰지 않는다.
      */
     @Transactional
     public SourceChunk saveIfAbsent(
@@ -61,9 +61,9 @@ public class SourceChunkPersistenceService {
                         definition.chunkConfigJson()
                 );
 
-        // Lock only the already persisted document row.  This gives all
-        // sequence/configuration writes for one document version a common DB
-        // serialization point without extending any HTTP transaction.
+        // 이미 저장된 document row만 lock한다. 하나의 document version에 대한 모든
+        // sequence/configuration write가 공통 DB lock을 사용하게 한다.
+        // HTTP transaction을 늘리지 않으면서 직렬화 지점으로 사용한다.
         SourceDocument lockedDocument =
                 sourceDocumentRepository
                         .findForUpdateById(sourceDocument.getId())

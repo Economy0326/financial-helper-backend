@@ -14,15 +14,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Converts only explicit user wording or typed follow-up values into the
- * small CARD fact vocabulary.  It deliberately does not infer facts from
- * retrieval text, AI explanations, or implied circumstances.
+ * 명시적인 사용자 표현이나 typed follow-up 값만 작은 CARD fact 어휘로 변환한다.
+ * retrieval 문장, AI 설명, 암시된 상황에서는 fact를 추론하지 않는다.
  */
 public final class CardCaseFactExtractor {
     public static final Set<String> ALLOWED_FACT_KEYS = Set.of(
             "institution", "productType", "cardLost", "unauthorizedPayment",
             "transactionType", "domestic", "reported", "incidentDate", "transactionDate",
-            "resultDisputed");
+            "compensationStatus", "resultDisputed");
 
     private static final Pattern DATE = Pattern.compile(
             "(20\\d{2})[.\\-/년](\\d{1,2})[.\\-/월](\\d{1,2})일?");
@@ -106,9 +105,15 @@ public final class CardCaseFactExtractor {
                         Integer.parseInt(matcher.group(3)));
                 target.put("incidentDate", date.toString());
             } catch (DateTimeException ignored) {
-                // Invalid dates remain absent and therefore UNKNOWN.
+                // 유효하지 않은 날짜는 값 없이 남으므로 UNKNOWN으로 처리된다.
             }
         }
+    }
+
+    /** 명시적인 미지원 product 표현을 신용카드 범위로 조용히 강제 변환해서는 안 된다. */
+    public static boolean hasExplicitUnsupportedProduct(String text) {
+        if (text == null) return false;
+        return containsAny(text, "체크카드", "선불카드", "법인카드", "가족카드");
     }
 
     private static String normalizeValue(String key, String value) {
@@ -129,6 +134,11 @@ public final class CardCaseFactExtractor {
                 return "FALSE";
             }
             return "UNKNOWN";
+        }
+        if ("compensationStatus".equals(key)) {
+            String normalized = trimmed.toUpperCase(Locale.ROOT).replace(" ", "_");
+            return Set.of("NOT_SUBMITTED", "SUBMITTED", "INVESTIGATING", "RESULT_RECEIVED", "UNKNOWN")
+                    .contains(normalized) ? normalized : "UNKNOWN";
         }
         if ("incidentDate".equals(key) || "transactionDate".equals(key)) {
             try {

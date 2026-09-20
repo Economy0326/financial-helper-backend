@@ -2,7 +2,7 @@ package com.financialhelper.retrieval;
 
 import java.util.UUID;
 
-/** A search-scoped handle; it is not itself an approved evidence snapshot. */
+/** 검색 범위의 handle이며 그 자체가 승인된 Evidence snapshot은 아니다. */
 public record OfficialEvidenceCandidate(
         UUID candidateId,
         UUID sourceChunkId,

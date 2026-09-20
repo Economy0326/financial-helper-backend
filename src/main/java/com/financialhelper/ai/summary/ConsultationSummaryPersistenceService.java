@@ -42,6 +42,9 @@ public class ConsultationSummaryPersistenceService {
     private final ConsultationSummaryRepository
             consultationSummaryRepository;
 
+    private final ConsultationSummaryFactService
+            summaryFactService;
+
     private final JsonMapper jsonMapper;
 
     public ConsultationSummaryPersistenceService(
@@ -49,6 +52,7 @@ public class ConsultationSummaryPersistenceService {
             GuestSessionService guestSessionService,
             FollowUpQuestionRepository followUpQuestionRepository,
             ConsultationSummaryRepository consultationSummaryRepository,
+            ConsultationSummaryFactService summaryFactService,
             JsonMapper jsonMapper
     ) {
         this.consultationRepository =
@@ -62,6 +66,8 @@ public class ConsultationSummaryPersistenceService {
 
         this.consultationSummaryRepository =
                 consultationSummaryRepository;
+
+        this.summaryFactService = summaryFactService;
 
         this.jsonMapper =
                 jsonMapper;
@@ -217,6 +223,15 @@ public class ConsultationSummaryPersistenceService {
             UUID consultationId,
             String rawToken
     ) {
+        return getState(consultationId, rawToken, false);
+    }
+
+    @Transactional(readOnly = true)
+    public ConsultationSummaryStateResponse getState(
+            UUID consultationId,
+            String rawToken,
+            boolean review
+    ) {
 
         Consultation consultation =
                 findOwnedConsultation(
@@ -224,21 +239,57 @@ public class ConsultationSummaryPersistenceService {
                         rawToken
                 );
 
-        ensureReadyForSummary(
-                consultation
-        );
-
-        return consultationSummaryRepository
+        Optional<ConsultationSummary> stored = consultationSummaryRepository
                 .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
                         consultation.getId(),
                         consultation.getCaseInputRevision(),
                         consultation.getFollowUpAnswerRevision()
-                )
-                .map(this::toDocument)
-                .map(ConsultationSummaryStateResponse::ready)
-                .orElseGet(
-                        ConsultationSummaryStateResponse::notPrepared
                 );
+
+        // GET은 read-only 조회 작업이다. 소유한 current-revision Summary가 있으면
+        // 후속 ANALYSIS/REPORT 상태가 저장 record를 상태 전환 요청으로 바꾸면 안 된다.
+        if (stored.isPresent()) {
+            return ConsultationSummaryStateResponse.ready(
+                    toDocument(stored.get()),
+                    summaryFactService.currentFacts(
+                            consultation.getId(),
+                            consultation.getCaseInputRevision(),
+                            consultation.getFollowUpAnswerRevision()));
+        }
+
+        // 실제로 Summary가 없을 때는 기존 prepare contract를 유지한다.
+        // URL 호환을 위해 `review`를 받지만 mutation 허용 범위를 넓히지는 않는다.
+        ensureReadyForSummary(consultation);
+        return ConsultationSummaryStateResponse.notPrepared();
+    }
+
+    private void ensureReadableSummaryReview(Consultation consultation) {
+        if (!isReadableReviewStatus(consultation)
+                || consultation.getCategory() == null
+                || consultation.getSituationText() == null
+                || consultation.getSituationText().isBlank()) {
+            throw new InvalidConsultationStateException();
+        }
+    }
+
+    private boolean isReadableReviewStep(Consultation consultation) {
+        return consultation.getCurrentStep() == ConsultationStep.ANALYSIS
+                || consultation.getCurrentStep() == ConsultationStep.REPORT;
+    }
+
+    private boolean isReadableReviewStatus(Consultation consultation) {
+        if (!isReadableReviewStep(consultation)) {
+            return false;
+        }
+
+        return switch (consultation.getStatus()) {
+            case IN_PROGRESS, ANALYZING, NEEDS_MORE_INFO,
+                    INSUFFICIENT_INFORMATION, FAILED ->
+                    consultation.getCurrentStep() == ConsultationStep.ANALYSIS;
+            case COMPLETED ->
+                    consultation.getCurrentStep() == ConsultationStep.REPORT;
+            case ABANDONED -> false;
+        };
     }
 
     @Transactional

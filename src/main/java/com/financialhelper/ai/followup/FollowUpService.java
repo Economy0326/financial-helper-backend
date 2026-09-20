@@ -140,8 +140,8 @@ public class FollowUpService {
             String rawToken
     ) {
 
-        // CARD WHAT is owned by the approved Procedure. The existing AI
-        // flow remains the fallback for legacy categories.
+        // CARD에서 무엇을 할지는 승인된 Procedure가 결정한다.
+        // 기존 AI flow는 legacy category의 fallback으로 유지한다.
         if (consultationRepository.findById(consultationId)
                 .map(consultation -> isProcedureBacked(consultation))
                 .orElse(false)) {

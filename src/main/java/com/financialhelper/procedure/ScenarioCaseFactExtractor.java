@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Shared explicit fact vocabulary for non-CARD procedure-backed scenarios. */
+/** CARD 이외의 Procedure 기반 scenario가 공유하는 명시적 fact 어휘다. */
 public final class ScenarioCaseFactExtractor {
     public static final Set<String> ALLOWED_FACT_KEYS = Set.of(
             "institution", "productType", "incidentDate", "transactionDate", "reported",
@@ -27,22 +27,46 @@ public final class ScenarioCaseFactExtractor {
         if (snapshot == null) return new CardCaseFacts(result);
         for (ConfirmedCaseSnapshotData.Fact fact : snapshot.facts()) {
             if (fact == null || fact.value() == null || fact.key() == null) continue;
-            if (ALLOWED_FACT_KEYS.contains(fact.key())) {
-                result.put(fact.key(), normalize(fact.key(), fact.value()));
+            String key = canonicalKey(fact.key());
+            if (ALLOWED_FACT_KEYS.contains(key)) {
+                result.put(key, normalize(key, fact.value()));
             }
             if ("SITUATION".equalsIgnoreCase(fact.type()) || "situationText".equals(fact.key())) {
                 extractExplicitText(fact.value(), result);
             }
         }
+        addAliasIfMissing(result, "reported", "reportedToFinancialInstitution");
+        addAliasIfMissing(result, "reportedToFinancialInstitution", "reported");
         return new CardCaseFacts(result);
     }
 
     public static CardCaseFacts fromValues(Map<String, String> values) {
         Map<String, String> result = new LinkedHashMap<>();
-        if (values != null) values.forEach((key, value) -> {
+        if (values != null) values.forEach((rawKey, value) -> {
+            String key = canonicalKey(rawKey);
             if (ALLOWED_FACT_KEYS.contains(key) && value != null) result.put(key, normalize(key, value));
         });
+        addAliasIfMissing(result, "reported", "reportedToFinancialInstitution");
+        addAliasIfMissing(result, "reportedToFinancialInstitution", "reported");
         return new CardCaseFacts(result);
+    }
+
+    /** 같은 의미의 structured answer 이름을 하나의 canonical 어휘로 유지한다. */
+    public static String canonicalKey(String rawKey) {
+        if (rawKey == null) return null;
+        return switch (rawKey.trim()) {
+            case "transferMade" -> "transferCompleted";
+            case "financialInstitutionReported" -> "reportedToFinancialInstitution";
+            default -> rawKey.trim();
+        };
+    }
+
+    private static void addAliasIfMissing(Map<String, String> values,
+                                          String canonical,
+                                          String alias) {
+        if (!values.containsKey(canonical) && values.containsKey(alias)) {
+            values.put(canonical, values.get(alias));
+        }
     }
 
     public static void extractExplicitText(String text, Map<String, String> target) {
@@ -56,7 +80,14 @@ public final class ScenarioCaseFactExtractor {
             target.put("userInitiatedTransfer", "FALSE");
         }
         if (containsAny(v, "상대방 지시", "속아서", "사기", "보이스피싱")) target.put("suspiciousTransfer", "TRUE");
-        if (containsAny(v, "내가 하지 않은", "본인이 하지 않은", "무단")) target.put("unauthorizedTransaction", "TRUE");
+        if (containsAny(v, "내가 하지 않은", "제가 하지 않은", "본인이 하지 않은", "무단")) {
+            target.put("unauthorizedTransaction", "TRUE");
+        }
+        if (containsAny(v, "계좌이체", "계좌 이체")) {
+            target.put("transactionType", "ACCOUNT_TRANSFER");
+        } else if (containsAny(v, "계좌 출금", "무단 출금", "모르는 출금")) {
+            target.put("transactionType", "ACCOUNT_WITHDRAWAL");
+        }
         if (containsAny(v, "신고 안", "신고하지 않았", "접수하지 않았", "아직 신고")) {
             target.put("reported", "FALSE");
             target.put("reportedToFinancialInstitution", "FALSE");

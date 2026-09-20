@@ -1,5 +1,6 @@
 import unittest
 import uuid
+from http import HTTPStatus
 
 from retrieval_runtime.runtime import (
     INDEX_BACKEND,
@@ -9,6 +10,7 @@ from retrieval_runtime.runtime import (
     _validate_build,
     ContractError,
     RuntimeEngine,
+    Handler,
 )
 
 
@@ -38,6 +40,20 @@ class ContractTest(unittest.TestCase):
     def test_query_contract_rejects_invalid_generation(self):
         with self.assertRaises(ContractError):
             RuntimeEngine._validate_query_payload({"generationId": "bad", "query": "카드"})
+
+    def test_client_disconnect_during_response_does_not_escape_send(self):
+        handler = object.__new__(Handler)
+        handler.send_response = lambda status: None
+        handler.send_header = lambda name, value: None
+        handler.end_headers = lambda: None
+
+        class DisconnectingWriter:
+            def write(self, data):
+                raise ConnectionAbortedError("client disconnected")
+
+        handler.wfile = DisconnectingWriter()
+        handler._send(HTTPStatus.OK, {"ready": True})
+        self.assertTrue(handler.close_connection)
 
 
 if __name__ == "__main__":

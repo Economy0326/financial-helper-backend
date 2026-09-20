@@ -1,9 +1,9 @@
 package com.financialhelper.source;
 
 /**
- * Immutable identity/configuration input for a retrieval generation.  The
- * fields remain model-agnostic so a later runtime can use KURE or another
- * representation without changing the source domain.
+ * retrieval generation의 변경 불가능한 identity/configuration 입력이다.
+ * 이후 runtime이 source domain을 바꾸지 않고 KURE나 다른 representation을
+ * 사용할 수 있도록 field는 model에 종속되지 않는다.
  */
 public final class RetrievalGenerationData {
 

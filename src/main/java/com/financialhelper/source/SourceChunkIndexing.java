@@ -19,9 +19,9 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
- * Mapping between one SourceChunk and one external retrieval generation.
- * READY here means the external index artifact accepted the chunk; it does
- * not replace the SourceChunk human review status.
+ * 하나의 SourceChunk와 외부 retrieval generation 사이의 mapping이다.
+ * 여기서 READY는 외부 index artifact가 chunk를 받았다는 뜻이며
+ * SourceChunk의 사람 review status를 대체하지 않는다.
  */
 @Entity
 @Table(
@@ -239,7 +239,7 @@ public class SourceChunkIndexing {
         markProcessing(OffsetDateTime.now(ZoneOffset.UTC));
     }
 
-    /** Start a new attempt, including after a partial READY result. */
+    /** partial READY 결과 이후를 포함해 새 attempt를 시작한다. */
     public void beginAttempt(OffsetDateTime processingAt) {
         if (indexingStatus != SourceChunkIndexingStatus.PENDING
                 && indexingStatus != SourceChunkIndexingStatus.FAILED
@@ -255,7 +255,7 @@ public class SourceChunkIndexing {
         updatedAt = timestamp;
     }
 
-    /** Allow a failed remote build to invalidate a partial READY result. */
+    /** 실패한 remote build가 partial READY 결과를 무효화할 수 있게 한다. */
     public void markFailedAfterAttempt(
             String failureReason,
             OffsetDateTime failedAt
@@ -278,9 +278,8 @@ public class SourceChunkIndexing {
     }
 
     /**
-     * Mapping readiness is gated by human review.  A READY index row remains
-     * historical if approval is later revoked; query code must check the
-     * current SourceChunk review status as well.
+     * Mapping readiness는 사람 검토로 제한한다. 이후 승인이 취소되면 READY index
+     * row는 과거 기록으로 남으며 query code는 현재 SourceChunk review status도 확인해야 한다.
      */
     public void markReady(
             OffsetDateTime readyAt,

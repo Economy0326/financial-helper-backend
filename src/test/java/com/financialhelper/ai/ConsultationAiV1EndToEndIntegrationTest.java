@@ -143,7 +143,7 @@ class ConsultationAiV1EndToEndIntegrationTest {
         stubAiResults();
 
         /*
-         * 1. Fact Extraction + Missing Info
+         * 1. fact 추출 + 부족한 정보
          */
         mockMvc.perform(
                         post(
@@ -233,7 +233,7 @@ class ConsultationAiV1EndToEndIntegrationTest {
                 );
 
         /*
-         * 5. Summary Confirm
+         * 5. Summary 확정
          */
         mockMvc.perform(
                         post(
@@ -250,7 +250,7 @@ class ConsultationAiV1EndToEndIntegrationTest {
                 );
 
         /*
-         * 6. Analysis Start
+         * 6. Analysis 시작
          */
         mockMvc.perform(
                         post(
@@ -338,9 +338,21 @@ class ConsultationAiV1EndToEndIntegrationTest {
                 understandingRepository.count()
         ).isEqualTo(1);
 
-        assertThat(
-                followUpQuestionRepository.count()
-        ).isEqualTo(1);
+        List<FollowUpQuestion> followUpQuestions =
+                followUpQuestionRepository
+                        .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                                latest.getId(),
+                                latest.getCaseInputRevision()
+                        );
+
+        // 이 fixture는 의도적으로 legacy AI V1 follow-up 경로를 검증한다.
+        // test database에는 다른 test의 질문이 있을 수 있으므로 assertion 범위를
+        // 해당 consultation과 revision으로 제한한다.
+        assertThat(followUpQuestions).hasSize(1);
+        assertThat(followUpQuestions.getFirst().getFactKey()).isNull();
+        assertThat(followUpQuestions.getFirst().getInputType()).isNull();
+        assertThat(followUpQuestions.getFirst().getQuestionIntent()).isNull();
+        assertThat(followUpQuestions.getFirst().getAnswerValue()).isEqualTo("YES");
 
         assertThat(
                 summaryRepository.count()

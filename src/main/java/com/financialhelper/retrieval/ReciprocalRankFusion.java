@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Deterministic rank-only fusion; semantic and keyword scores are never added. */
+/** 결정적인 rank-only fusion이며 semantic과 keyword score를 더하지 않는다. */
 public final class ReciprocalRankFusion {
     public static final int DEFAULT_K = 60;
 

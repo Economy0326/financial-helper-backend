@@ -8,7 +8,7 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
-/** Performs the single-row atomic active-generation switch. */
+/** 단일 row의 atomic active-generation 전환을 수행한다. */
 @Service
 public class ActiveRetrievalGenerationPersistenceService {
 

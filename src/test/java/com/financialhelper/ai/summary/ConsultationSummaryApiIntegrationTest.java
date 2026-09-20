@@ -14,6 +14,8 @@ import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionCookie;
 import com.financialhelper.guest.GuestSessionRepository;
 import com.financialhelper.guest.GuestSessionTokenService;
+import com.financialhelper.retrieval.ConfirmedCaseSnapshot;
+import com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository;
 
 import jakarta.servlet.http.Cookie;
 
@@ -71,6 +73,9 @@ class ConsultationSummaryApiIntegrationTest {
     private ConsultationSummaryRepository consultationSummaryRepository;
 
     @Autowired
+    private ConfirmedCaseSnapshotRepository confirmedCaseSnapshotRepository;
+
+    @Autowired
     private GuestSessionTokenService tokenService;
 
     @MockitoBean
@@ -99,6 +104,23 @@ class ConsultationSummaryApiIntegrationTest {
                         guest.session()
                 );
 
+        confirmedCaseSnapshotRepository.saveAllAndFlush(List.of(
+                new ConfirmedCaseSnapshot(
+                        consultation,
+                        consultation.getCaseInputRevision() - 1,
+                        consultation.getFollowUpAnswerRevision(),
+                        "[{\"type\":\"FOLLOW_UP\",\"key\":\"cardLost\",\"value\":\"FALSE\",\"label\":null,\"source\":\"USER_ANSWERED\",\"questionId\":null}]",
+                        "[]",
+                        OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1)),
+                new ConfirmedCaseSnapshot(
+                        consultation,
+                        consultation.getCaseInputRevision(),
+                        consultation.getFollowUpAnswerRevision(),
+                        "[{\"type\":\"FOLLOW_UP\",\"key\":\"institution\",\"value\":\"㈜KB국민카드\",\"label\":null,\"source\":\"USER_ANSWERED\",\"questionId\":null},{\"type\":\"FOLLOW_UP\",\"key\":\"cardLost\",\"value\":\"TRUE\",\"label\":null,\"source\":\"USER_ANSWERED\",\"questionId\":null},{\"type\":\"SITUATION\",\"key\":\"situationText\",\"value\":\"문장형 사용자 입력\",\"label\":null,\"source\":\"USER_STATED\",\"questionId\":null}]",
+                        "[\"reported\"]",
+                        OffsetDateTime.now(ZoneOffset.UTC)))
+        );
+
         when(
                 openAiStructuredClient
                         .generateStructured(
@@ -124,7 +146,12 @@ class ConsultationSummaryApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kind").value("ready"))
                 .andExpect(jsonPath("$.summary.headline").value("보험 해지환급금 관련 상담"))
-                .andExpect(jsonPath("$.summary.keyPoints.length()").value(3));
+                .andExpect(jsonPath("$.summary.keyPoints.length()").value(3))
+                .andExpect(jsonPath("$.summary.facts.length()").value(2))
+                .andExpect(jsonPath("$.summary.facts[0].key").value("institution"))
+                .andExpect(jsonPath("$.summary.facts[0].displayValue").value("KB국민카드"))
+                .andExpect(jsonPath("$.summary.facts[1].key").value("cardLost"))
+                .andExpect(jsonPath("$.summary.facts[1].displayValue").value("분실함"));
 
         mockMvc.perform(
                         post(
@@ -184,6 +211,27 @@ class ConsultationSummaryApiIntegrationTest {
                 ConsultationStep.ANALYSIS
         );
 
+        // confirm 전환이 ANALYSIS에 도달하는 동안 Frontend의 일반 GET이 진행 중일 수 있다.
+        // 409 상태 mutation guard가 아니라 저장된 Summary의 read-only 조회로 유지해야 한다.
+        mockMvc.perform(
+                        get("/api/v1/consultations/{id}/summary", consultation.getId())
+                                .cookie(guest.cookie())
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"))
+                .andExpect(jsonPath("$.summary.keyPoints.length()").value(3))
+                .andExpect(jsonPath("$.summary.facts.length()").value(2));
+
+        TestGuest foreignGuest = createGuest();
+        mockMvc.perform(
+                        get(
+                                "/api/v1/consultations/{id}/summary",
+                                consultation.getId()
+                        )
+                                .cookie(foreignGuest.cookie())
+                )
+                .andExpect(status().isNotFound());
+
         ConsultationSummary savedSummary =
                 consultationSummaryRepository
                         .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
@@ -198,8 +246,41 @@ class ConsultationSummaryApiIntegrationTest {
         ).isNotNull();
     }
 
+    @Test
+    void failedAnalysisCanReadTheSavedSummaryWithoutMutatingState()
+            throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createSummaryReadyConsultation(guest.session());
+
+        when(openAiStructuredClient.generateStructured(
+                anyString(), anyString(), eq(ConsultationSummaryAiResult.class)))
+                .thenReturn(createSummaryResult());
+
+        mockMvc.perform(
+                        post("/api/v1/consultations/{id}/summary/prepare", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"));
+
+        consultation.moveToAnalysis(OffsetDateTime.now(ZoneOffset.UTC));
+        consultation.markAnalysisFailed(OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.save(consultation);
+
+        mockMvc.perform(
+                        get("/api/v1/consultations/{id}/summary", consultation.getId())
+                                .cookie(guest.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("ready"));
+
+        Consultation unchanged = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(unchanged.getStatus()).isEqualTo(com.financialhelper.consultation.ConsultationStatus.FAILED);
+        assertThat(unchanged.getCurrentStep()).isEqualTo(ConsultationStep.ANALYSIS);
+    }
+
     private void cleanDatabase() {
         consultationSummaryRepository.deleteAll();
+        confirmedCaseSnapshotRepository.deleteAll();
         followUpQuestionRepository.deleteAll();
         consultationRepository.deleteAll();
         guestSessionRepository.deleteAll();

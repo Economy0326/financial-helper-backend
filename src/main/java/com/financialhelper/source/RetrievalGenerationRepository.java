@@ -31,9 +31,9 @@ public interface RetrievalGenerationRepository
     );
 
     /**
-     * Serialize first-writer-wins creation at the database unique key.  The
-     * persistence service compares the immutable definition after this
-     * statement, so a reused key with changed configuration is rejected.
+     * database unique key에서 먼저 쓴 요청이 이기도록 생성을 직렬화한다.
+     * 이후 persistence service가 변경 불가능한 정의를 비교하므로,
+     * 설정을 바꾼 채 key를 재사용하면 거부된다.
      */
     @Modifying(flushAutomatically = true)
     @Query(
