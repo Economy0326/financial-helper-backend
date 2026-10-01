@@ -5,6 +5,7 @@ import java.util.UUID;
 public record UpdateConsultationSituationResponse(
         UUID consultationId,
         ConsultationStep currentStep,
+        long caseInputRevision,
         ScenarioAlignment scenarioAlignment,
         ConsultationScenario selectedScenario,
         ConsultationScenario suggestedScenario
@@ -31,6 +32,7 @@ public record UpdateConsultationSituationResponse(
             alignment = ScenarioAlignment.SELECTED_SCENARIO_MATCH;
         }
         return new UpdateConsultationSituationResponse(consultation.getId(), consultation.getCurrentStep(),
+                consultation.getCaseInputRevision(),
                 alignment, selected, suggested);
     }
 }

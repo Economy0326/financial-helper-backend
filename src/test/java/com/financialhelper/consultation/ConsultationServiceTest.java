@@ -160,6 +160,7 @@ class ConsultationServiceTest {
         ).isEqualTo(
                 ConsultationStep.FOLLOW_UP
         );
+        assertThat(response.caseInputRevision()).isEqualTo(consultation.getCaseInputRevision());
     }
 
     @Test
@@ -178,6 +179,7 @@ class ConsultationServiceTest {
         assertThat(response.scenarioAlignment()).isEqualTo(ScenarioAlignment.SUPPORTED_SCENARIO_MISMATCH);
         assertThat(response.selectedScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
         assertThat(response.suggestedScenario()).isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(response.caseInputRevision()).isEqualTo(consultation.getCaseInputRevision());
         assertThat(consultation.getScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
     }
 
@@ -187,11 +189,14 @@ class ConsultationServiceTest {
         Consultation consultation = new Consultation(guestSession, now);
         consultation.updateCategory(ConsultationCategory.CARD,
                 ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
-        consultation.updateSituation("모르는 사람이 전화로 시키는 대로 돈을 송금했어요.", now.plusSeconds(1));
-        long expectedRevision = consultation.getCaseInputRevision();
         when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
         when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId))
                 .thenReturn(Optional.of(consultation));
+
+        UpdateConsultationSituationResponse situationResponse = consultationService.updateSituation(
+                consultationId, rawToken,
+                new UpdateConsultationSituationRequest("모르는 사람이 전화로 시키는 대로 돈을 송금했어요."));
+        long expectedRevision = situationResponse.caseInputRevision();
 
         ConfirmSuggestedScenarioResponse response = consultationService.confirmSuggestedScenario(
                 consultationId, rawToken, new ConfirmSuggestedScenarioRequest(
