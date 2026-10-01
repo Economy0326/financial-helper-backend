@@ -76,8 +76,25 @@ class ConsultationSummaryFactServiceTest {
                 .thenReturn(Optional.of(snapshot));
 
         assertThat(service.currentFacts(consultationId, 2L, 1L))
-                .containsExactly(new ConsultationSummaryStateResponse.Fact(
-                        "cardLost", "카드 상태", "FALSE", "가지고 있음"));
+                .extracting(ConsultationSummaryStateResponse.Fact::key)
+                .containsExactly("institution", "transactionType", "cardLost");
+    }
+
+    @Test
+    void includesCurrentBreadthFactsAndUnknownWithDisplayValues() {
+        ConfirmedCaseSnapshotService snapshotService = mock(ConfirmedCaseSnapshotService.class);
+        ConsultationSummaryFactService service = new ConsultationSummaryFactService(snapshotService);
+        UUID consultationId = UUID.randomUUID();
+        when(snapshotService.findCurrent(consultationId, 3L, 2L)).thenReturn(Optional.of(
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), consultationId, 3L, 2L,
+                        List.of(fact("suspiciousTransfer", "TRUE"),
+                                fact("transferCompleted", "UNKNOWN"),
+                                fact("scenario", "VOICE_PHISHING_SUSPICIOUS_TRANSFER")),
+                        List.of(), OffsetDateTime.now())));
+
+        assertThat(service.currentFacts(consultationId, 3L, 2L))
+                .extracting(ConsultationSummaryStateResponse.Fact::displayValue)
+                .containsExactly("예", "잘 모르겠음");
     }
 
     private ConfirmedCaseSnapshotData.Fact fact(String key, String value) {

@@ -13,14 +13,15 @@ public record StructuredFollowUpStateResponse(
         Question question,
         Integer currentQuestionNumber,
         Integer totalQuestions,
-        String savedAnswer
+        String savedAnswer,
+        String unsupportedReason
 ) {
     public StructuredFollowUpStateResponse {
         missingFacts = missingFacts == null ? List.of() : List.copyOf(missingFacts);
     }
 
     public static StructuredFollowUpStateResponse complete(long revision) {
-        return new StructuredFollowUpStateResponse("complete", revision, List.of(), null, null, null, null);
+        return new StructuredFollowUpStateResponse("complete", revision, List.of(), null, null, null, null, null);
     }
 
     public static StructuredFollowUpStateResponse question(
@@ -45,7 +46,17 @@ public record StructuredFollowUpStateResponse(
                         parseInputType(entity.getInputType()), options,
                         entity.getQuestionText(), entity.getDescription(),
                         entity.isRequiredForDecision(), entity.getQuestionIntent()),
-                entity.getSequenceNo(), total, entity.getAnswerValue());
+                entity.getSequenceNo(), total, entity.getAnswerValue(), null);
+    }
+
+    public static StructuredFollowUpStateResponse unsupported(
+            FollowUpQuestion entity, List<FollowUpQuestionSpec.Option> options,
+            int total, String reason
+    ) {
+        StructuredFollowUpStateResponse question = question(entity, options, total, List.of());
+        return new StructuredFollowUpStateResponse("unsupported", question.caseInputRevision(),
+                List.of(), question.question(), question.currentQuestionNumber(),
+                question.totalQuestions(), question.savedAnswer(), reason);
     }
 
     public record Question(

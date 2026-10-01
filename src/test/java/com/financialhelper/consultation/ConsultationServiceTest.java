@@ -161,6 +161,25 @@ class ConsultationServiceTest {
         );
     }
 
+    @Test
+    void keepsSelectedScenarioAndReturnsSupportedMismatchSuggestion() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD,
+                ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId))
+                .thenReturn(Optional.of(consultation));
+
+        UpdateConsultationSituationResponse response = consultationService.updateSituation(consultationId,
+                rawToken, new UpdateConsultationSituationRequest("모르는 사람이 전화로 시키는 대로 돈을 송금했어요."));
+
+        assertThat(response.scenarioAlignment()).isEqualTo(ScenarioAlignment.SUPPORTED_SCENARIO_MISMATCH);
+        assertThat(response.selectedScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+        assertThat(response.suggestedScenario()).isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(consultation.getScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+    }
+
     // Ownership 조회 실패
     @Test
     void hidesConsultationWhenOwnershipDoesNotMatch() {

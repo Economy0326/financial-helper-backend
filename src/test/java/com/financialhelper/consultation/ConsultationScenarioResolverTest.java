@@ -39,4 +39,34 @@ class ConsultationScenarioResolverTest {
                 "카드도 있지만 제가 하지 않은 계좌이체가 있어요."))
                 .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
     }
+
+    @Test
+    void phoneDirectedTransferIsVoicePhishingRatherThanUnsupportedCardScope() {
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.CARD,
+                "모르는 사람이 전화해서 시키는 대로 계좌이체했어요."))
+                .isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+    }
+
+    @Test
+    void explicitCoercionOutranksGenericTransferTermsButNotAnUnauthorizedConflict() {
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "상대방 지시에 따라 돈을 송금했어요."))
+                .isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "통장에서 모르는 출금이 발견됐어요."))
+                .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "보이스피싱인지 모르겠지만 제가 하지 않은 계좌이체가 있어요."))
+                .isEqualTo(ConsultationScenario.UNKNOWN);
+    }
+
+    @Test
+    void domesticModifierDoesNotTurnAnExplicitUnauthorizedTransferIntoAmbiguity() {
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "제가 하지 않은 국내 계좌이체가 있어요."))
+                .isEqualTo(ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        assertThat(ConsultationScenarioResolver.resolve(ConsultationCategory.FINANCIAL_FRAUD,
+                "모르는 사람이 전화로 시키는 대로 계좌이체했어요."))
+                .isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+    }
 }

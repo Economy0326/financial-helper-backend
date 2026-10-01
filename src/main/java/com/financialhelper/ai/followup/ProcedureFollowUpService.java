@@ -42,6 +42,8 @@ public class ProcedureFollowUpService {
     }
 
     public StructuredFollowUpStateResponse prepare(UUID consultationId, String rawToken) {
+        StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
+        if (unsupported != null) return unsupported;
         refresh(consultationId, rawToken);
         List<FollowUpQuestion> current = currentQuestions(consultationId);
         return current.isEmpty()
@@ -56,6 +58,8 @@ public class ProcedureFollowUpService {
     }
 
     public StructuredFollowUpStateResponse getState(UUID consultationId, String rawToken) {
+        StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
+        if (unsupported != null) return unsupported;
         refresh(consultationId, rawToken);
         List<FollowUpQuestion> current = currentQuestions(consultationId);
         return current.isEmpty()
@@ -81,9 +85,11 @@ public class ProcedureFollowUpService {
             UUID consultationId,
             UUID questionId,
             String rawToken,
-            UpdateFollowUpAnswerRequest request
+        UpdateFollowUpAnswerRequest request
     ) {
         persistenceService.saveAnswer(consultationId, questionId, rawToken, request.answer(), true);
+        StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
+        if (unsupported != null) return unsupported;
         refresh(consultationId, rawToken);
         return getState(consultationId, rawToken);
     }
@@ -150,6 +156,35 @@ public class ProcedureFollowUpService {
                 .distinct()
                 .toList();
         return StructuredFollowUpStateResponse.question(target, options, questions.size(), missingFacts);
+    }
+
+    /** Explicit CARD boundary values stop the flow before any later procedure/evidence work. */
+    private StructuredFollowUpStateResponse unsupportedState(UUID consultationId) {
+        Consultation consultation = consultationRepository.findById(consultationId).orElse(null);
+        if (consultation == null || com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
+                != com.financialhelper.consultation.ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) return null;
+        List<FollowUpQuestion> questions = currentQuestions(consultationId);
+        for (FollowUpQuestion question : questions) {
+            if (!question.isAnswered()) continue;
+            String value = question.getAnswerValue();
+            String reason = switch (question.getFactKey()) {
+                case "institution" -> isSupportedInstitution(value) ? null : "CARD_INSTITUTION_UNSUPPORTED";
+                case "productType" -> "PERSONAL_CREDIT_CARD".equals(value) || "UNKNOWN".equals(value)
+                        ? null : "CARD_PRODUCT_UNSUPPORTED";
+                case "domestic" -> "FALSE".equals(value) ? "CARD_TRANSACTION_SCOPE_UNSUPPORTED" : null;
+                case "transactionType" -> "CREDIT_SALE".equals(value) || "UNKNOWN".equals(value)
+                        ? null : "CARD_TRANSACTION_SCOPE_UNSUPPORTED";
+                default -> null;
+            };
+            if (reason != null) return StructuredFollowUpStateResponse.unsupported(question,
+                    readOptions(question), questions.size(), reason);
+        }
+        return null;
+    }
+
+    private boolean isSupportedInstitution(String value) {
+        return "KB_KOOKMIN_CARD".equals(value) || "㈜KB국민카드".equals(value)
+                || "UNKNOWN".equals(value);
     }
 
     private List<FollowUpQuestionSpec.Option> readOptions(FollowUpQuestion question) {

@@ -173,4 +173,78 @@ class ProcedureFollowUpApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.question.inputType").value("YES_NO_UNKNOWN"));
     }
+
+    @Test
+    void explicitUnsupportedCardBoundaryStopsAndSameQuestionCanRecover() throws Exception {
+        String rawToken = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("카드를 잃어버렸어요.", now.plusSeconds(2));
+        consultation = consultationRepository.saveAndFlush(consultation);
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
+
+        mockMvc.perform(post("/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
+                        .cookie(cookie).with(csrf()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.question.factKey").value("institution"));
+        FollowUpQuestion institution = questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(consultation.getId(), consultation.getCaseInputRevision()).getFirst();
+
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), institution.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json").content("{\"answer\":\"OTHER\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.kind").value("unsupported"))
+                .andExpect(jsonPath("$.unsupportedReason").value("CARD_INSTITUTION_UNSUPPORTED"))
+                .andExpect(jsonPath("$.question.id").value(institution.getId().toString()))
+                .andExpect(jsonPath("$.totalQuestions").value(1));
+
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), institution.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json").content("{\"answer\":\"KB_KOOKMIN_CARD\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.kind").value("question"))
+                .andExpect(jsonPath("$.question.factKey").value("productType"));
+    }
+
+    @Test
+    void unsupportedProductKeepsQuestionAndSupportedCorrectionRecovers() throws Exception {
+        BoundaryFixture fixture = boundaryFixture("productType", "ENUM_SELECT",
+                "{\"options\":[{\"value\":\"PERSONAL_CREDIT_CARD\",\"label\":\"신용\",\"description\":\"\"},{\"value\":\"OTHER\",\"label\":\"기타\",\"description\":\"\"}]}");
+        answer(fixture, "OTHER").andExpect(jsonPath("$.kind").value("unsupported"))
+                .andExpect(jsonPath("$.unsupportedReason").value("CARD_PRODUCT_UNSUPPORTED"))
+                .andExpect(jsonPath("$.question.id").value(fixture.question().getId().toString()));
+        answer(fixture, "PERSONAL_CREDIT_CARD").andExpect(jsonPath("$.kind").value("question"));
+    }
+
+    @Test
+    void overseasScopeKeepsItsCurrentQuestion() throws Exception {
+        BoundaryFixture domestic = boundaryFixture("domestic", "YES_NO_UNKNOWN",
+                "{\"options\":[{\"value\":\"TRUE\",\"label\":\"국내\",\"description\":\"\"},{\"value\":\"FALSE\",\"label\":\"해외\",\"description\":\"\"}]}");
+        answer(domestic, "FALSE").andExpect(jsonPath("$.kind").value("unsupported"))
+                .andExpect(jsonPath("$.unsupportedReason").value("CARD_TRANSACTION_SCOPE_UNSUPPORTED"));
+    }
+
+    @Test
+    void unsupportedTransactionTypeKeepsItsCurrentQuestion() throws Exception {
+        BoundaryFixture transaction = boundaryFixture("transactionType", "ENUM_SELECT",
+                "{\"options\":[{\"value\":\"CREDIT_SALE\",\"label\":\"결제\",\"description\":\"\"},{\"value\":\"CARD_LOAN\",\"label\":\"대출\",\"description\":\"\"}]}");
+        answer(transaction, "CARD_LOAN").andExpect(jsonPath("$.kind").value("unsupported"))
+                .andExpect(jsonPath("$.unsupportedReason").value("CARD_TRANSACTION_SCOPE_UNSUPPORTED"))
+                .andExpect(jsonPath("$.question.id").value(transaction.question().getId().toString()));
+    }
+
+    private BoundaryFixture boundaryFixture(String factKey, String inputType, String options) {
+        String rawToken = tokenService.generateRawToken(); OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now); consultation.updateCategory(ConsultationCategory.CARD, now);
+        consultation.updateSituation("카드를 잃어버렸어요.", now.plusSeconds(1)); consultation = consultationRepository.saveAndFlush(consultation);
+        FollowUpQuestion question = questionRepository.save(new FollowUpQuestion(consultation, consultation.getCaseInputRevision(), 1,
+                "질문", "", options, "BACKEND_PROCEDURE", now, factKey, inputType, true, "TEST"));
+        return new BoundaryFixture(new Cookie(GuestSessionCookie.NAME, rawToken), question);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions answer(BoundaryFixture fixture, String value) throws Exception {
+        return mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), fixture.question().getId())
+                .cookie(fixture.cookie()).with(csrf()).contentType("application/json").content("{\"answer\":\"" + value + "\"}"));
+    }
+
+    private record BoundaryFixture(Cookie cookie, FollowUpQuestion question) {}
 }
