@@ -278,6 +278,30 @@ class ConsultationSummaryApiIntegrationTest {
         assertThat(unchanged.getCurrentStep()).isEqualTo(ConsultationStep.ANALYSIS);
     }
 
+    @Test
+    void doesNotReusePreviousRevisionSummaryAfterCaseRevisionChanges() throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createSummaryReadyConsultation(guest.session());
+        when(openAiStructuredClient.generateStructured(anyString(), anyString(), eq(ConsultationSummaryAiResult.class)))
+                .thenReturn(createSummaryResult());
+        mockMvc.perform(post("/api/v1/consultations/{id}/summary/prepare", consultation.getId())
+                        .cookie(guest.cookie()).with(csrf()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.kind").value("ready"));
+        long oldRevision = consultation.getCaseInputRevision();
+        long followUpRevision = consultation.getFollowUpAnswerRevision();
+        assertThat(consultationSummaryRepository
+                .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                        consultation.getId(), oldRevision, followUpRevision)).isPresent();
+
+        consultation.updateSituation("수정된 상담 내용", OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.saveAndFlush(consultation);
+
+        assertThat(consultationSummaryRepository
+                .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                        consultation.getId(), consultation.getCaseInputRevision(),
+                        consultation.getFollowUpAnswerRevision())).isEmpty();
+    }
+
     private void cleanDatabase() {
         consultationSummaryRepository.deleteAll();
         confirmedCaseSnapshotRepository.deleteAll();

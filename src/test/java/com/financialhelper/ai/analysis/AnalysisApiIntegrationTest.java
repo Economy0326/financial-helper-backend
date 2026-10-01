@@ -675,6 +675,27 @@ class AnalysisApiIntegrationTest {
         );
     }
 
+    @Test
+    void doesNotReusePreviousRevisionAnalysisAfterCaseRevisionChanges() throws Exception {
+        TestContext context = createAnalysisReadyConsultation();
+        Consultation consultation = context.consultation();
+        long oldCaseRevision = consultation.getCaseInputRevision();
+        long oldFollowUpRevision = consultation.getFollowUpAnswerRevision();
+        AnalysisJob oldJob = analysisJobRepository.saveAndFlush(new AnalysisJob(consultation,
+                oldCaseRevision, oldFollowUpRevision, "gpt-5.6-luna", OffsetDateTime.now(ZoneOffset.UTC)));
+
+        assertThat(analysisJobRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), oldCaseRevision, oldFollowUpRevision))
+                .map(AnalysisJob::getId).contains(oldJob.getId());
+
+        consultation.updateSituation("수정된 상담 내용", OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.saveAndFlush(consultation);
+
+        assertThat(analysisJobRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), consultation.getCaseInputRevision(),
+                consultation.getFollowUpAnswerRevision())).isEmpty();
+    }
+
     private AnalysisAiResult readyForReport() {
 
         AnalysisAiResult result =

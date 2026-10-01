@@ -7,6 +7,7 @@ import com.financialhelper.account.AccountSessionService;
 import com.financialhelper.account.AccountConsultationQuotaService;
 import com.financialhelper.account.AccountRepository;
 import com.financialhelper.procedure.CardCaseFactExtractor;
+import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
@@ -32,6 +33,7 @@ public class ConsultationService {
     private final AccountProperties accountProperties;
     private final AccountConsultationQuotaService consultationQuotaService;
     private final AccountRepository accountRepository;
+    private final FollowUpQuestionRepository followUpQuestionRepository;
 
     @Autowired
     public ConsultationService(
@@ -40,7 +42,7 @@ public class ConsultationService {
             AccountSessionService accountSessionService,
             AccountProperties accountProperties,
             AccountConsultationQuotaService consultationQuotaService,
-            AccountRepository accountRepository
+            AccountRepository accountRepository, FollowUpQuestionRepository followUpQuestionRepository
     ) {
         this.consultationRepository = consultationRepository;
         this.guestSessionService = guestSessionService;
@@ -48,6 +50,7 @@ public class ConsultationService {
         this.accountProperties = accountProperties;
         this.consultationQuotaService = consultationQuotaService;
         this.accountRepository = accountRepository;
+        this.followUpQuestionRepository = followUpQuestionRepository;
     }
 
     /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
@@ -58,7 +61,7 @@ public class ConsultationService {
             AccountProperties accountProperties
     ) {
         this(consultationRepository, guestSessionService, accountSessionService,
-                accountProperties, null, null);
+                accountProperties, null, null, null);
     }
 
     /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
@@ -66,7 +69,7 @@ public class ConsultationService {
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService
     ) {
-        this(consultationRepository, guestSessionService, null, null, null, null);
+        this(consultationRepository, guestSessionService, null, null, null, null, null);
     }
 
     private static final Set<ConsultationStep>
@@ -291,6 +294,31 @@ public class ConsultationService {
             UpdateConsultationSituationRequest request
     ) {
         return updateSituation(consultationId, rawToken, request, false);
+    }
+
+    @Transactional
+    public ConfirmSuggestedScenarioResponse confirmSuggestedScenario(UUID consultationId, String rawToken,
+            ConfirmSuggestedScenarioRequest request) {
+        Consultation consultation = findOwnedConsultation(consultationId,
+                guestSessionService.requireValidSession(rawToken));
+        if (consultation.getCaseInputRevision() != request.expectedCaseInputRevision()) {
+            throw new InvalidConsultationStateException();
+        }
+        ConsultationScenario detected = ConsultationScenarioResolver.resolve(consultation.getCategory(),
+                consultation.getSituationText());
+        if (consultation.getScenario() == null || consultation.getScenario() == ConsultationScenario.UNKNOWN
+                || detected == ConsultationScenario.UNKNOWN || detected != request.scenario()
+                || consultation.getScenario() == detected) {
+            throw new InvalidConsultationStateException();
+        }
+        if (followUpQuestionRepository != null) {
+            followUpQuestionRepository.deleteAll(followUpQuestionRepository
+                    .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(consultationId,
+                            consultation.getCaseInputRevision()));
+        }
+        consultation.confirmSuggestedScenario(detected, OffsetDateTime.now(ZoneOffset.UTC));
+        return new ConfirmSuggestedScenarioResponse(detected, ScenarioAlignment.SELECTED_SCENARIO_MATCH,
+                consultation.getCaseInputRevision(), consultation.getCurrentStep());
     }
 
     @Transactional

@@ -138,4 +138,11 @@ public class ConsultationController {
                 explicitEdit
         );
     }
+
+    @PostMapping("/{id}/scenario/confirm")
+    public ConfirmSuggestedScenarioResponse confirmSuggestedScenario(@PathVariable UUID id,
+            @CookieValue(name = GuestSessionCookie.NAME, required = false) String rawToken,
+            @Valid @RequestBody ConfirmSuggestedScenarioRequest request) {
+        return consultationService.confirmSuggestedScenario(id, rawToken, request);
+    }
 }
