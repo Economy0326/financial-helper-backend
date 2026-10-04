@@ -42,12 +42,29 @@ AI는 승인된 행동과 근거를 사용자가 이해하기 쉬운 문장으�
 행동, 기한, 금액, 연락처, 필요 서류, 법 적용을
 AI가 임의로 만들어낼 수 없습니다.
 
+선택한 상담 유형과 입력한 Situation이 다른 지원 Scenario에 더 가까운 경우
+Backend가 `suggestedScenario`를 반환하며,
+사용자가 명시적으로 확인한 경우에만 Scenario를 변경합니다.
+
+자동 Scenario 전환은 하지 않습니다.
+
 ## Confirmed Facts
 
 사용자가 명시적으로 확인한 사실만 `ConfirmedCaseSnapshot`에 저장합니다.
 
 `UNKNOWN`도 정상적인 domain value로 유지하며,
 같은 핵심 사실을 반복해서 묻거나 AI 추론으로 값을 채우지 않습니다.
+
+같은 핵심 사실을 한 번 더 쉽게 확인한 뒤에도 `UNKNOWN`이면
+`ActionDependencyEvaluator`가 현재 Procedure와 confirmed facts를 기준으로
+남아 있는 approved Action 후보를 평가합니다.
+
+실행 가능한 Action이 남아 있으면 필요한 질문만 계속하고,
+Action 후보가 없으면 불필요한 downstream 질문을 이어가지 않고
+`insufficient_information`으로 종료합니다.
+
+지원하지 않는 기관·상품·범위는 `UNKNOWN`과 구분해
+같은 질문에서 명시적인 unsupported 상태로 처리합니다.
 
 Situation과 Follow-up이 변경되면 revision을 갱신하고,
 이전 revision의 Summary / Analysis / Report를 현재 결과로 재사용하지 않습니다.
@@ -88,6 +105,22 @@ READY chunks: `117`
 사건 기준일과 법령 시행일을 비교해 검토된 version만 사용하며,
 법령 identity나 적용 시점을 확인할 수 없으면 fail closed 처리합니다.
 
+법령명이 개정 과정에서 변경되더라도
+검색 단계에서 확인된 동일 `lawId` family 안에서
+MST, 시행일, 공포일, 조문 locator와 reviewed identity를 검증합니다.
+
+법령명 문자열이 같다는 이유만으로 신뢰하거나,
+새로운 MST를 자동으로 승인하지 않습니다.
+
+공식 근거 검증 실패는 안전한 public reason으로 구분합니다.
+
+- `REVIEW_REQUIRED` — 공식 version은 확인됐지만 아직 reviewed identity가 아님
+- `TEMPORARY_UNAVAILABLE` — 외부 API / network 등 일시적인 조회 문제
+- `COVERAGE_GAP` — 현재 Procedure / Action에 필요한 approved evidence가 부족함
+
+실제 unreviewed law version은 계속 fail closed 처리하며,
+reviewed evidence 없이 AI Analysis를 실행하지 않습니다.
+
 ## Supported Scope
 
 - KB국민카드 개인 본인 신용카드의 국내 분실·도난 / 본인 아닌 결제
@@ -98,6 +131,9 @@ READY chunks: `117`
 
 공식 Procedure나 Evidence가 없는 범위는
 다른 Scenario의 근거를 섞지 않고 unsupported / coverage gap으로 처리합니다.
+
+지원 Scenario 간에도 Procedure / Evidence를 임의로 공유하지 않으며,
+각 Scenario의 approved Action dependency를 기준으로 결과를 생성합니다.
 
 ## Authentication / Security
 
@@ -153,6 +189,19 @@ gradlew.bat clean build --no-daemon
 CARD와 지원 Scenario는
 PostgreSQL → Retrieval → Procedure → Law Evidence → OpenAI → Stored Report까지
 grounded E2E로 검증했습니다.
+
+최종 Browser QA에서는 다음 주요 흐름을 확인했습니다.
+
+- CARD supported happy path
+- CARD → Voice phishing Scenario mismatch confirm
+- explicit unsupported same-question recovery
+- fatal `UNKNOWN` early stop / answer recovery
+- Voice phishing Analysis → Stored Report
+- Unauthorized account transfer 기본 flow
+- Smishing Summary / Analysis / Report
+- Scenario별 Follow-up / Evidence isolation
+
+Backend 전체 `clean test`와 `clean build`도 최종 통과했습니다.
 
 ## Links
 
