@@ -422,6 +422,52 @@ class ConsultationApiIntegrationTest {
         assertThat(saved.getSituationText()).isEqualTo("실패 후 수정한 상황");
     }
 
+    @Test
+    void confirmsSuggestedScenarioUsingTheSituationResponseRevision() throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createConsultation(guest.session());
+
+        mockMvc.perform(
+                        put("/api/v1/consultations/{id}/category", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"category\":\"CARD\",\"scenario\":\"CARD_LOSS_UNAUTHORIZED_USE\"}"))
+                .andExpect(status().isOk());
+
+        MvcResult situationResult = mockMvc.perform(
+                        put("/api/v1/consultations/{id}/situation", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"situationText\":\"모르는 사람이 시키는 대로 돈을 송금했어요.\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scenarioAlignment").value("SUPPORTED_SCENARIO_MISMATCH"))
+                .andExpect(jsonPath("$.suggestedScenario").value("VOICE_PHISHING_SUSPICIOUS_TRANSFER"))
+                .andReturn();
+
+        Number caseInputRevision = JsonPath.read(
+                situationResult.getResponse().getContentAsString(), "$.caseInputRevision");
+
+        mockMvc.perform(
+                        post("/api/v1/consultations/{id}/scenario/confirm", consultation.getId())
+                                .cookie(guest.cookie())
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"scenario\":\"VOICE_PHISHING_SUSPICIOUS_TRANSFER\",\"expectedCaseInputRevision\":"
+                                        + caseInputRevision.longValue() + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.selectedScenario").value("VOICE_PHISHING_SUSPICIOUS_TRANSFER"))
+                .andExpect(jsonPath("$.scenarioAlignment").value("SELECTED_SCENARIO_MATCH"))
+                .andExpect(jsonPath("$.caseInputRevision").value(caseInputRevision.longValue() + 1))
+                .andExpect(jsonPath("$.nextStep").value("FOLLOW_UP"));
+
+        Consultation saved = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(saved.getScenario()).isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(saved.getCaseInputRevision()).isEqualTo(caseInputRevision.longValue() + 1);
+        assertThat(saved.getCurrentStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+    }
+
     // Guest Ownership
     @Test
     void hidesConsultationFromDifferentGuest()

@@ -93,6 +93,9 @@ public class AnalysisJob {
     )
     private String failureCode;
 
+    @Column(name = "evidence_failure_reason", length = 64)
+    private String evidenceFailureReason;
+
     @Column(
             name = "created_at",
             nullable = false
@@ -171,6 +174,8 @@ public class AnalysisJob {
         return failureCode;
     }
 
+    public String getEvidenceFailureReason() { return evidenceFailureReason; }
+
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
@@ -206,6 +211,7 @@ public class AnalysisJob {
         startedAt = now;
         finishedAt = null;
         failureCode = null;
+        evidenceFailureReason = null;
     }
 
     public void complete(
@@ -214,6 +220,7 @@ public class AnalysisJob {
     ) {
         this.resultJson = resultJson;
         this.failureCode = null;
+        this.evidenceFailureReason = null;
 
         this.status =
                 AnalysisJobStatus.COMPLETED;
@@ -227,6 +234,7 @@ public class AnalysisJob {
     ) {
         this.resultJson = resultJson;
         this.failureCode = null;
+        this.evidenceFailureReason = null;
 
         this.status =
                 AnalysisJobStatus.NEEDS_MORE_INFO;
@@ -238,11 +246,16 @@ public class AnalysisJob {
             String failureCode,
             OffsetDateTime now
     ) {
+        fail(failureCode, null, now);
+    }
+
+    public void fail(String failureCode, String evidenceFailureReason, OffsetDateTime now) {
         this.status =
                 AnalysisJobStatus.FAILED;
 
         this.failureCode =
                 failureCode;
+        this.evidenceFailureReason = evidenceFailureReason;
 
         this.finishedAt = now;
     }
@@ -261,6 +274,7 @@ public class AnalysisJob {
 
         this.resultJson = null;
         this.failureCode = null;
+        this.evidenceFailureReason = null;
 
         this.queuedAt = now;
         this.startedAt = null;
@@ -277,6 +291,7 @@ public class AnalysisJob {
 
         this.failureCode =
                 null;
+        this.evidenceFailureReason = null;
 
         this.status =
                 AnalysisJobStatus.INSUFFICIENT_INFORMATION;

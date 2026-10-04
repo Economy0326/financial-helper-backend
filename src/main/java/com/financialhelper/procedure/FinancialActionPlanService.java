@@ -185,13 +185,13 @@ public class FinancialActionPlanService {
                 unresolved.add(required.key());
             }
         }
-        if (cardProcedure && hasUnknownCardIdentity(facts, unresolved)) {
+        if (!ActionDependencyEvaluator.hasProcedureIdentityCandidate(procedure, facts)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps,
-                    List.of("CARD_INSTITUTION_OR_PRODUCT_REQUIRED"));
+                    List.of("PROCEDURE_IDENTITY_REQUIRED", "CARD_INSTITUTION_OR_PRODUCT_REQUIRED"));
         }
         if (hasBlockingUnresolved(procedure.scenario(), unresolved)
-                && !hasDefinitelyTrueAction(procedure, facts)) {
+                && !ActionDependencyEvaluator.hasDefinitelyTrueAction(procedure, facts)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps,
                     List.of("BLOCKING_INFORMATION_REQUIRED"));
@@ -207,7 +207,7 @@ public class FinancialActionPlanService {
         }
         // 아직 action을 결정할 수 없다면 Evidence 판정 작업을 수행하거나
         // UNKNOWN 조건에서 partial 결과를 만들어내지 않는다.
-        if (!unresolved.isEmpty() && !hasDefinitelyTrueAction(procedure, facts)) {
+        if (!unresolved.isEmpty() && !ActionDependencyEvaluator.hasDefinitelyTrueAction(procedure, facts)) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
                     List.of(), unresolved, coverageGaps,
                     List.of("ADDITIONAL_INFORMATION_REQUIRED"));
@@ -570,20 +570,6 @@ public class FinancialActionPlanService {
             if (fact != null && key.equals(fact.key()) && fact.value() != null) return fact.value();
         }
         return fallback;
-    }
-
-    private boolean hasDefinitelyTrueAction(
-            ProcedureVersionData procedure,
-            CardCaseFacts facts
-    ) {
-        return procedure.conditionRules().stream()
-                .anyMatch(rule -> ConditionEvaluator.evaluate(rule.expression(), facts)
-                        == ConditionResult.TRUE);
-    }
-
-    private boolean hasUnknownCardIdentity(CardCaseFacts facts, Set<String> unresolved) {
-        return unresolved.contains("institution") || unresolved.contains("productType")
-                || facts.isUnknown("institution") || facts.isUnknown("productType");
     }
 
     private FinancialActionPlanData data(

@@ -83,9 +83,9 @@ public class KoreanLawOpenApiHttpClient implements KoreanLawOpenApiClient {
             int before = versions.size();
             for (JsonNode row : asArray(rows)) {
                 String name = text(row, "법령명한글");
-                if (!sameLaw(name, lawName)) {
-                    continue;
-                }
+                // lawSearch가 법령명 개정 전후 version을 함께 반환한다. 여기서
+                // 명칭을 먼저 버리면 같은 법령ID의 개정 후 version을 selector가
+                // 볼 수 없다. 정확한 법령 family 판정은 LawEvidenceService가 한다.
                 LocalDate effective = parseDate(text(row, "시행일자"), "시행일자");
                 LocalDate promulgation = parseDate(text(row, "공포일자"), "공포일자");
                 String mst = text(row, "법령일련번호");

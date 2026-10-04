@@ -243,7 +243,7 @@ public class AnalysisWorker {
             log.warn("Analysis job evidence unavailable. jobId={}, category={}", jobId, failureCode);
         // public API contract를 안정적으로 유지하면서 진단용 server log에는
         // 정확한 root category를 보존한다.
-            persistenceService.fail(jobId, publicFailureCode(failureCode));
+            persistenceService.fail(jobId, publicFailureCode(failureCode), publicEvidenceFailureReason(failureCode));
 
         } catch (AiProviderException exception) {
 
@@ -357,6 +357,18 @@ public class AnalysisWorker {
         return internalCategory != null && internalCategory.startsWith("LAW_")
                 ? "LAW_EVIDENCE_UNAVAILABLE"
                 : internalCategory;
+    }
+
+    static String publicEvidenceFailureReason(String internalCategory) {
+        if (internalCategory == null || !internalCategory.startsWith("LAW_")) return null;
+        if ("LAW_EVIDENCE_VALIDATION_FAILED".equals(internalCategory)
+                || "LAW_EFFECTIVE_VERSION_NOT_FOUND".equals(internalCategory)) return "REVIEW_REQUIRED";
+        if ("LAW_API_CONFIGURATION_MISSING".equals(internalCategory)
+                || "LAW_API_AUTH_FAILED".equals(internalCategory)
+                || "LAW_API_HTTP_FAILED".equals(internalCategory)
+                || "LAW_SEARCH_FAILED".equals(internalCategory)
+                || "LAW_RESPONSE_PARSE_FAILED".equals(internalCategory)) return "TEMPORARY_UNAVAILABLE";
+        return "COVERAGE_GAP";
     }
 
     private static String exceptionMessages(Throwable root) {

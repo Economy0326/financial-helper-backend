@@ -139,6 +139,20 @@ public class ReviewedCardLawEvidenceService {
                 allowAnyCurrentEffectiveDate);
     }
 
+    private static ReviewedLawIdentity identityWithAdditionalReviewedVersion(
+            String scenario, String statute, String article, String lawIdentifier,
+            String currentMst, LocalDate currentEffective, String historicalMst,
+            LocalDate historicalEffective, String additionalMst,
+            LocalDate additionalEffective
+    ) {
+        return new ReviewedLawIdentity(
+                scenario + "|" + normalize(statute) + "|" + article,
+                lawIdentifier,
+                Set.of(currentMst, historicalMst, additionalMst),
+                Set.of(currentEffective, historicalEffective, additionalEffective),
+                false);
+    }
+
     private static final Map<String, ReviewedLawIdentity> REVIEWED_IDENTITIES = Map.ofEntries(
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|여신전문금융업법|제16조",
                     identity("CARD_LOSS_UNAUTHORIZED_USE", "여신전문금융업법", "제16조", "000536",
@@ -147,26 +161,40 @@ public class ReviewedCardLawEvidenceService {
                     identity("CARD_LOSS_UNAUTHORIZED_USE", "여신전문금융업법 시행령", "제6조의9", "004186",
                             "285799", LocalDate.of(2025, 10, 1), "256643", LocalDate.of(2023, 7, 1), true)),
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|전자금융거래법|제9조",
-                    identity("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법", "제9조", "010199",
-                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10))),
+                    identityWithAdditionalReviewedVersion("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법", "제9조", "010199",
+                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10),
+                            "290247", LocalDate.of(2026, 10, 2))),
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|전자금융거래법|제10조",
-                    identity("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법", "제10조", "010199",
-                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10))),
+                    identityWithAdditionalReviewedVersion("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법", "제10조", "010199",
+                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10),
+                            "290247", LocalDate.of(2026, 10, 2))),
             Map.entry("CARD_LOSS_UNAUTHORIZED_USE|전자금융거래법시행령|제8조",
                     identity("CARD_LOSS_UNAUTHORIZED_USE", "전자금융거래법 시행령", "제8조", "010366",
                             "285727", LocalDate.of(2026, 4, 28), "256699", LocalDate.of(2020, 12, 10))),
             Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해금환급에관한특별법|제3조",
-                    identity("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제3조", "011359",
-                            "289413", LocalDate.of(2026, 9, 8), "251011", LocalDate.of(2023, 11, 17))),
+                    identityWithAdditionalReviewedVersion("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제3조", "011359",
+                            "290245", LocalDate.of(2026, 10, 2), "283199", LocalDate.of(2026, 8, 4),
+                            "251011", LocalDate.of(2023, 11, 17))),
             Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해금환급에관한특별법|제4조",
-                    identity("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제4조", "011359",
-                            "289413", LocalDate.of(2026, 9, 8), "251011", LocalDate.of(2023, 11, 17))),
+                    identityWithAdditionalReviewedVersion("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "제4조", "011359",
+                            "290245", LocalDate.of(2026, 10, 2), "283199", LocalDate.of(2026, 8, 4),
+                            "251011", LocalDate.of(2023, 11, 17))),
+            Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해자산환급에관한특별법|제3조",
+                    identityWithAdditionalReviewedVersion("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법", "제3조", "011359",
+                            "290245", LocalDate.of(2026, 10, 2), "283199", LocalDate.of(2026, 8, 4),
+                            "251011", LocalDate.of(2023, 11, 17))),
+            Map.entry("VOICE_PHISHING_SUSPICIOUS_TRANSFER|전기통신금융사기피해방지및피해자산환급에관한특별법|제4조",
+                    identityWithAdditionalReviewedVersion("VOICE_PHISHING_SUSPICIOUS_TRANSFER", "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법", "제4조", "011359",
+                            "290245", LocalDate.of(2026, 10, 2), "283199", LocalDate.of(2026, 8, 4),
+                            "251011", LocalDate.of(2023, 11, 17))),
             Map.entry("UNAUTHORIZED_ACCOUNT_TRANSFER|전자금융거래법|제9조",
-                    identity("UNAUTHORIZED_ACCOUNT_TRANSFER", "전자금융거래법", "제9조", "010199",
-                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10))),
+                    identityWithAdditionalReviewedVersion("UNAUTHORIZED_ACCOUNT_TRANSFER", "전자금융거래법", "제9조", "010199",
+                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10),
+                            "290247", LocalDate.of(2026, 10, 2))),
             Map.entry("UNAUTHORIZED_ACCOUNT_TRANSFER|전자금융거래법|제10조",
-                    identity("UNAUTHORIZED_ACCOUNT_TRANSFER", "전자금융거래법", "제10조", "010199",
-                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10)))
+                    identityWithAdditionalReviewedVersion("UNAUTHORIZED_ACCOUNT_TRANSFER", "전자금융거래법", "제10조", "010199",
+                            "280277", LocalDate.of(2025, 12, 16), "218909", LocalDate.of(2020, 12, 10),
+                            "290247", LocalDate.of(2026, 10, 2)))
     );
 
     private record ReviewedLawIdentity(

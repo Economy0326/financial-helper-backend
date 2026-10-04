@@ -97,6 +97,24 @@ class ConsultationSummaryFactServiceTest {
                 .containsExactly("예", "잘 모르겠음");
     }
 
+    @Test
+    void mapsBreadthScenarioFactsToCanonicalKoreanLabels() {
+        ConfirmedCaseSnapshotService snapshotService = mock(ConfirmedCaseSnapshotService.class);
+        ConsultationSummaryFactService service = new ConsultationSummaryFactService(snapshotService);
+        UUID consultationId = UUID.randomUUID();
+        when(snapshotService.findCurrent(consultationId, 4L, 1L)).thenReturn(Optional.of(
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), consultationId, 4L, 1L,
+                        List.of(
+                                fact("remoteControlUsed", "FALSE"),
+                                fact("reportedToFinancialInstitution", "TRUE"),
+                                fact("unauthorizedTransaction", "TRUE")),
+                        List.of(), OffsetDateTime.now())));
+
+        assertThat(service.currentFacts(consultationId, 4L, 1L))
+                .extracting(ConsultationSummaryStateResponse.Fact::label)
+                .containsExactly("원격 제어 사용 여부", "금융회사 신고 여부", "본인 미실행 계좌 거래 여부");
+    }
+
     private ConfirmedCaseSnapshotData.Fact fact(String key, String value) {
         return new ConfirmedCaseSnapshotData.Fact(
                 "FOLLOW_UP", key, value, null, "USER_ANSWERED", null);

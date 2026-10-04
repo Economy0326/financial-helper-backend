@@ -5,6 +5,7 @@ import java.util.List;
 public record AnalysisStateResponse(
         String status,
         String failureCode,
+        String evidenceFailureReason,
         int attemptCount,
         int informationSupplementCount,
         boolean canSupplementInformation,
@@ -20,6 +21,7 @@ public record AnalysisStateResponse(
         return new AnalysisStateResponse(
                 "NOT_STARTED",
                 null,
+                null,
                 0,
                 informationSupplementCount,
                 informationSupplementCount < 1,
@@ -34,6 +36,7 @@ public record AnalysisStateResponse(
         return new AnalysisStateResponse(
                 "UNSUPPORTED_SCOPE",
                 "CONSULTATION_SCOPE_UNSUPPORTED",
+                null,
                 0,
                 informationSupplementCount,
                 false,
@@ -68,6 +71,7 @@ public record AnalysisStateResponse(
         return new AnalysisStateResponse(
                 job.getStatus().name(),
                 job.getFailureCode(),
+                job.getEvidenceFailureReason(),
                 job.getAttemptCount(),
                 informationSupplementCount,
                 job.getStatus() == AnalysisJobStatus.NEEDS_MORE_INFO

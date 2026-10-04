@@ -70,6 +70,29 @@ class LawEvidenceServiceTest {
     }
 
     @Test
+    void followsSameLawIdentifierAcrossAnOfficialLawNameChange() {
+        KoreanLawOpenApiClient.LawVersion formerName = version(
+                "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "011359", "283199",
+                LocalDate.of(2026, 2, 3), LocalDate.of(2026, 8, 4), false);
+        KoreanLawOpenApiClient.LawVersion renamedCurrent = version(
+                "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법", "011359", "290245",
+                LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 2), true);
+
+        LawEvidenceRequest request = new LawEvidenceRequest(
+                "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법",
+                "제3조", LocalDate.of(2026, 10, 4));
+        when(client.searchLaw(request.lawName())).thenReturn(List.of(formerName, renamedCurrent));
+        when(client.getLawText(renamedCurrent, request.articleLocator()))
+                .thenReturn(document(renamedCurrent, request.articleLocator()));
+
+        LawEvidence evidence = service.lookup(request);
+
+        assertThat(evidence.mst()).isEqualTo("290245");
+        assertThat(evidence.statuteName())
+                .isEqualTo("전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법");
+    }
+
+    @Test
     void future_only_version_fails_closed_for_historical_incident() {
         KoreanLawOpenApiClient.LawVersion future = version(
                 "여신전문금융업법", "000536", "277267",

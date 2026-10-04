@@ -46,8 +46,8 @@ class KoreanLawOpenApiLiveSmokeTest {
         Map<String, List<String>> expectedIdentity = Map.of(
                 "여신전문금융업법|제16조", List.of("000536", "277267", "248927"),
                 "여신전문금융업법 시행령|제6조의9", List.of("004186", "285799", "256643"),
-                "전자금융거래법|제9조", List.of("010199", "280277", "218909"),
-                "전자금융거래법|제10조", List.of("010199", "280277", "218909"),
+                "전자금융거래법|제9조", List.of("010199", "290247", "218909"),
+                "전자금융거래법|제10조", List.of("010199", "290247", "218909"),
                 "전자금융거래법 시행령|제8조", List.of("010366", "285727", "256699")
                 ,"전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법|제3조",
                         List.of("011359", "289413", "251011")
@@ -76,6 +76,8 @@ class KoreanLawOpenApiLiveSmokeTest {
         }
 
         var reviewedCard = new ReviewedCardLawEvidenceService(service, properties);
-        assertThat(reviewedCard.load(LocalDate.of(2026, 9, 17))).hasSize(5);
+        assertThat(reviewedCard.load(LocalDate.of(2026, 10, 4)))
+                .extracting(evidence -> evidence.evidenceId())
+                .contains("law:010199:290247:제9조", "law:010199:290247:제10조");
     }
 }

@@ -137,7 +137,8 @@ public class SecurityConfig {
                             "/api/v1/consultations/*/understanding",
                             "/api/v1/consultations/*/follow-up/prepare",
                             "/api/v1/consultations/*/procedure-follow-up/prepare",
-                            "/api/v1/consultations/*/financial-action-plan"
+                            "/api/v1/consultations/*/financial-action-plan",
+                            "/api/v1/consultations/*/scenario/confirm"
                     )
                     .permitAll()
 

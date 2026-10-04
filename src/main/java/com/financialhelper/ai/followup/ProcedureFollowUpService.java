@@ -60,6 +60,8 @@ public class ProcedureFollowUpService {
     public StructuredFollowUpStateResponse getState(UUID consultationId, String rawToken) {
         StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
         if (unsupported != null) return unsupported;
+        StructuredFollowUpStateResponse insufficient = insufficientState(consultationId);
+        if (insufficient != null) return insufficient;
         refresh(consultationId, rawToken);
         List<FollowUpQuestion> current = currentQuestions(consultationId);
         return current.isEmpty()
@@ -116,6 +118,12 @@ public class ProcedureFollowUpService {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         StructuredFollowUpData specification = specificationService.specify(
                 snapshot, clarificationAsked);
+        FollowUpQuestion lastAnswered = current.isEmpty() ? null : current.getLast();
+        if (lastAnswered != null && "UNKNOWN".equalsIgnoreCase(lastAnswered.getAnswerValue())
+                && clarificationAsked.contains(lastAnswered.getFactKey())
+                && !specificationService.hasActionCandidate(snapshot)) {
+            return;
+        }
         if (specification.questions().isEmpty()) {
             persistenceService.completeWithoutQuestions(
                     consultationId, rawToken, snapshot.caseInputRevision());
@@ -180,6 +188,19 @@ public class ProcedureFollowUpService {
                     readOptions(question), questions.size(), reason);
         }
         return null;
+    }
+
+    private StructuredFollowUpStateResponse insufficientState(UUID consultationId) {
+        Consultation consultation = consultationRepository.findById(consultationId).orElse(null);
+        if (consultation == null) return null;
+        List<FollowUpQuestion> questions = currentQuestions(consultationId);
+        if (questions.isEmpty()) return null;
+        FollowUpQuestion last = questions.getLast();
+        if (!last.isAnswered() || !"UNKNOWN".equalsIgnoreCase(last.getAnswerValue())
+                || last.getQuestionIntent() == null || !last.getQuestionIntent().startsWith("CLARIFY_")) return null;
+        ConfirmedCaseSnapshotData snapshot = snapshotService.capture(consultationId);
+        if (specificationService.hasActionCandidate(snapshot)) return null;
+        return StructuredFollowUpStateResponse.insufficient(last, readOptions(last), questions.size());
     }
 
     private boolean isSupportedInstitution(String value) {

@@ -175,6 +175,54 @@ class ProcedureFollowUpApiIntegrationTest {
     }
 
     @Test
+    void unknownInstitutionStopsOnlyWhenItsProcedureBindingLeavesNoActionCandidateAndCanRecover() throws Exception {
+        String rawToken = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(
+                tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.CARD, now.plusSeconds(1));
+        consultation.updateSituation("카드를 잃어버렸어요.", now.plusSeconds(2));
+        consultation = consultationRepository.saveAndFlush(consultation);
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
+
+        mockMvc.perform(post("/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
+                        .cookie(cookie).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.question.factKey").value("institution"));
+        FollowUpQuestion institution = currentQuestions().getFirst();
+
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), institution.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"UNKNOWN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("question"))
+                .andExpect(jsonPath("$.question.questionIntent").value("CLARIFY_INSTITUTION"));
+
+        FollowUpQuestion clarification = currentQuestions().get(1);
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), clarification.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"UNKNOWN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("insufficient_information"))
+                .andExpect(jsonPath("$.blockingFact.key").value("institution"))
+                .andExpect(jsonPath("$.blockingFact.label").isNotEmpty())
+                .andExpect(jsonPath("$.question.id").value(clarification.getId().toString()));
+
+        org.assertj.core.api.Assertions.assertThat(currentQuestions()).hasSize(2);
+
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), clarification.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"KB_KOOKMIN_CARD\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("question"))
+                .andExpect(jsonPath("$.question.factKey").value("productType"));
+    }
+
+    @Test
     void explicitUnsupportedCardBoundaryStopsAndSameQuestionCanRecover() throws Exception {
         String rawToken = tokenService.generateRawToken();
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -244,6 +292,11 @@ class ProcedureFollowUpApiIntegrationTest {
     private org.springframework.test.web.servlet.ResultActions answer(BoundaryFixture fixture, String value) throws Exception {
         return mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), fixture.question().getId())
                 .cookie(fixture.cookie()).with(csrf()).contentType("application/json").content("{\"answer\":\"" + value + "\"}"));
+    }
+
+    private java.util.List<FollowUpQuestion> currentQuestions() {
+        return questionRepository.findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                consultation.getId(), consultation.getCaseInputRevision());
     }
 
     private record BoundaryFixture(Cookie cookie, FollowUpQuestion question) {}

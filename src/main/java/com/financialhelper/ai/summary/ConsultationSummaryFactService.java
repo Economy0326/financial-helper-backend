@@ -31,12 +31,21 @@ public class ConsultationSummaryFactService {
             Map.entry("transferCompleted", "송금 완료 여부"),
             Map.entry("userInitiatedTransfer", "본인 직접 송금 여부"),
             Map.entry("suspiciousTransfer", "사기·보이스피싱 의심 여부"),
+            Map.entry("reportedToFinancialInstitution", "금융회사 신고 여부"),
+            Map.entry("policeReported", "경찰 신고 여부"),
             Map.entry("unauthorizedTransaction", "본인 미실행 계좌 거래 여부"),
+            Map.entry("financialLossOccurred", "금전 피해 발생 여부"),
             Map.entry("moneyMoved", "금전 이동 여부"),
             Map.entry("suspiciousLinkClicked", "의심 링크 클릭 여부"),
             Map.entry("maliciousAppInstalled", "의심 앱 설치 여부"),
+            Map.entry("remoteControlUsed", "원격 제어 사용 여부"),
             Map.entry("personalInfoExposed", "개인정보 노출 여부"),
-            Map.entry("authenticationInfoExposed", "인증정보 노출 여부")
+            Map.entry("authenticationInfoExposed", "인증정보 노출 여부"),
+            Map.entry("accessCredentialExposed", "인증정보 노출 여부"),
+            Map.entry("transactionDate", "거래 발생일"),
+            Map.entry("transactionChannel", "거래 수단"),
+            Map.entry("compensationStatus", "보상 처리 단계"),
+            Map.entry("resultDisputed", "처리 결과 이견 여부")
     );
 
     private static final DateTimeFormatter KOREAN_DATE =
