@@ -41,13 +41,13 @@ class ReviewedCardLawEvidenceServiceTest {
                 .thenAnswer(invocation -> voiceEvidence(invocation.getArgument(0)));
 
         var result = service.loadForScenario(
-                "VOICE_PHISHING_SUSPICIOUS_TRANSFER", LocalDate.of(2026, 9, 17));
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER", LocalDate.of(2026, 10, 4));
 
         assertThat(result).hasSize(2)
                 .extracting(AnalysisEvidenceSnapshotData.ReviewedLawEvidence::evidenceId)
                 .containsExactly(
-                        "law:011359:289413:제3조",
-                        "law:011359:289413:제4조");
+                        "law:011359:290245:제3조",
+                        "law:011359:290245:제4조");
         verify(lawEvidenceService, atLeastOnce()).lookup(any(LawEvidenceRequest.class));
     }
 
@@ -85,6 +85,30 @@ class ReviewedCardLawEvidenceServiceTest {
     }
 
     @Test
+    void accepts_the_20261002_electronic_financial_transactions_act_for_card() {
+        when(lawEvidenceService.lookup(any(LawEvidenceRequest.class)))
+                .thenAnswer(invocation -> updatedElectronicFinanceActEvidence(invocation.getArgument(0)));
+
+        var result = service.load(LocalDate.of(2026, 10, 4));
+
+        assertThat(result).hasSize(5)
+                .extracting(AnalysisEvidenceSnapshotData.ReviewedLawEvidence::evidenceId)
+                .contains(
+                        "law:010199:290247:제9조",
+                        "law:010199:290247:제10조");
+    }
+
+    @Test
+    void rejects_an_unreviewed_electronic_finance_act_version_for_card() {
+        when(lawEvidenceService.lookup(any(LawEvidenceRequest.class)))
+                .thenAnswer(invocation -> unreviewedElectronicFinanceActEvidence(invocation.getArgument(0)));
+
+        assertThatThrownBy(() -> service.load(LocalDate.of(2026, 10, 4)))
+                .isInstanceOf(GroundedEvidenceUnavailableException.class)
+                .hasMessageContaining("unavailable or not applicable");
+    }
+
+    @Test
     void unknown_incident_date_does_not_apply_current_law() {
         assertThat(service.loadForScenario(
                 "VOICE_PHISHING_SUSPICIOUS_TRANSFER", null)).isEmpty();
@@ -105,6 +129,20 @@ class ReviewedCardLawEvidenceServiceTest {
     }
 
     @Test
+    void unreviewed_voice_phishing_law_version_still_fails_closed() {
+        when(lawEvidenceService.lookup(any(LawEvidenceRequest.class)))
+                .thenAnswer(invocation -> evidence(
+                        "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법",
+                        "011359", "999999", invocation.getArgument(0, LawEvidenceRequest.class).articleLocator(),
+                        LocalDate.of(2026, 10, 2)));
+
+        assertThatThrownBy(() -> service.loadForScenario(
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER", LocalDate.of(2026, 10, 4)))
+                .isInstanceOf(GroundedEvidenceUnavailableException.class)
+                .hasMessageContaining("unavailable or not applicable");
+    }
+
+    @Test
     void personal_information_scenario_has_no_unreviewed_law_dependency() {
         assertThat(service.loadForScenario(
                 "PERSONAL_INFO_SMISHING_MALICIOUS_APP", LocalDate.of(2026, 9, 17)))
@@ -114,8 +152,8 @@ class ReviewedCardLawEvidenceServiceTest {
 
     private LawEvidence voiceEvidence(LawEvidenceRequest request) {
         return evidence(
-                request.lawName(), "011359", "289413", request.articleLocator(),
-                LocalDate.of(2026, 9, 8));
+                "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법",
+                "011359", "290245", request.articleLocator(), LocalDate.of(2026, 10, 2));
     }
 
     private LawEvidence historicalVoiceEvidence(LawEvidenceRequest request) {
@@ -146,6 +184,22 @@ class ReviewedCardLawEvidenceServiceTest {
             effective = LocalDate.of(2026, 4, 28);
         }
         return evidence(request.lawName(), lawId, mst, request.articleLocator(), effective);
+    }
+
+    private LawEvidence updatedElectronicFinanceActEvidence(LawEvidenceRequest request) {
+        if (request.lawName().equals("전자금융거래법")) {
+            return evidence(request.lawName(), "010199", "290247", request.articleLocator(),
+                    LocalDate.of(2026, 10, 2));
+        }
+        return currentCardEvidence(request);
+    }
+
+    private LawEvidence unreviewedElectronicFinanceActEvidence(LawEvidenceRequest request) {
+        if (request.lawName().equals("전자금융거래법")) {
+            return evidence(request.lawName(), "010199", "999999", request.articleLocator(),
+                    LocalDate.of(2026, 10, 2));
+        }
+        return currentCardEvidence(request);
     }
 
     private LawEvidence evidence(

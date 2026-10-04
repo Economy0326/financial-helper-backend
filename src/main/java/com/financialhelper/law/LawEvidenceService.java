@@ -40,8 +40,11 @@ public class LawEvidenceService {
                 selected.lawIdentifier(), selected.mst(), request.articleLocator(), selected.effectiveDate());
         KoreanLawOpenApiClient.LawDocument document = client.getLawText(selected, request.articleLocator());
 
-        if (!sameLaw(document.statuteName(), request.lawName())
-                || !document.lawIdentifier().equals(selected.lawIdentifier())
+        // The search phase has already established that the requested name belongs
+        // to this lawIdentifier family.  A later official rename may change the
+        // document title while preserving the law ID, so title equality here would
+        // incorrectly reject the selected, version-pinned document.
+        if (!document.lawIdentifier().equals(selected.lawIdentifier())
                 || !document.mst().equals(selected.mst())
                 || !document.effectiveDate().equals(selected.effectiveDate())
                 || !document.promulgationDate().equals(selected.promulgationDate())) {
@@ -90,14 +93,23 @@ public class LawEvidenceService {
         if (exact.isEmpty()) {
             throw new KoreanLawOpenApiException("Open API search returned a different statute");
         }
+        // 법령명 개정은 같은 법령ID의 시행 version을 검색 결과에서 다른 이름으로
+        // 돌려준다. 요청한 과거 명칭으로 찾은 family의 ID를 기준으로 모든 version을
+        // 포함해야 incident-date selector가 이름 변경 직전 version에 고정되지 않는다.
+        java.util.Set<String> lawIdentifiers = exact.stream()
+                .map(KoreanLawOpenApiClient.LawVersion::lawIdentifier)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        List<KoreanLawOpenApiClient.LawVersion> family = versions.stream()
+                .filter(version -> lawIdentifiers.contains(version.lawIdentifier()))
+                .toList();
         if (request.incidentDate() == null) {
-            return exact.stream()
+            return family.stream()
                     .filter(KoreanLawOpenApiClient.LawVersion::current)
                     .max(Comparator.comparing(KoreanLawOpenApiClient.LawVersion::effectiveDate))
                     .orElseThrow(() -> new KoreanLawOpenApiException(
                             "Open API search returned no current statute version"));
         }
-        return exact.stream()
+        return family.stream()
                 .filter(version -> !version.effectiveDate().isAfter(request.incidentDate()))
                 .max(Comparator.comparing(KoreanLawOpenApiClient.LawVersion::effectiveDate))
                 .orElseThrow(() -> new KoreanLawOpenApiException(

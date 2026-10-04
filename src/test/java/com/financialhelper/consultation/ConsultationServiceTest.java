@@ -2,6 +2,7 @@ package com.financialhelper.consultation;
 
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionService;
+import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,9 @@ class ConsultationServiceTest {
 
     @Mock
     private GuestSession guestSession;
+
+    @Mock
+    private FollowUpQuestionRepository followUpQuestionRepository;
 
     private ConsultationService consultationService;
 
@@ -68,10 +72,7 @@ class ConsultationServiceTest {
                         now
                 );
 
-        when(
-                guestSessionService
-                        .requireValidSession(rawToken)
-        ).thenReturn(guestSession);
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
 
         when(
                 consultationRepository
@@ -159,6 +160,86 @@ class ConsultationServiceTest {
         ).isEqualTo(
                 ConsultationStep.FOLLOW_UP
         );
+        assertThat(response.caseInputRevision()).isEqualTo(consultation.getCaseInputRevision());
+    }
+
+    @Test
+    void keepsSelectedScenarioAndReturnsSupportedMismatchSuggestion() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD,
+                ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId))
+                .thenReturn(Optional.of(consultation));
+
+        UpdateConsultationSituationResponse response = consultationService.updateSituation(consultationId,
+                rawToken, new UpdateConsultationSituationRequest("모르는 사람이 전화로 시키는 대로 돈을 송금했어요."));
+
+        assertThat(response.scenarioAlignment()).isEqualTo(ScenarioAlignment.SUPPORTED_SCENARIO_MISMATCH);
+        assertThat(response.selectedScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+        assertThat(response.suggestedScenario()).isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(response.caseInputRevision()).isEqualTo(consultation.getCaseInputRevision());
+        assertThat(consultation.getScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+    }
+
+    @Test
+    void confirmsOnlyResolverSuggestedScenarioAndAdvancesRevisionOnce() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD,
+                ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId))
+                .thenReturn(Optional.of(consultation));
+
+        UpdateConsultationSituationResponse situationResponse = consultationService.updateSituation(
+                consultationId, rawToken,
+                new UpdateConsultationSituationRequest("모르는 사람이 전화로 시키는 대로 돈을 송금했어요."));
+        long expectedRevision = situationResponse.caseInputRevision();
+
+        ConfirmSuggestedScenarioResponse response = consultationService.confirmSuggestedScenario(
+                consultationId, rawToken, new ConfirmSuggestedScenarioRequest(
+                        ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER, expectedRevision));
+
+        assertThat(response.selectedScenario()).isEqualTo(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(response.caseInputRevision()).isEqualTo(expectedRevision + 1);
+        assertThat(response.nextStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+        assertThat(consultation.getSituationText()).contains("전화");
+        assertThatThrownBy(() -> consultationService.confirmSuggestedScenario(consultationId, rawToken,
+                new ConfirmSuggestedScenarioRequest(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER, expectedRevision)))
+                .isInstanceOf(InvalidConsultationStateException.class);
+    }
+
+    @Test
+    void rejectsArbitraryOrUnknownConfirmWithoutChangingRevision() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
+        consultation.updateSituation("모르는 사람이 전화로 시키는 대로 돈을 송금했어요.", now);
+        long revision = consultation.getCaseInputRevision();
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId)).thenReturn(Optional.of(consultation));
+        assertThatThrownBy(() -> consultationService.confirmSuggestedScenario(consultationId, rawToken,
+                new ConfirmSuggestedScenarioRequest(ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP, revision)))
+                .isInstanceOf(InvalidConsultationStateException.class);
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(revision);
+        assertThat(consultation.getScenario()).isEqualTo(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
+    }
+
+    @Test
+    void oldRevisionFollowUpIsNotReusedAfterScenarioConfirm() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, now);
+        consultation.updateSituation("모르는 사람이 전화로 시키는 대로 돈을 송금했어요.", now);
+        long previousRevision = consultation.getCaseInputRevision();
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId)).thenReturn(Optional.of(consultation));
+        consultationService.confirmSuggestedScenario(consultationId, rawToken,
+                new ConfirmSuggestedScenarioRequest(ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER, previousRevision));
+
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(previousRevision + 1);
     }
 
     // Ownership 조회 실패

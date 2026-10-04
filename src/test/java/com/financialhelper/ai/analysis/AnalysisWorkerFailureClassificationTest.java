@@ -75,6 +75,17 @@ class AnalysisWorkerFailureClassificationTest {
     }
 
     @Test
+    void exposes_only_safe_evidence_failure_reasons() {
+        assertThat(AnalysisWorker.publicEvidenceFailureReason("LAW_EVIDENCE_VALIDATION_FAILED"))
+                .isEqualTo("REVIEW_REQUIRED");
+        assertThat(AnalysisWorker.publicEvidenceFailureReason("LAW_API_HTTP_FAILED"))
+                .isEqualTo("TEMPORARY_UNAVAILABLE");
+        assertThat(AnalysisWorker.publicEvidenceFailureReason("LAW_REQUIRED_ARTICLE_NOT_FOUND"))
+                .isEqualTo("COVERAGE_GAP");
+        assertThat(AnalysisWorker.publicEvidenceFailureReason("NO_APPROVED_EVIDENCE")).isNull();
+    }
+
+    @Test
     void exhaustedStructuredClarificationDoesNotOpenAnalysisSupplement() {
         AnalysisPersistenceService persistence = mock(AnalysisPersistenceService.class);
         OpenAiStructuredClient openAi = mock(OpenAiStructuredClient.class);

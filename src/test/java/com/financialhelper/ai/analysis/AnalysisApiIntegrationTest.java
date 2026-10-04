@@ -128,6 +128,23 @@ class AnalysisApiIntegrationTest {
                 .andExpect(jsonPath("$.status").value("NOT_STARTED"));
     }
 
+    @Test
+    void exposesSafeEvidenceFailureReasonWithoutInternalLawDetails() throws Exception {
+        TestContext context = createAnalysisReadyConsultation();
+        Consultation consultation = context.consultation();
+        AnalysisJob job = new AnalysisJob(consultation, consultation.getCaseInputRevision(),
+                consultation.getFollowUpAnswerRevision(), "gpt-5.6-luna", OffsetDateTime.now(ZoneOffset.UTC));
+        job.fail("LAW_EVIDENCE_UNAVAILABLE", "REVIEW_REQUIRED", OffsetDateTime.now(ZoneOffset.UTC));
+        analysisJobRepository.saveAndFlush(job);
+
+        mockMvc.perform(get("/api/v1/consultations/{id}/analysis", consultation.getId())
+                        .cookie(context.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.failureCode").value("LAW_EVIDENCE_UNAVAILABLE"))
+                .andExpect(jsonPath("$.evidenceFailureReason").value("REVIEW_REQUIRED"));
+    }
+
     // Analysis 정상 완료 및 같은 Revision의 중복 AI 호출 방지 검증
     @Test
     void startsAnalysisAndCompletesWithoutDuplicateGeneration()
@@ -673,6 +690,27 @@ class AnalysisApiIntegrationTest {
                 consultation,
                 cookie
         );
+    }
+
+    @Test
+    void doesNotReusePreviousRevisionAnalysisAfterCaseRevisionChanges() throws Exception {
+        TestContext context = createAnalysisReadyConsultation();
+        Consultation consultation = context.consultation();
+        long oldCaseRevision = consultation.getCaseInputRevision();
+        long oldFollowUpRevision = consultation.getFollowUpAnswerRevision();
+        AnalysisJob oldJob = analysisJobRepository.saveAndFlush(new AnalysisJob(consultation,
+                oldCaseRevision, oldFollowUpRevision, "gpt-5.6-luna", OffsetDateTime.now(ZoneOffset.UTC)));
+
+        assertThat(analysisJobRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), oldCaseRevision, oldFollowUpRevision))
+                .map(AnalysisJob::getId).contains(oldJob.getId());
+
+        consultation.updateSituation("수정된 상담 내용", OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.saveAndFlush(consultation);
+
+        assertThat(analysisJobRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), consultation.getCaseInputRevision(),
+                consultation.getFollowUpAnswerRevision())).isEmpty();
     }
 
     private AnalysisAiResult readyForReport() {

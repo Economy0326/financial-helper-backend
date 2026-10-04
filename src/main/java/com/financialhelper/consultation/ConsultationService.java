@@ -7,6 +7,7 @@ import com.financialhelper.account.AccountSessionService;
 import com.financialhelper.account.AccountConsultationQuotaService;
 import com.financialhelper.account.AccountRepository;
 import com.financialhelper.procedure.CardCaseFactExtractor;
+import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionResolution;
@@ -32,6 +33,7 @@ public class ConsultationService {
     private final AccountProperties accountProperties;
     private final AccountConsultationQuotaService consultationQuotaService;
     private final AccountRepository accountRepository;
+    private final FollowUpQuestionRepository followUpQuestionRepository;
 
     @Autowired
     public ConsultationService(
@@ -40,7 +42,7 @@ public class ConsultationService {
             AccountSessionService accountSessionService,
             AccountProperties accountProperties,
             AccountConsultationQuotaService consultationQuotaService,
-            AccountRepository accountRepository
+            AccountRepository accountRepository, FollowUpQuestionRepository followUpQuestionRepository
     ) {
         this.consultationRepository = consultationRepository;
         this.guestSessionService = guestSessionService;
@@ -48,6 +50,7 @@ public class ConsultationService {
         this.accountProperties = accountProperties;
         this.consultationQuotaService = consultationQuotaService;
         this.accountRepository = accountRepository;
+        this.followUpQuestionRepository = followUpQuestionRepository;
     }
 
     /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
@@ -58,7 +61,7 @@ public class ConsultationService {
             AccountProperties accountProperties
     ) {
         this(consultationRepository, guestSessionService, accountSessionService,
-                accountProperties, null, null);
+                accountProperties, null, null, null);
     }
 
     /** 기존 unit test와 non-web caller를 위한 호환 생성자다. */
@@ -66,7 +69,7 @@ public class ConsultationService {
             ConsultationRepository consultationRepository,
             GuestSessionService guestSessionService
     ) {
-        this(consultationRepository, guestSessionService, null, null, null, null);
+        this(consultationRepository, guestSessionService, null, null, null, null, null);
     }
 
     private static final Set<ConsultationStep>
@@ -294,6 +297,31 @@ public class ConsultationService {
     }
 
     @Transactional
+    public ConfirmSuggestedScenarioResponse confirmSuggestedScenario(UUID consultationId, String rawToken,
+            ConfirmSuggestedScenarioRequest request) {
+        Consultation consultation = findOwnedConsultation(consultationId,
+                guestSessionService.requireValidSession(rawToken));
+        if (consultation.getCaseInputRevision() != request.expectedCaseInputRevision()) {
+            throw new InvalidConsultationStateException();
+        }
+        ConsultationScenario detected = ConsultationScenarioResolver.resolve(consultation.getCategory(),
+                consultation.getSituationText());
+        if (consultation.getScenario() == null || consultation.getScenario() == ConsultationScenario.UNKNOWN
+                || detected == ConsultationScenario.UNKNOWN || detected != request.scenario()
+                || consultation.getScenario() == detected) {
+            throw new InvalidConsultationStateException();
+        }
+        if (followUpQuestionRepository != null) {
+            followUpQuestionRepository.deleteAll(followUpQuestionRepository
+                    .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(consultationId,
+                            consultation.getCaseInputRevision()));
+        }
+        consultation.confirmSuggestedScenario(detected, OffsetDateTime.now(ZoneOffset.UTC));
+        return new ConfirmSuggestedScenarioResponse(detected, ScenarioAlignment.SELECTED_SCENARIO_MATCH,
+                consultation.getCaseInputRevision(), consultation.getCurrentStep());
+    }
+
+    @Transactional
     public UpdateConsultationSituationResponse updateSituation(
             UUID consultationId,
             String rawToken,
@@ -337,6 +365,7 @@ public class ConsultationService {
             throw new UnsupportedConsultationScopeException();
         }
 
+        ConsultationScenario selectedScenario = consultation.getScenario();
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         if (explicitFailedAnalysisEdit) {
             consultation.replaceFailedAnalysisSituation(
@@ -346,18 +375,12 @@ public class ConsultationService {
                     request.situationText(), now);
         }
 
-        // 새로 제출된 명시적 situation으로 다시 판정한다. 저장된 scenario는 후속
-        // 조회용 cache이며 사용자의 명시적 수정이 지원 scenario 사이를 이동하는 것을 막아서는 안 된다.
+        // 새 Situation은 후속 경로에서 resolver가 다시 판정한다. 사용자가 선택한
+        // scenario 자체를 조용히 덮어쓰지 않아 Frontend가 mismatch를 확인·변경할 수 있다.
         ConsultationScenario resolved = ConsultationScenarioResolver.resolve(
                 consultation.getCategory(), request.situationText());
-        // 수정된 situation에 명시적인 지원 신호가 더 이상 없으면 이전 breadth
-        // scenario 판정을 삭제한다. 오래된 scenario가 새 문장을 이전
-        // Procedure/FAP 범위로 연결해서는 안 된다.
-        consultation.assignScenario(resolved, now);
 
-        return UpdateConsultationSituationResponse.from(
-                consultation
-        );
+        return UpdateConsultationSituationResponse.from(consultation, selectedScenario, resolved);
     }
 
     // 해당 상담이 Guest 소속인가

@@ -563,6 +563,11 @@ public class AnalysisPersistenceService {
             UUID jobId,
             String failureCode
     ) {
+        fail(jobId, failureCode, null);
+    }
+
+    @Transactional
+    public void fail(UUID jobId, String failureCode, String evidenceFailureReason) {
 
         AnalysisJob job =
                 analysisJobRepository
@@ -587,10 +592,7 @@ public class AnalysisPersistenceService {
                 );
 
         // 해당 과거 Job 자체의 사실 기록
-        job.fail(
-                failureCode,
-                now
-        );
+        job.fail(failureCode, evidenceFailureReason, now);
 
         Consultation consultation =
                 consultationRepository
@@ -1061,6 +1063,7 @@ public class AnalysisPersistenceService {
             return new AnalysisStateResponse(
                     AnalysisJobStatus.INSUFFICIENT_INFORMATION.name(),
                     response.failureCode(),
+                    response.evidenceFailureReason(),
                     response.attemptCount(),
                     response.informationSupplementCount(),
                     false,

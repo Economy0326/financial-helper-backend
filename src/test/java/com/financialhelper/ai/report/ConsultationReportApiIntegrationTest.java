@@ -110,6 +110,30 @@ class ConsultationReportApiIntegrationTest {
         guestSessionRepository.deleteAll();
     }
 
+    @Test
+    void doesNotReusePreviousRevisionReportAfterCaseRevisionChanges() throws Exception {
+        TestContext context = createAnalysisCompletedContext();
+        Consultation consultation = context.consultation();
+        long oldCaseRevision = consultation.getCaseInputRevision();
+        long oldFollowUpRevision = consultation.getFollowUpAnswerRevision();
+        AnalysisJob oldJob = analysisJobRepository
+                .findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                        consultation.getId(), oldCaseRevision, oldFollowUpRevision).orElseThrow();
+        ConsultationReport oldReport = reportRepository.saveAndFlush(new ConsultationReport(consultation,
+                oldJob, oldCaseRevision, oldFollowUpRevision, "gpt-5.6-luna", "{}", OffsetDateTime.now(ZoneOffset.UTC)));
+
+        assertThat(reportRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), oldCaseRevision, oldFollowUpRevision))
+                .map(ConsultationReport::getId).contains(oldReport.getId());
+
+        consultation.updateSituation("수정된 상담 내용", OffsetDateTime.now(ZoneOffset.UTC));
+        consultationRepository.saveAndFlush(consultation);
+
+        assertThat(reportRepository.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultation.getId(), consultation.getCaseInputRevision(), consultation.getFollowUpAnswerRevision()))
+                .isEmpty();
+    }
+
     // 같은 revision의 Report는 한 번만 생성되고, 이후 요청과 GET에서는 지정된 Report를 재사용하는지 검증
     @Test
     void preparesReportOnceAndReadsPersistedReport()

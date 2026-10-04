@@ -41,6 +41,18 @@ public class StructuredFollowUpService {
                 clarificationAskedKeys, scenario);
     }
 
+    public boolean hasActionCandidate(ConfirmedCaseSnapshotData snapshot) {
+        ConsultationScenario scenario = scenario(snapshot);
+        CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? CardCaseFactExtractor.fromSnapshot(snapshot)
+                : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
+        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? procedureVersionService.requireApprovedCard(facts)
+                : procedureVersionService.requireApproved(scenario.name(),
+                        "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
+        return ActionDependencyEvaluator.hasCandidate(procedure, facts);
+    }
+
     public StructuredFollowUpData specify(
             ProcedureVersionData procedure,
             CardCaseFacts facts,

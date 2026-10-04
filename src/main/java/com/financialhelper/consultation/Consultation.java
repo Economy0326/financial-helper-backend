@@ -248,6 +248,14 @@ public class Consultation {
         this.updatedAt = updatedAt;
     }
 
+    public void confirmSuggestedScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
+        this.scenario = scenario;
+        markCaseInputChanged();
+        this.status = ConsultationStatus.IN_PROGRESS;
+        this.currentStep = ConsultationStep.FOLLOW_UP;
+        this.updatedAt = updatedAt;
+    }
+
     /** 파생 값을 두 번째 사용자 입력 revision으로 처리하지 않고 이후 조회를 위해 결정적 scenario 판정을 저장한다. */
     public void assignScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
         if (scenario != null && this.scenario != scenario) this.scenario = scenario;
