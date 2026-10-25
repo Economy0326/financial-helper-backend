@@ -5,13 +5,33 @@ import com.financialhelper.guest.GuestSession;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
+import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Nested;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import com.financialhelper.source.ActiveRetrievalGenerationPersistenceService;
+import com.financialhelper.source.RetrievalGeneration;
+import com.financialhelper.source.RetrievalGenerationStatus;
+import com.financialhelper.source.SourceChunk;
+import com.financialhelper.source.SourceChunkIndexing;
+import com.financialhelper.source.SourceChunkIndexingRepository;
+import com.financialhelper.source.SourceChunkIndexingStatus;
+import com.financialhelper.source.SourceChunkRepository;
+import com.financialhelper.source.SourceChunkReviewStatus;
+import com.financialhelper.source.SourceDocument;
+import com.financialhelper.source.SourceDocumentRepository;
+import com.financialhelper.source.SourceDocumentStatus;
+import com.financialhelper.source.SourceRegistry;
+import com.financialhelper.source.SourceRegistryRepository;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -23,8 +43,99 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.nullable;
 
 class FinancialActionPlanServiceTest {
+    @Test
+    void accountLawDateSelectorUsesTransactionDateRegardlessOfFactOrder() {
+        AnalysisEvidenceSnapshotService snapshots = new AnalysisEvidenceSnapshotService(
+                null, null, null, null, null, null, null, null, null, null, null, null,
+                mock(org.springframework.transaction.PlatformTransactionManager.class));
+        ConfirmedCaseSnapshotData.Fact transaction = new ConfirmedCaseSnapshotData.Fact(
+                "FOLLOW_UP", "transactionDate", "2026-04-12", "거래일", "USER", null);
+        ConfirmedCaseSnapshotData.Fact incident = new ConfirmedCaseSnapshotData.Fact(
+                "FOLLOW_UP", "incidentDate", "2026-05-20", "발생일", "USER", null);
+
+        LocalDate transactionOnly = ReflectionTestUtils.invokeMethod(snapshots, "incidentDate",
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), UUID.randomUUID(), 2, 1,
+                        List.of(transaction), List.of(), null),
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        LocalDate incidentFirst = ReflectionTestUtils.invokeMethod(snapshots, "incidentDate",
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), UUID.randomUUID(), 2, 1,
+                        List.of(incident, transaction), List.of(), null),
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        LocalDate transactionFirst = ReflectionTestUtils.invokeMethod(snapshots, "incidentDate",
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), UUID.randomUUID(), 2, 1,
+                        List.of(transaction, incident), List.of(), null),
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+        LocalDate incidentOnly = ReflectionTestUtils.invokeMethod(snapshots, "incidentDate",
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), UUID.randomUUID(), 2, 1,
+                        List.of(incident), List.of(), null),
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+
+        assertThat(transactionOnly).isEqualTo(LocalDate.parse("2026-04-12"));
+        assertThat(incidentFirst).isEqualTo(LocalDate.parse("2026-04-12"));
+        assertThat(transactionFirst).isEqualTo(LocalDate.parse("2026-04-12"));
+        assertThat(incidentOnly).isNull();
+        LocalDate voiceDate = ReflectionTestUtils.invokeMethod(snapshots, "incidentDate",
+                new ConfirmedCaseSnapshotData(UUID.randomUUID(), UUID.randomUUID(), 2, 1,
+                        List.of(transaction, incident), List.of(), null),
+                ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER);
+        assertThat(voiceDate).isEqualTo(LocalDate.parse("2026-05-20"));
+    }
+
+    @Test
+    void sourceOutsideTransactionDateIsRejectedOnlyWhenResolverReceivesTheDate() {
+        LocalDate transactionDate = LocalDate.parse("2026-04-12");
+        ProcedureVersionData.EvidenceReference reference = new ProcedureVersionData.EvidenceReference(
+                "synthetic-account-source", 1, "synthetic-hash", null, null, "PROCEDURE", true);
+        SourceRegistryRepository registries = mock(SourceRegistryRepository.class);
+        SourceDocumentRepository documents = mock(SourceDocumentRepository.class);
+        SourceChunkRepository chunks = mock(SourceChunkRepository.class);
+        SourceChunkIndexingRepository indexings = mock(SourceChunkIndexingRepository.class);
+        ActiveRetrievalGenerationPersistenceService generations =
+                mock(ActiveRetrievalGenerationPersistenceService.class);
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        SourceRegistry registry = mock(SourceRegistry.class);
+        SourceDocument document = mock(SourceDocument.class);
+        SourceChunk chunk = mock(SourceChunk.class);
+        SourceChunkIndexing indexing = mock(SourceChunkIndexing.class);
+        UUID generationId = UUID.randomUUID();
+        UUID registryId = UUID.randomUUID();
+        UUID documentId = UUID.randomUUID();
+        UUID chunkId = UUID.randomUUID();
+        when(generations.current()).thenReturn(Optional.of(generation));
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(generation.getId()).thenReturn(generationId);
+        when(registries.findBySourceKeyAndEnabledTrue(reference.sourceKey()))
+                .thenReturn(Optional.of(registry));
+        when(registry.getId()).thenReturn(registryId);
+        when(documents.findBySourceRegistry_IdAndStatus(registryId, SourceDocumentStatus.ACTIVE))
+                .thenReturn(Optional.of(document));
+        when(document.getId()).thenReturn(documentId);
+        when(document.getDocumentVersion()).thenReturn(1);
+        when(document.getRawSha256()).thenReturn("synthetic-hash");
+        when(document.getApplicabilityStartDate()).thenReturn(LocalDate.parse("2026-01-01"));
+        when(document.getApplicabilityEndDate()).thenReturn(LocalDate.parse("2026-03-31"));
+        when(chunks.findAllBySourceDocument_IdOrderBySequenceAsc(documentId)).thenReturn(List.of(chunk));
+        when(chunk.getId()).thenReturn(chunkId);
+        when(chunk.getReviewStatus()).thenReturn(SourceChunkReviewStatus.APPROVED);
+        when(indexings.findBySourceChunk_IdAndRetrievalGeneration_Id(chunkId, generationId))
+                .thenReturn(Optional.of(indexing));
+        when(indexing.getIndexingStatus()).thenReturn(SourceChunkIndexingStatus.READY);
+        EvidenceBindingResolver resolver = new EvidenceBindingResolver(
+                registries, documents, chunks, indexings, generations);
+
+        EvidenceBindingResolver.Resolution withDate = resolver.resolve(List.of(reference), transactionDate);
+        EvidenceBindingResolver.Resolution withoutDate = resolver.resolve(List.of(reference), null);
+
+        assertThat(withDate.bindings()).isEmpty();
+        assertThat(withDate.coverageGaps()).contains("EVIDENCE_NOT_APPLICABLE:synthetic-account-source");
+        assertThat(withoutDate.bindings())
+                .as("the resolver alone cannot enforce a date omitted by its caller")
+                .hasSize(1);
+    }
+
     @Test
     void previouslySavedReadyPlanWithMissingActionRoleIsNotReturnedAsReady() throws Exception {
         ConsultationRepository consultations = mock(ConsultationRepository.class);
@@ -75,12 +186,177 @@ class FinancialActionPlanServiceTest {
         assertThat(result.coverageGaps()).contains("ACTION_EVIDENCE_ROLE_UNAVAILABLE");
     }
 
+    @Test
+    void previouslySavedReadyAccountPlanWithoutTransactionDateIsNotReturnedAsReady() throws Exception {
+        ConsultationRepository consultations = mock(ConsultationRepository.class);
+        GuestSessionService sessions = mock(GuestSessionService.class);
+        FinancialActionPlanRepository plans = mock(FinancialActionPlanRepository.class);
+        Consultation consultation = mock(Consultation.class);
+        GuestSession guest = mock(GuestSession.class);
+        FinancialActionPlan saved = mock(FinancialActionPlan.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshot savedSnapshot =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshot.class);
+        UUID consultationId = UUID.randomUUID();
+        UUID guestId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+        UUID snapshotId = UUID.randomUUID();
+        UUID procedureId = UUID.randomUUID();
+        tools.jackson.databind.json.JsonMapper mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        FinancialActionPlanData oldReady = new FinancialActionPlanData(
+                planId, consultationId, snapshotId, procedureId,
+                "UNAUTHORIZED_ACCOUNT_TRANSFER", 1, 2, 1, PlanStatus.READY,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        when(sessions.requireValidSession("token")).thenReturn(guest);
+        when(guest.getId()).thenReturn(guestId);
+        when(consultations.findByIdAndGuestSession_Id(consultationId, guestId))
+                .thenReturn(Optional.of(consultation));
+        when(consultation.getId()).thenReturn(consultationId);
+        when(consultation.getCaseInputRevision()).thenReturn(2L);
+        when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(plans.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(consultationId))
+                .thenReturn(Optional.of(saved));
+        when(saved.getCaseInputRevision()).thenReturn(2L);
+        when(saved.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(saved.getPlanJson()).thenReturn(mapper.writeValueAsString(oldReady));
+        when(saved.getId()).thenReturn(planId);
+        when(saved.getConfirmedCaseSnapshot()).thenReturn(savedSnapshot);
+        when(savedSnapshot.getFactsJson()).thenReturn(mapper.writeValueAsString(List.of(
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "incidentDate", "2026-05-20",
+                        "발생일", "USER", null))));
+
+        FinancialActionPlanService service = new FinancialActionPlanService(
+                consultations, sessions, mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class),
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository.class),
+                mock(ProcedureVersionRepository.class), mock(ProcedureVersionService.class),
+                mock(EvidenceBindingResolver.class), plans, mapper);
+        FinancialActionPlanData result = service.getLatest(consultationId, "token");
+
+        assertThat(result.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.unresolvedFacts()).contains("transactionDate");
+    }
+
     /** Real migrated Procedure declarations; only the approved-source resolution is simulated. */
     @Nested
     @SpringBootTest
     @ActiveProfiles("test")
     class SeededActionEvidenceRoleTests {
         @Autowired private ProcedureVersionService seededProcedures;
+
+        @Test
+        void accountTransactionDateMustReachSourceResolverWithoutIncidentDate() {
+            LocalDate transactionDate = LocalDate.parse("2026-04-12");
+            List<LocalDate> passedDates = new ArrayList<>();
+            FinancialActionPlanData plan = evaluateAccountDate(
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE",
+                            "transactionDate", transactionDate.toString()), passedDates);
+
+            assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+            assertThat(passedDates).as("ACCOUNT source applicability must use the confirmed transaction date")
+                    .containsExactly(transactionDate);
+        }
+
+        @Test
+        void accountDifferentDatesRecordsWhichSourceDateWasChosen() {
+            LocalDate incidentDate = LocalDate.parse("2026-05-20");
+            List<LocalDate> passedDates = new ArrayList<>();
+            FinancialActionPlanData plan = evaluateAccountDate(
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE",
+                            "transactionDate", "2026-04-12", "incidentDate", incidentDate.toString()),
+                    passedDates);
+
+            assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+            assertThat(passedDates).containsExactly(LocalDate.parse("2026-04-12"));
+        }
+
+        @Test
+        void unknownAccountTransactionDateMustNotProduceReadyPlanWithUncheckedSourceDate() {
+            List<LocalDate> passedDates = new ArrayList<>();
+            FinancialActionPlanData plan = evaluateAccountDate(
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE",
+                            "transactionDate", "UNKNOWN"), passedDates);
+
+            assertThat(passedDates).isEmpty();
+            assertThat(plan.status()).as("a missing applicability date must not confirm a READY plan")
+                    .isNotEqualTo(PlanStatus.READY);
+            assertThat(plan.unresolvedFacts()).contains("transactionDate");
+        }
+
+        @Test
+        void missingOrInvalidAccountTransactionDateCannotUseIncidentDate() {
+            for (Map<String, String> values : List.of(
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE"),
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE",
+                            "incidentDate", "2026-05-20"),
+                    Map.of("unauthorizedTransaction", "TRUE", "accessCredentialExposed", "FALSE",
+                            "transactionDate", "not-a-date", "incidentDate", "2026-05-20"))) {
+                List<LocalDate> passedDates = new ArrayList<>();
+                FinancialActionPlanData plan = evaluateAccountDate(values, passedDates);
+
+                assertThat(plan.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+                assertThat(plan.unresolvedFacts()).contains("transactionDate");
+                assertThat(plan.actions()).isEmpty();
+                assertThat(passedDates).isEmpty();
+            }
+        }
+
+        @Test
+        void accountSourceApplicabilityUsesTransactionDateAtPeriodBoundary() {
+            Map<String, String> inPeriod = Map.of("unauthorizedTransaction", "TRUE",
+                    "accessCredentialExposed", "FALSE", "transactionDate", "2026-03-31");
+            Map<String, String> outsidePeriod = Map.of("unauthorizedTransaction", "TRUE",
+                    "accessCredentialExposed", "FALSE", "transactionDate", "2026-04-12");
+            List<LocalDate> inPeriodDates = new ArrayList<>();
+            List<LocalDate> outsidePeriodDates = new ArrayList<>();
+
+            FinancialActionPlanData allowed = evaluateAccountDate(inPeriod, inPeriodDates,
+                    LocalDate.parse("2026-03-31"));
+            FinancialActionPlanData blocked = evaluateAccountDate(outsidePeriod, outsidePeriodDates,
+                    LocalDate.parse("2026-03-31"));
+
+            assertThat(allowed.status()).isEqualTo(PlanStatus.READY);
+            assertThat(inPeriodDates).containsExactly(LocalDate.parse("2026-03-31"));
+            assertThat(blocked.status()).isNotEqualTo(PlanStatus.READY);
+            assertThat(blocked.coverageGaps()).contains("EVIDENCE_NOT_APPLICABLE:synthetic-account-source");
+            assertThat(outsidePeriodDates).containsExactly(LocalDate.parse("2026-04-12"));
+        }
+
+        private FinancialActionPlanData evaluateAccountDate(Map<String, String> values,
+                                                             List<LocalDate> passedDates) {
+            return evaluateAccountDate(values, passedDates, null);
+        }
+
+        private FinancialActionPlanData evaluateAccountDate(Map<String, String> values,
+                                                             List<LocalDate> passedDates,
+                                                             LocalDate sourceEndDate) {
+            ProcedureVersionData procedure = breadth("UNAUTHORIZED_ACCOUNT_TRANSFER");
+            assertThat(procedure.requiredFacts().stream()
+                    .filter(fact -> "transactionDate".equals(fact.key()))
+                    .map(ProcedureVersionData.RequiredFact::requiredForDecision))
+                    .containsExactly(true);
+            ProcedureVersionService applicability = mock(ProcedureVersionService.class);
+            EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+            when(applicability.isApplicable(any(), nullable(LocalDate.class))).thenReturn(true);
+            when(resolver.resolve(anyList(), nullable(LocalDate.class))).thenAnswer(invocation -> {
+                LocalDate date = invocation.getArgument(1, LocalDate.class);
+                passedDates.add(date);
+                if (sourceEndDate != null && date != null && date.isAfter(sourceEndDate)) {
+                    return new EvidenceBindingResolver.Resolution(List.of(),
+                            List.of("EVIDENCE_NOT_APPLICABLE:synthetic-account-source"));
+                }
+                List<ProcedureVersionData.EvidenceReference> references = invocation.getArgument(0);
+                List<FinancialActionPlanData.EvidenceBinding> bindings = references.stream()
+                        .filter(reference -> "PROCEDURE".equals(reference.role()))
+                        .map(reference -> new FinancialActionPlanData.EvidenceBinding(
+                                reference.sourceKey(), UUID.randomUUID(), reference.documentVersion(),
+                                List.of(UUID.randomUUID()), reference.articleReference(),
+                                reference.pageReference(), reference.role()))
+                        .toList();
+                return new EvidenceBindingResolver.Resolution(bindings, List.of());
+            });
+            return service(applicability, resolver).buildFromSnapshot(
+                    snapshot(), procedure, ScenarioCaseFactExtractor.fromValues(values));
+        }
 
         @Test
         void cardInvestigationActionNeedsMissingInvestigationRole() {

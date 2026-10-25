@@ -163,8 +163,14 @@ public class FinancialActionPlanService {
         }
 
         boolean cardProcedure = ProcedureVersionService.isCardProcedureScenario(procedure.scenario());
-        LocalDate incidentDate = incidentDate(facts, unresolved, !cardProcedure);
-        if (!procedureVersionService.isApplicable(procedure, incidentDate)) {
+        boolean accountProcedure = "UNAUTHORIZED_ACCOUNT_TRANSFER".equals(procedure.scenario());
+        LocalDate applicabilityDate = accountProcedure
+                ? parseDate(facts.value("transactionDate"))
+                : incidentDate(facts, unresolved, !cardProcedure);
+        if (accountProcedure && applicabilityDate == null) {
+            unresolved.add("transactionDate");
+        }
+        if (!procedureVersionService.isApplicable(procedure, applicabilityDate)) {
             coverageGaps.add("PROCEDURE_NOT_APPLICABLE_FOR_INCIDENT_DATE");
         }
         if (!matchesScope(procedure.scenario(), facts, unresolved)) {
@@ -175,6 +181,10 @@ public class FinancialActionPlanService {
                     procedure.id(), procedure.scenario(), procedure.version(), safeFactSummary(facts));
             return data(snapshot, procedure, PlanStatus.UNSUPPORTED, List.of(), List.of(),
                     List.of(), unresolved, List.of(scopeGap), warnings);
+        }
+        if (accountProcedure && applicabilityDate == null) {
+            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
+                    List.of(), unresolved, coverageGaps, List.of("ACCOUNT_TRANSACTION_DATE_REQUIRED"));
         }
         // Procedure catalog에는 이후 branch에 유용하지만 현재 선택된 action과는
         // 무관한 fact가 있을 수 있다. action 또는 document 조건에 참여하는 required
@@ -227,10 +237,10 @@ public class FinancialActionPlanService {
                 .filter(reference -> !cardProcedure
                         || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
                         || "TRUE".equalsIgnoreCase(facts.value("reported"))
-                        || incidentDate == null)
+                        || applicabilityDate == null)
                 .toList();
         EvidenceBindingResolver.Resolution resolution = evidenceResolver.resolve(
-                applicableReferences, incidentDate);
+                applicableReferences, applicabilityDate);
         coverageGaps.addAll(resolution.coverageGaps());
         if (!coverageGaps.isEmpty()) {
             return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
@@ -653,6 +663,37 @@ public class FinancialActionPlanService {
             FinancialActionPlanData parsed = jsonMapper.readValue(
                     plan.getPlanJson(), FinancialActionPlanData.class);
             FinancialActionPlanData stored = withId(parsed, plan.getId());
+            if (stored.status() == PlanStatus.READY
+                    && "UNAUTHORIZED_ACCOUNT_TRANSFER".equals(stored.scenario())) {
+                ConfirmedCaseSnapshotData.Fact[] savedFacts = jsonMapper.readValue(
+                        plan.getConfirmedCaseSnapshot().getFactsJson(), ConfirmedCaseSnapshotData.Fact[].class);
+                ConfirmedCaseSnapshotData snapshot = new ConfirmedCaseSnapshotData(
+                        stored.confirmedCaseSnapshotId(), stored.consultationId(),
+                        stored.caseInputRevision(), stored.followUpAnswerRevision(),
+                        savedFacts == null ? List.of() : List.of(savedFacts), List.of(), null);
+                LocalDate transactionDate = parseDate(
+                        ScenarioCaseFactExtractor.fromSnapshot(snapshot).value("transactionDate"));
+                if (transactionDate == null) {
+                    return new FinancialActionPlanData(
+                            stored.id(), stored.consultationId(), stored.confirmedCaseSnapshotId(),
+                            stored.procedureVersionId(), stored.scenario(), stored.procedureVersion(),
+                            stored.caseInputRevision(), stored.followUpAnswerRevision(),
+                            PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(), List.of(),
+                            List.of("transactionDate"), stored.coverageGaps(),
+                            List.of("ACCOUNT_TRANSACTION_DATE_REQUIRED"));
+                }
+                EvidenceBindingResolver.Resolution currentEvidence = evidenceResolver.resolve(
+                        procedureVersionService.toData(plan.getProcedureVersion()).evidenceReferences(),
+                        transactionDate);
+                if (!currentEvidence.coverageGaps().isEmpty()) {
+                    return new FinancialActionPlanData(
+                            stored.id(), stored.consultationId(), stored.confirmedCaseSnapshotId(),
+                            stored.procedureVersionId(), stored.scenario(), stored.procedureVersion(),
+                            stored.caseInputRevision(), stored.followUpAnswerRevision(), PlanStatus.FAILED,
+                            List.of(), List.of(), List.of(), stored.unresolvedFacts(),
+                            currentEvidence.coverageGaps(), stored.warnings());
+                }
+            }
             if (stored.status() == PlanStatus.READY
                     && selectedActionMissingRole(procedureVersionService.toData(plan.getProcedureVersion()),
                             stored.actions(), stored.evidence())) {
