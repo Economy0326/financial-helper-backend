@@ -256,6 +256,15 @@ public class FinancialActionPlanService {
         }
         actions.sort(Comparator.comparingInt(FinancialActionPlanData.Action::order));
 
+        // Resolve all Procedure references first, then require every selected Action's
+        // declared role. A role on another reference is not a substitute for a
+        // missing role, and an unselected Action cannot block this Plan.
+        if (selectedActionMissingRole(procedure, actions, resolution.bindings())) {
+            return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
+                    resolution.bindings(), unresolved,
+                    List.of("ACTION_EVIDENCE_ROLE_UNAVAILABLE"), warnings);
+        }
+
         List<FinancialActionPlanData.Document> documents = new ArrayList<>();
         for (ProcedureVersionData.DocumentRequirement requirement : procedure.documentRequirements()) {
             ConditionResult result = ConditionEvaluator.evaluate(requirement.condition(), facts);
@@ -643,10 +652,36 @@ public class FinancialActionPlanService {
         try {
             FinancialActionPlanData parsed = jsonMapper.readValue(
                     plan.getPlanJson(), FinancialActionPlanData.class);
-            return withId(parsed, plan.getId());
+            FinancialActionPlanData stored = withId(parsed, plan.getId());
+            if (stored.status() == PlanStatus.READY
+                    && selectedActionMissingRole(procedureVersionService.toData(plan.getProcedureVersion()),
+                            stored.actions(), stored.evidence())) {
+                return new FinancialActionPlanData(
+                        stored.id(), stored.consultationId(), stored.confirmedCaseSnapshotId(),
+                        stored.procedureVersionId(), stored.scenario(), stored.procedureVersion(),
+                        stored.caseInputRevision(), stored.followUpAnswerRevision(), PlanStatus.FAILED,
+                        List.of(), List.of(), stored.evidence(), stored.unresolvedFacts(),
+                        List.of("ACTION_EVIDENCE_ROLE_UNAVAILABLE"), stored.warnings());
+            }
+            return stored;
         } catch (JacksonException exception) {
             throw new IllegalStateException("stored financial action plan is invalid", exception);
         }
+    }
+
+    private boolean selectedActionMissingRole(
+            ProcedureVersionData procedure,
+            List<FinancialActionPlanData.Action> actions,
+            List<FinancialActionPlanData.EvidenceBinding> bindings
+    ) {
+        Set<String> resolvedRoles = bindings.stream()
+                .map(FinancialActionPlanData.EvidenceBinding::role)
+                .collect(java.util.stream.Collectors.toSet());
+        return actions.stream().anyMatch(action -> procedure.actionSteps().stream()
+                .filter(step -> step.actionId().equals(action.actionId()))
+                .findFirst()
+                .map(step -> !resolvedRoles.containsAll(step.evidenceRoles()))
+                .orElse(true));
     }
 
     /** 두 번째 snapshot 구현을 만들지 않으면서 dependency 경계를 명확하게 유지한다. */

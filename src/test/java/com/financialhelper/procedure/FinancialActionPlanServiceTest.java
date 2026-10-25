@@ -1,20 +1,267 @@
 package com.financialhelper.procedure;
 
 import com.financialhelper.guest.GuestSessionService;
+import com.financialhelper.guest.GuestSession;
+import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Nested;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 
 class FinancialActionPlanServiceTest {
+    @Test
+    void previouslySavedReadyPlanWithMissingActionRoleIsNotReturnedAsReady() throws Exception {
+        ConsultationRepository consultations = mock(ConsultationRepository.class);
+        GuestSessionService sessions = mock(GuestSessionService.class);
+        FinancialActionPlanRepository plans = mock(FinancialActionPlanRepository.class);
+        ProcedureVersionService procedures = mock(ProcedureVersionService.class);
+        Consultation consultation = mock(Consultation.class);
+        GuestSession guest = mock(GuestSession.class);
+        FinancialActionPlan saved = mock(FinancialActionPlan.class);
+        ProcedureVersion version = mock(ProcedureVersion.class);
+        UUID consultationId = UUID.randomUUID();
+        UUID guestId = UUID.randomUUID();
+        UUID planId = UUID.randomUUID();
+        tools.jackson.databind.json.JsonMapper mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        ProcedureVersionData procedure = cardBranchProcedure(ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO);
+        FinancialActionPlanData oldReady = new FinancialActionPlanData(
+                planId, consultationId, UUID.randomUUID(), procedure.id(), procedure.scenario(),
+                procedure.version(), 2, 1, PlanStatus.READY,
+                List.of(new FinancialActionPlanData.Action("confirm-held-card-payment", 1,
+                        "미인지 신용판매 확인", "공식 접수 대상인지 확인합니다.",
+                        ConditionResult.TRUE, "kb-card-compensation-process")),
+                List.of(), List.of(), List.of(), List.of(), List.of());
+        when(sessions.requireValidSession("token")).thenReturn(guest);
+        when(guest.getId()).thenReturn(guestId);
+        when(consultations.findByIdAndGuestSession_Id(consultationId, guestId))
+                .thenReturn(Optional.of(consultation));
+        when(consultation.getId()).thenReturn(consultationId);
+        when(consultation.getCaseInputRevision()).thenReturn(2L);
+        when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(plans.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(consultationId))
+                .thenReturn(Optional.of(saved));
+        when(saved.getCaseInputRevision()).thenReturn(2L);
+        when(saved.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(saved.getPlanJson()).thenReturn(mapper.writeValueAsString(oldReady));
+        when(saved.getId()).thenReturn(planId);
+        when(saved.getProcedureVersion()).thenReturn(version);
+        when(procedures.toData(version)).thenReturn(procedure);
+
+        FinancialActionPlanService service = new FinancialActionPlanService(
+                consultations, sessions, mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class),
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository.class),
+                mock(ProcedureVersionRepository.class), procedures, mock(EvidenceBindingResolver.class),
+                plans, mapper);
+        FinancialActionPlanData result = service.getLatest(consultationId, "token");
+
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.coverageGaps()).contains("ACTION_EVIDENCE_ROLE_UNAVAILABLE");
+    }
+
+    /** Real migrated Procedure declarations; only the approved-source resolution is simulated. */
+    @Nested
+    @SpringBootTest
+    @ActiveProfiles("test")
+    class SeededActionEvidenceRoleTests {
+        @Autowired private ProcedureVersionService seededProcedures;
+
+        @Test
+        void cardInvestigationActionNeedsMissingInvestigationRole() {
+            assertMissingRole(seededProcedures.requireApprovedCard(), cardFacts("RESULT_RECEIVED"),
+                    "review-investigation-result", "INVESTIGATION");
+        }
+
+        @Test
+        void cardResultReviewActionNeedsMissingFollowUpRole() {
+            assertMissingRole(seededProcedures.requireApprovedCard(), cardFacts("RESULT_RECEIVED"),
+                    "request-result-review", "FOLLOW_UP");
+        }
+
+        @Test
+        void cardCompensationResultReviewNeedsMissingFollowUpRole() {
+            ProcedureVersionData procedure = seededProcedures.requireApprovedCard(
+                    cardFacts("RESULT_RECEIVED"));
+            assertThat(procedure.scenario()).isEqualTo(ProcedureVersionService.CARD_COMPENSATION_RESULT_SCENARIO);
+            assertMissingRole(procedure, cardFacts("RESULT_RECEIVED"),
+                    "request-result-review", "FOLLOW_UP");
+        }
+
+        @Test
+        void voiceFinancialReportNeedsProcedureRatherThanSafeGuidance() {
+            assertMissingRole(breadth("VOICE_PHISHING_SUSPICIOUS_TRANSFER"), voiceFacts(),
+                    "voice-report-financial", "PROCEDURE");
+        }
+
+        @Test
+        void voicePoliceReportNeedsProcedureRatherThanSafeGuidance() {
+            assertMissingRole(breadth("VOICE_PHISHING_SUSPICIOUS_TRANSFER"), voiceFacts(),
+                    "voice-report-police", "PROCEDURE");
+        }
+
+        @Test
+        void accountProtectionNeedsSafeGuidanceRatherThanProcedure() {
+            assertMissingRole(breadth("UNAUTHORIZED_ACCOUNT_TRANSFER"), accountFacts(),
+                    "account-transfer-protect", "SAFE_GUIDANCE");
+        }
+
+        @Test
+        void matchingRoleStillAllowsTheVoiceSafeContactAction() {
+            ProcedureVersionData procedure = breadth("VOICE_PHISHING_SUSPICIOUS_TRANSFER");
+            assertThat(action(procedure, "voice-secure-contact").evidenceRoles())
+                    .containsExactly("SAFE_GUIDANCE");
+            assertThat(procedure.evidenceReferences()).extracting(ProcedureVersionData.EvidenceReference::role)
+                    .contains("SAFE_GUIDANCE");
+
+            FinancialActionPlanData plan = evaluate(procedure, voiceFactsWithoutTransfer(), Set.of("SAFE_GUIDANCE"));
+            assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+            assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                    .containsExactly("voice-secure-contact");
+        }
+
+        @Test
+        void allRequiredRolesAllowSelectedCardProcessAction() {
+            CardCaseFacts facts = cardFacts("INVESTIGATING");
+            ProcedureVersionData procedure = seededProcedures.requireApprovedCard(facts);
+            FinancialActionPlanData plan = evaluate(procedure, facts, Set.of("PROCEDURE", "INVESTIGATION"));
+
+            assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+            assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                    .containsExactly("track-compensation-process");
+        }
+
+        @Test
+        void unknownUnselectedActionsDoNotRequireTheirRoles() {
+            ProcedureVersionData procedure = breadth("VOICE_PHISHING_SUSPICIOUS_TRANSFER");
+            CardCaseFacts facts = new CardCaseFacts(Map.of(
+                    "suspiciousTransfer", "TRUE", "transferCompleted", "UNKNOWN",
+                    "incidentDate", "2026-09-20"));
+            FinancialActionPlanData plan = evaluate(procedure, facts, Set.of("SAFE_GUIDANCE"));
+
+            assertThat(plan.status()).isEqualTo(PlanStatus.NEEDS_CLARIFICATION);
+            assertThat(plan.coverageGaps()).doesNotContain("ACTION_EVIDENCE_ROLE_UNAVAILABLE");
+            assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                    .containsExactly("voice-secure-contact");
+        }
+
+        @Test
+        void actionRequiringTwoRolesIsNotGroundedByOnlyOneResolvedRole() {
+            CardCaseFacts facts = cardFacts("INVESTIGATING");
+            ProcedureVersionData procedure = seededProcedures.requireApprovedCard(facts);
+            assertThat(procedure.scenario()).isEqualTo(ProcedureVersionService.CARD_COMPENSATION_PROCESS_SCENARIO);
+            assertThat(action(procedure, "track-compensation-process").evidenceRoles())
+                    .containsExactly("PROCEDURE", "INVESTIGATION");
+            assertThat(procedure.evidenceReferences()).extracting(ProcedureVersionData.EvidenceReference::role)
+                    .contains("PROCEDURE", "INVESTIGATION");
+
+            FinancialActionPlanData plan = evaluate(procedure, facts, Set.of("PROCEDURE"));
+            assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+            assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::role)
+                    .contains("PROCEDURE").doesNotContain("INVESTIGATION");
+            assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                    .as("status=%s; a partially resolved role set must not ground the action", plan.status())
+                    .doesNotContain("track-compensation-process");
+        }
+
+        private void assertMissingRole(ProcedureVersionData procedure, CardCaseFacts facts,
+                                       String actionId, String requiredRole) {
+            assertThat(action(procedure, actionId).evidenceRoles()).containsExactly(requiredRole);
+            assertThat(procedure.evidenceReferences()).extracting(ProcedureVersionData.EvidenceReference::role)
+                    .doesNotContain(requiredRole);
+            ProcedureVersionData.ConditionRule rule = procedure.conditionRules().stream()
+                    .filter(candidate -> candidate.actionId().equals(actionId))
+                    .findFirst().orElseThrow();
+            assertThat(ConditionEvaluator.evaluate(rule.expression(), facts)).isEqualTo(ConditionResult.TRUE);
+
+            FinancialActionPlanData plan = evaluate(procedure, facts,
+                    procedure.evidenceReferences().stream()
+                            .map(ProcedureVersionData.EvidenceReference::role).collect(java.util.stream.Collectors.toSet()));
+            assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+            assertThat(plan.coverageGaps()).contains("ACTION_EVIDENCE_ROLE_UNAVAILABLE");
+            assertThat(plan.unresolvedFacts()).isEmpty();
+            assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::role)
+                    .doesNotContain(requiredRole);
+            assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                    .as("status=%s; %s requires absent role %s", plan.status(), actionId, requiredRole)
+                    .doesNotContain(actionId);
+        }
+
+        private ProcedureVersionData.ActionStep action(ProcedureVersionData procedure, String actionId) {
+            return procedure.actionSteps().stream()
+                    .filter(step -> step.actionId().equals(actionId)).findFirst().orElseThrow();
+        }
+
+        private ProcedureVersionData breadth(String scenario) {
+            return seededProcedures.requireApproved(
+                    scenario, "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT");
+        }
+
+        private FinancialActionPlanData evaluate(ProcedureVersionData procedure, CardCaseFacts facts,
+                                                 Set<String> resolvedRoles) {
+            ProcedureVersionService applicability = mock(ProcedureVersionService.class);
+            EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+            when(applicability.isApplicable(any(), any())).thenReturn(true);
+            when(resolver.resolve(anyList(), any())).thenAnswer(invocation -> {
+                List<ProcedureVersionData.EvidenceReference> references = invocation.getArgument(0);
+                List<FinancialActionPlanData.EvidenceBinding> bindings = references.stream()
+                        .filter(reference -> resolvedRoles.contains(reference.role()))
+                        .map(reference -> new FinancialActionPlanData.EvidenceBinding(
+                                reference.sourceKey(), UUID.randomUUID(), reference.documentVersion(),
+                                List.of(UUID.randomUUID()), reference.articleReference(),
+                                reference.pageReference(), reference.role()))
+                        .toList();
+                return new EvidenceBindingResolver.Resolution(bindings, List.of());
+            });
+            return service(applicability, resolver).buildFromSnapshot(snapshot(), procedure, facts);
+        }
+
+        private CardCaseFacts cardFacts(String compensationStatus) {
+            return new CardCaseFacts(Map.of(
+                    "institution", ProcedureVersionService.KB_INSTITUTION,
+                    "productType", ProcedureVersionService.PERSONAL_CREDIT_CARD,
+                    "cardLost", "TRUE", "unauthorizedPayment", "TRUE",
+                    "transactionType", "CREDIT_SALE", "domestic", "TRUE",
+                    "reported", "TRUE", "incidentDate", "2026-09-20",
+                    "compensationStatus", compensationStatus, "resultDisputed", "TRUE"));
+        }
+
+        private CardCaseFacts voiceFacts() {
+            return new CardCaseFacts(Map.of(
+                    "suspiciousTransfer", "TRUE", "transferCompleted", "TRUE",
+                    "reportedToFinancialInstitution", "FALSE", "policeReported", "FALSE",
+                    "incidentDate", "2026-09-20"));
+        }
+
+        private CardCaseFacts voiceFactsWithoutTransfer() {
+            return new CardCaseFacts(Map.of(
+                    "suspiciousTransfer", "TRUE", "transferCompleted", "FALSE",
+                    "reportedToFinancialInstitution", "TRUE", "policeReported", "TRUE",
+                    "incidentDate", "2026-09-20"));
+        }
+
+        private CardCaseFacts accountFacts() {
+            return new CardCaseFacts(Map.of(
+                    "unauthorizedTransaction", "TRUE", "accessCredentialExposed", "TRUE",
+                    "transactionDate", "2026-09-20"));
+        }
+    }
+
     @Test
     void unknownConditionDoesNotCreateAnAction() {
         ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
@@ -258,7 +505,10 @@ class FinancialActionPlanServiceTest {
         when(procedureService.isApplicable(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(true);
         when(resolver.resolve(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(), List.of()));
+                .thenReturn(new EvidenceBindingResolver.Resolution(
+                        List.of(new FinancialActionPlanData.EvidenceBinding(
+                                "kb-card-compensation-process", UUID.randomUUID(), 1,
+                                List.of(UUID.randomUUID()), null, null, "PROCEDURE")), List.of()));
 
         FinancialActionPlanData result = service(procedureService, resolver).buildFromSnapshot(
                 snapshot(), cardBranchProcedure(ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO),
