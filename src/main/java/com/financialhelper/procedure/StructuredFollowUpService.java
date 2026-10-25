@@ -189,7 +189,7 @@ public class StructuredFollowUpService {
     private boolean clarificationSupported(String factKey) {
         return Set.of(
                 "institution", "productType", "cardLost", "unauthorizedPayment",
-                "reported", "domestic", "transactionType", "incidentDate", "compensationStatus",
+                "reported", "domestic", "transactionType", "incidentDate", "transactionDate", "compensationStatus",
                 "resultDisputed", "transferCompleted", "userInitiatedTransfer",
                 "suspiciousTransfer", "reportedToFinancialInstitution", "policeReported",
                 "unauthorizedTransaction", "financialLossOccurred", "moneyMoved",
@@ -248,6 +248,12 @@ public class StructuredFollowUpService {
                     "사고가 발생한 날짜를 확인해 주세요.",
                     "정확한 날짜를 모르면 모르겠어요를 선택해 주세요.",
                     fact.requiredForDecision(), "CLARIFY_INCIDENT_DATE", true);
+            case "transactionDate" -> new FollowUpQuestionSpec(
+                    fact.key(), FollowUpInputType.DATE,
+                    List.of(option("UNKNOWN", "확인해도 기억나지 않아요", "거래 날짜를 확인하기 어려워요.")),
+                    "계좌 거래 내역에서 해당 거래가 발생한 날짜를 확인해 주세요.",
+                    "거래 날짜를 확인해 입력해 주세요. 확인해도 모르면 모르겠어요를 선택할 수 있어요.",
+                    fact.requiredForDecision(), "CLARIFY_TRANSACTION_DATE", true);
             case "transactionType" -> new FollowUpQuestionSpec(
                     fact.key(), FollowUpInputType.ENUM_SELECT,
                     List.of(

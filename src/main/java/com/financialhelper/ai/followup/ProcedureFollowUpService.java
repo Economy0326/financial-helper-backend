@@ -44,6 +44,11 @@ public class ProcedureFollowUpService {
     public StructuredFollowUpStateResponse prepare(UUID consultationId, String rawToken) {
         StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
         if (unsupported != null) return unsupported;
+        StructuredFollowUpStateResponse insufficient = insufficientState(consultationId);
+        if (insufficient != null && "transactionDate".equals(insufficient.blockingFact().key())) {
+            persistenceService.getState(consultationId, rawToken, null);
+            return insufficient;
+        }
         refresh(consultationId, rawToken);
         List<FollowUpQuestion> current = currentQuestions(consultationId);
         return current.isEmpty()
@@ -61,7 +66,10 @@ public class ProcedureFollowUpService {
         StructuredFollowUpStateResponse unsupported = unsupportedState(consultationId);
         if (unsupported != null) return unsupported;
         StructuredFollowUpStateResponse insufficient = insufficientState(consultationId);
-        if (insufficient != null) return insufficient;
+        if (insufficient != null) {
+            persistenceService.getState(consultationId, rawToken, null);
+            return insufficient;
+        }
         refresh(consultationId, rawToken);
         List<FollowUpQuestion> current = currentQuestions(consultationId);
         return current.isEmpty()
@@ -121,7 +129,8 @@ public class ProcedureFollowUpService {
         FollowUpQuestion lastAnswered = current.isEmpty() ? null : current.getLast();
         if (lastAnswered != null && "UNKNOWN".equalsIgnoreCase(lastAnswered.getAnswerValue())
                 && clarificationAsked.contains(lastAnswered.getFactKey())
-                && !specificationService.hasActionCandidate(snapshot)) {
+                && (accountDateClarificationExhausted(consultation, lastAnswered)
+                    || !specificationService.hasActionCandidate(snapshot))) {
             return;
         }
         if (specification.questions().isEmpty()) {
@@ -199,8 +208,18 @@ public class ProcedureFollowUpService {
         if (!last.isAnswered() || !"UNKNOWN".equalsIgnoreCase(last.getAnswerValue())
                 || last.getQuestionIntent() == null || !last.getQuestionIntent().startsWith("CLARIFY_")) return null;
         ConfirmedCaseSnapshotData snapshot = snapshotService.capture(consultationId);
-        if (specificationService.hasActionCandidate(snapshot)) return null;
+        if (!accountDateClarificationExhausted(consultation, last)
+                && specificationService.hasActionCandidate(snapshot)) return null;
         return StructuredFollowUpStateResponse.insufficient(last, readOptions(last), questions.size());
+    }
+
+    private boolean accountDateClarificationExhausted(
+            Consultation consultation, FollowUpQuestion question
+    ) {
+        return com.financialhelper.consultation.ConsultationScenarioResolver.resolve(consultation)
+                == com.financialhelper.consultation.ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                && "transactionDate".equals(question.getFactKey())
+                && "CLARIFY_TRANSACTION_DATE".equals(question.getQuestionIntent());
     }
 
     private boolean isSupportedInstitution(String value) {
