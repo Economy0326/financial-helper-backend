@@ -137,6 +137,8 @@ public class FinancialActionPlanService {
                 .orElseThrow(ConsultationNotFoundException::new);
         return planRepository.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(
                         consultation.getId())
+                .filter(plan -> plan.getCaseInputRevision() == consultation.getCaseInputRevision()
+                        && plan.getFollowUpAnswerRevision() == consultation.getFollowUpAnswerRevision())
                 .map(this::toData)
                 .orElseThrow(() -> new IllegalStateException("financial action plan does not exist"));
     }
