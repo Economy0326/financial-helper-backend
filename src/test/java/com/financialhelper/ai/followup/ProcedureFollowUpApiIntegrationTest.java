@@ -13,6 +13,10 @@ import com.financialhelper.procedure.StructuredFollowUpService;
 import com.financialhelper.procedure.ActionDependencyEvaluator;
 import com.financialhelper.procedure.ProcedureVersionService;
 import com.financialhelper.procedure.ScenarioCaseFactExtractor;
+import com.financialhelper.procedure.CardCaseFactExtractor;
+import com.financialhelper.procedure.ProcedureVersionData;
+import com.financialhelper.procedure.ConditionEvaluator;
+import com.financialhelper.procedure.ConditionResult;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotService;
 
 import jakarta.servlet.http.Cookie;
@@ -29,6 +33,9 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -289,6 +296,145 @@ class ProcedureFollowUpApiIntegrationTest {
         answer(transaction, "CARD_LOAN").andExpect(jsonPath("$.kind").value("unsupported"))
                 .andExpect(jsonPath("$.unsupportedReason").value("CARD_TRANSACTION_SCOPE_UNSUPPORTED"))
                 .andExpect(jsonPath("$.question.id").value(transaction.question().getId().toString()));
+    }
+
+    @Test
+    void everyApprovedScenarioDecisionFactHasOneDeterministicClarification() {
+        for (String procedureScenario : java.util.List.of(
+                "CARD_LOSS_UNAUTHORIZED_USE", "CARD_LOSS_ONLY", "CARD_HELD_UNAUTHORIZED_USE",
+                "CARD_COMPENSATION_PROCESS", "CARD_COMPENSATION_RESULT",
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER", "UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "PERSONAL_INFO_SMISHING_MALICIOUS_APP")) {
+            boolean card = procedureScenario.startsWith("CARD_");
+            ConsultationScenario scenario = card
+                    ? ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                    : ConsultationScenario.valueOf(procedureScenario);
+            ProcedureVersionData procedure = procedureVersionService.requireApproved(
+                    procedureScenario,
+                    card ? "㈜KB국민카드" : "GENERIC_FINANCIAL_INSTITUTION",
+                    scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                            ? "DIGITAL_FINANCIAL_SERVICE"
+                            : card ? "PERSONAL_CREDIT_CARD" : "BANK_ACCOUNT");
+            Map<String, String> known = knownDecisionFacts(procedureScenario);
+            assertThat(structuredFollowUpService.specify(procedure, facts(card, known), 2, Set.of(), scenario)
+                    .missingFacts()).as(procedureScenario + " known baseline").isEmpty();
+
+            for (ProcedureVersionData.RequiredFact required : procedure.requiredFacts()) {
+                if (!required.requiredForDecision()) continue;
+                Map<String, String> missing = new HashMap<>(known);
+                missing.remove(required.key());
+                var initial = structuredFollowUpService.specify(
+                        procedure, facts(card, missing), 2, Set.of(), scenario);
+                assertThat(initial.missingFacts()).as(procedureScenario + "/" + required.key())
+                        .containsExactly(required.key());
+                assertThat(initial.questions()).as(procedureScenario + "/" + required.key())
+                        .singleElement().satisfies(question -> {
+                            assertThat(question.factKey()).isEqualTo(required.key());
+                            assertThat(question.requiredForDecision()).isTrue();
+                        });
+
+                missing.put(required.key(), "UNKNOWN");
+                var firstUnknown = structuredFollowUpService.specify(
+                        procedure, facts(card, missing), 2, Set.of(), scenario);
+                assertThat(firstUnknown.questions()).as(procedureScenario + "/" + required.key())
+                        .singleElement().satisfies(question -> {
+                            assertThat(question.factKey()).isEqualTo(required.key());
+                            assertThat(question.questionIntent()).startsWith("CLARIFY_");
+                        });
+                var repeatedUnknown = structuredFollowUpService.specify(
+                        procedure, facts(card, missing), 2, Set.of(required.key()), scenario);
+                assertThat(repeatedUnknown.missingFacts()).as(procedureScenario + "/" + required.key())
+                        .containsExactly(required.key());
+                assertThat(repeatedUnknown.questions()).as(procedureScenario + "/" + required.key())
+                        .isEmpty();
+            }
+        }
+    }
+
+    private com.financialhelper.procedure.CardCaseFacts facts(boolean card, Map<String, String> values) {
+        return card ? CardCaseFactExtractor.fromValues(values) : ScenarioCaseFactExtractor.fromValues(values);
+    }
+
+    private Map<String, String> knownDecisionFacts(String procedureScenario) {
+        Map<String, String> known = new HashMap<>();
+        if (procedureScenario.startsWith("CARD_")) {
+            known.putAll(Map.of("institution", "KB_KOOKMIN_CARD", "productType", "PERSONAL_CREDIT_CARD",
+                    "cardLost", "TRUE", "unauthorizedPayment", "TRUE",
+                    "transactionType", "CREDIT_SALE", "domestic", "TRUE",
+                    "reported", "FALSE", "incidentDate", "2026-10-04"));
+            if (procedureScenario.equals("CARD_LOSS_ONLY")) known.put("unauthorizedPayment", "FALSE");
+            if (procedureScenario.equals("CARD_HELD_UNAUTHORIZED_USE")) known.put("cardLost", "FALSE");
+            if (procedureScenario.equals("CARD_COMPENSATION_PROCESS")) {
+                known.put("reported", "TRUE");
+                known.put("compensationStatus", "NOT_SUBMITTED");
+            }
+            if (procedureScenario.equals("CARD_COMPENSATION_RESULT")) {
+                known.put("reported", "TRUE");
+                known.put("compensationStatus", "RESULT_RECEIVED");
+                known.put("resultDisputed", "TRUE");
+            }
+        } else if (procedureScenario.equals("VOICE_PHISHING_SUSPICIOUS_TRANSFER")) {
+            known.putAll(Map.of("transferCompleted", "TRUE", "userInitiatedTransfer", "TRUE",
+                    "suspiciousTransfer", "TRUE", "reportedToFinancialInstitution", "FALSE",
+                    "policeReported", "FALSE", "maliciousAppInstalled", "FALSE",
+                    "authenticationInfoExposed", "FALSE",
+                    "incidentDate", "2026-10-04"));
+        } else if (procedureScenario.equals("UNAUTHORIZED_ACCOUNT_TRANSFER")) {
+            known.putAll(Map.of("unauthorizedTransaction", "TRUE", "transactionType", "ACCOUNT_TRANSFER",
+                    "reported", "FALSE", "accessCredentialExposed", "FALSE",
+                    "incidentDate", "2026-10-04", "transactionDate", "2026-10-04"));
+        } else {
+            known.putAll(Map.of("suspiciousLinkClicked", "TRUE", "maliciousAppInstalled", "FALSE",
+                    "remoteControlUsed", "FALSE", "personalInfoExposed", "FALSE",
+                    "authenticationInfoExposed", "FALSE", "moneyMoved", "FALSE"));
+        }
+        return known;
+    }
+
+    @Test
+    void breadthUnknownOnlyEliminatesDependentActionsAndKeepsOtherQuestions() {
+        ProcedureVersionData voice = procedureVersionService.requireApproved(
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER", "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT");
+        var voiceFacts = ScenarioCaseFactExtractor.fromValues(Map.of(
+                "transferCompleted", "UNKNOWN", "suspiciousTransfer", "TRUE",
+                "reportedToFinancialInstitution", "FALSE", "policeReported", "FALSE",
+                "maliciousAppInstalled", "FALSE", "authenticationInfoExposed", "FALSE",
+                "incidentDate", "2026-10-04"));
+        assertThat(ActionDependencyEvaluator.hasCandidate(voice, voiceFacts)).isTrue();
+        assertThat(ConditionEvaluator.evaluate(voice.conditionRules().stream()
+                .filter(rule -> "voice-secure-contact".equals(rule.actionId())).findFirst().orElseThrow().expression(),
+                voiceFacts)).isEqualTo(ConditionResult.TRUE);
+        assertThat(ConditionEvaluator.evaluate(voice.conditionRules().stream()
+                .filter(rule -> "voice-report-financial".equals(rule.actionId())).findFirst().orElseThrow().expression(),
+                voiceFacts)).isEqualTo(ConditionResult.UNKNOWN);
+        assertThat(structuredFollowUpService.specify(voice, voiceFacts, 2, Set.of("transferCompleted"),
+                ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER).questions())
+                .extracting(com.financialhelper.procedure.FollowUpQuestionSpec::factKey)
+                .contains("userInitiatedTransfer");
+        assertThat(ActionDependencyEvaluator.hasCandidate(voice, ScenarioCaseFactExtractor.fromValues(Map.of(
+                "transferCompleted", "UNKNOWN", "suspiciousTransfer", "UNKNOWN",
+                "reportedToFinancialInstitution", "UNKNOWN", "policeReported", "UNKNOWN")))).isFalse();
+
+        ProcedureVersionData smishing = procedureVersionService.requireApproved(
+                "PERSONAL_INFO_SMISHING_MALICIOUS_APP", "GENERIC_FINANCIAL_INSTITUTION",
+                "DIGITAL_FINANCIAL_SERVICE");
+        var smishingFacts = ScenarioCaseFactExtractor.fromValues(Map.of(
+                "suspiciousLinkClicked", "UNKNOWN", "maliciousAppInstalled", "TRUE",
+                "moneyMoved", "UNKNOWN"));
+        assertThat(ActionDependencyEvaluator.hasCandidate(smishing, smishingFacts)).isTrue();
+        assertThat(ConditionEvaluator.evaluate(smishing.conditionRules().stream()
+                .filter(rule -> "smishing-stop-contact".equals(rule.actionId())).findFirst().orElseThrow().expression(),
+                smishingFacts)).isEqualTo(ConditionResult.TRUE);
+        assertThat(ConditionEvaluator.evaluate(smishing.conditionRules().stream()
+                .filter(rule -> "smishing-report-financial".equals(rule.actionId())).findFirst().orElseThrow().expression(),
+                smishingFacts)).isEqualTo(ConditionResult.UNKNOWN);
+        assertThat(structuredFollowUpService.specify(smishing, smishingFacts, 2,
+                Set.of("suspiciousLinkClicked"), ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP)
+                .questions()).extracting(com.financialhelper.procedure.FollowUpQuestionSpec::factKey)
+                .contains("remoteControlUsed");
+        assertThat(ActionDependencyEvaluator.hasCandidate(smishing, ScenarioCaseFactExtractor.fromValues(Map.of(
+                "suspiciousLinkClicked", "UNKNOWN", "maliciousAppInstalled", "UNKNOWN",
+                "remoteControlUsed", "UNKNOWN", "moneyMoved", "UNKNOWN")))).isFalse();
     }
 
     @Test
