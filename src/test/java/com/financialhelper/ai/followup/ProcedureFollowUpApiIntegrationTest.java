@@ -58,6 +58,7 @@ class ProcedureFollowUpApiIntegrationTest {
     @Autowired private StructuredFollowUpService structuredFollowUpService;
     @Autowired private ConfirmedCaseSnapshotService confirmedCaseSnapshotService;
     @Autowired private ProcedureVersionService procedureVersionService;
+    @Autowired private tools.jackson.databind.json.JsonMapper jsonMapper;
 
     private Consultation consultation;
     private GuestSession guest;
@@ -389,6 +390,108 @@ class ProcedureFollowUpApiIntegrationTest {
                     "authenticationInfoExposed", "FALSE", "moneyMoved", "FALSE"));
         }
         return known;
+    }
+
+    @Test
+    void voiceExhaustedActionCandidatesStayInFollowUpAndCanRecover() throws Exception {
+        assertBreadthCandidateExhaustionAndRecovery(
+                ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER,
+                java.util.Set.of("transferCompleted", "suspiciousTransfer"),
+                "suspiciousTransfer", "TRUE");
+    }
+
+    @Test
+    void smishingOrActionNeedsAllAlternativesExhaustedBeforeStoppingAndCanRecover() throws Exception {
+        assertBreadthCandidateExhaustionAndRecovery(
+                ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP,
+                java.util.Set.of("suspiciousLinkClicked", "maliciousAppInstalled",
+                        "remoteControlUsed", "moneyMoved"),
+                "moneyMoved", "TRUE");
+    }
+
+    private void assertBreadthCandidateExhaustionAndRecovery(
+            ConsultationScenario scenario, Set<String> unknownKeys, String blockingKey, String recoveryAnswer
+    ) throws Exception {
+        String rawToken = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(
+                tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.FINANCIAL_FRAUD, scenario, now.plusSeconds(1));
+        consultation.updateSituation(
+                scenario == ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER
+                        ? "전화로 송금 관련 상담이 필요해요."
+                        : "개인정보 관련 상담이 필요해요.",
+                now.plusSeconds(2));
+        consultation = consultationRepository.saveAndFlush(consultation);
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
+        long caseRevision = consultation.getCaseInputRevision();
+        long answerRevision = consultation.getFollowUpAnswerRevision();
+
+        mockMvc.perform(post("/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
+                        .cookie(cookie).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("question"));
+
+        FollowUpQuestion blockingQuestion = null;
+        for (int attempt = 0; attempt < 20; attempt++) {
+            FollowUpQuestion question = currentQuestions().getLast();
+            String answer = unknownKeys.contains(question.getFactKey()) ? "UNKNOWN" :
+                    "userInitiatedTransfer".equals(question.getFactKey()) ? "TRUE" : "FALSE";
+            var response = mockMvc.perform(put(
+                            "/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                            consultation.getId(), question.getId())
+                            .cookie(cookie).with(csrf()).contentType("application/json")
+                            .content("{\"answer\":\"" + answer + "\"}"))
+                    .andExpect(status().isOk()).andReturn();
+            String kind = jsonMapper.readTree(response.getResponse().getContentAsString())
+                    .path("kind").asText();
+            boolean candidate = structuredFollowUpService.hasActionCandidate(
+                    confirmedCaseSnapshotService.capture(consultation.getId()));
+            if ("insufficient_information".equals(kind)) {
+                assertThat(candidate).as(scenario.name()).isFalse();
+                assertThat(question.getFactKey()).isEqualTo(blockingKey);
+                blockingQuestion = question;
+                break;
+            }
+            assertThat(kind).as(scenario.name() + "/" + question.getFactKey()).isEqualTo("question");
+            if (!candidate) {
+                FollowUpQuestion clarification = currentQuestions().getLast();
+                assertThat(clarification.getFactKey()).isEqualTo(question.getFactKey());
+                assertThat(clarification.getQuestionIntent()).startsWith("CLARIFY_");
+            }
+        }
+        assertThat(blockingQuestion).as(scenario.name() + " blocking question").isNotNull();
+        FollowUpQuestion exhausted = blockingQuestion;
+        consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(caseRevision);
+        assertThat(consultation.getFollowUpAnswerRevision()).isGreaterThan(answerRevision);
+        int stoppedCount = currentQuestions().size();
+        mockMvc.perform(get("/api/v1/consultations/{id}/procedure-follow-up", consultation.getId())
+                        .cookie(cookie))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("insufficient_information"))
+                .andExpect(jsonPath("$.blockingFact.key").value(blockingKey))
+                .andExpect(jsonPath("$.blockingFact.label").isNotEmpty())
+                .andExpect(jsonPath("$.question.id").value(exhausted.getId().toString()));
+        assertThat(currentQuestions()).hasSize(stoppedCount);
+
+        long beforeRecoveryRevision = consultation.getFollowUpAnswerRevision();
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), exhausted.getId())
+                        .cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"" + recoveryAnswer + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value(org.hamcrest.Matchers.anyOf(
+                        org.hamcrest.Matchers.is("question"), org.hamcrest.Matchers.is("complete"))));
+        consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(caseRevision);
+        assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(beforeRecoveryRevision + 1);
+        assertThat(currentQuestions().stream().filter(q -> q.getId().equals(exhausted.getId()))
+                .findFirst().orElseThrow().getAnswerValue()).isEqualTo(recoveryAnswer);
+        assertThat(structuredFollowUpService.hasActionCandidate(
+                confirmedCaseSnapshotService.capture(consultation.getId()))).isTrue();
     }
 
     @Test
