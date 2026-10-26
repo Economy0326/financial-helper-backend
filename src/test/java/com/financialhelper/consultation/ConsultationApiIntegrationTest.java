@@ -1,5 +1,6 @@
 package com.financialhelper.consultation;
 
+import com.financialhelper.account.AccountProperties;
 import com.jayway.jsonpath.JsonPath;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionCookie;
@@ -14,6 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.annotation.DirtiesContext;
@@ -24,6 +28,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,7 +47,73 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ConsultationApiIntegrationTest {
 
     @Autowired
+    private AccountProperties accountProperties;
+
+    @Autowired
+    private Environment environment;
+
+    @Autowired
     private MockMvc mockMvc;
+
+    @Test
+    void usesDisabledRateLimitInTestContext() {
+        assertThat(environment.getProperty("app.auth.limits.rate-limit-enabled")).isEqualTo("false");
+        assertThat(accountProperties.generalConsultationRequired()).isFalse();
+        assertThat(Binder.get(environment).bind("app.auth.limits", AccountProperties.Limits.class).isBound()).isTrue();
+        assertThat(accountProperties.limits().rateLimitEnabled()).isFalse();
+        assertThat(accountProperties.limits().rateLimitRequests()).isEqualTo(60);
+        assertThat(accountProperties.limits().rateLimitWindow()).isEqualTo(java.time.Duration.ofMinutes(1));
+    }
+
+    @Test
+    void bindsExplicitEnabledRateLimitAndOtherLimitValues() {
+        AccountProperties bound = new Binder(new MapConfigurationPropertySource(Map.of(
+                "app.auth.limits.rate-limit-enabled", "true",
+                "app.auth.limits.rate-limit-requests", "17",
+                "app.auth.limits.rate-limit-window", "PT2M",
+                "app.auth.limits.max-request-bytes", "65536")))
+                .bind("app.auth", AccountProperties.class).get();
+
+        assertThat(bound.limits().rateLimitEnabled()).isTrue();
+        assertThat(bound.limits().rateLimitRequests()).isEqualTo(17);
+        assertThat(bound.limits().rateLimitWindow()).isEqualTo(java.time.Duration.ofMinutes(2));
+        assertThat(bound.limits().maxRequestBytes()).isEqualTo(65536);
+    }
+
+    @Test
+    void keepsRateLimitEnabledWhenSettingIsOmitted() {
+        AccountProperties partiallyConfigured = new Binder(new MapConfigurationPropertySource(Map.of(
+                "app.auth.limits.rate-limit-requests", "17")))
+                .bind("app.auth", AccountProperties.class).get();
+        AccountProperties defaults = new Binder(new MapConfigurationPropertySource(Map.of(
+                "app.auth.general-consultation-required", "false")))
+                .bind("app.auth", AccountProperties.class).get();
+
+        assertThat(partiallyConfigured.limits().rateLimitEnabled()).isTrue();
+        assertThat(partiallyConfigured.limits().rateLimitRequests()).isEqualTo(17);
+        assertThat(defaults.limits().rateLimitEnabled()).isTrue();
+        assertThat(defaults.limits().rateLimitRequests()).isEqualTo(60);
+        assertThat(defaults.limits().rateLimitWindow()).isEqualTo(java.time.Duration.ofMinutes(1));
+    }
+
+    @Test
+    void doesNotRateLimitBlankSituationRequestsWhenTestSettingIsDisabled() throws Exception {
+        TestGuest guest = createGuest();
+        Consultation consultation = createConsultation(guest.session());
+
+        for (int requestNumber = 1; requestNumber <= 61; requestNumber++) {
+            MvcResult result = mockMvc.perform(put("/api/v1/consultations/{id}/situation", consultation.getId())
+                            .remoteAddress("192.0.2.42")
+                            .cookie(guest.cookie())
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"situationText\":\"   \"}"))
+                    .andReturn();
+            assertThat(result.getResponse().getStatus())
+                    .as("request number %s", requestNumber)
+                    .isEqualTo(400);
+        }
+    }
 
     @Autowired
     private GuestSessionRepository guestSessionRepository;
