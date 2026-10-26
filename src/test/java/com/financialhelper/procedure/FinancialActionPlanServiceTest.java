@@ -47,6 +47,53 @@ import static org.mockito.ArgumentMatchers.nullable;
 
 class FinancialActionPlanServiceTest {
     @Test
+    void characterizationProcedureRoleFromActionASourceAlsoAllowsActionB() {
+        // Characterization only: the current model has no Action-to-Evidence assignment.
+        // The source name describes intended use for A, but the runtime cannot enforce it.
+        ProcedureVersionData.EvidenceReference sourceForActionA =
+                new ProcedureVersionData.EvidenceReference(
+                        "synthetic-source-intended-for-action-a", 1, "0".repeat(64),
+                        null, null, "PROCEDURE");
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                UUID.randomUUID(), "PERSONAL_INFO_SMISHING_MALICIOUS_APP",
+                "GENERIC_FINANCIAL_INSTITUTION", "DIGITAL_FINANCIAL_SERVICE", 1,
+                ProcedureStatus.APPROVED, null, null, List.of(),
+                List.of(
+                        new ProcedureVersionData.ConditionRule("action-a",
+                                new ConditionExpression(null, "actionAEligible",
+                                        ConditionOperator.EQ, "TRUE", List.of())),
+                        new ProcedureVersionData.ConditionRule("action-b",
+                                new ConditionExpression(null, "actionBEligible",
+                                        ConditionOperator.EQ, "TRUE", List.of()))),
+                List.of(
+                        new ProcedureVersionData.ActionStep("action-a", 1, "A", "A", null,
+                                List.of("PROCEDURE")),
+                        new ProcedureVersionData.ActionStep("action-b", 2, "B", "B", null,
+                                List.of("PROCEDURE"))),
+                List.of(), List.of(sourceForActionA), List.of(), List.of(), List.of(),
+                "synthetic characterization", "test", null);
+        FinancialActionPlanData.EvidenceBinding bindingForActionA =
+                new FinancialActionPlanData.EvidenceBinding(
+                        sourceForActionA.sourceKey(), UUID.randomUUID(), 1,
+                        List.of(UUID.randomUUID()), null, null, "PROCEDURE");
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(any(), nullable(LocalDate.class))).thenReturn(true);
+        when(resolver.resolve(anyList(), nullable(LocalDate.class)))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(bindingForActionA), List.of()));
+
+        FinancialActionPlanData plan = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), procedure, new CardCaseFacts(Map.of(
+                        "actionAEligible", "FALSE", "actionBEligible", "TRUE")));
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+        assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("action-b");
+        assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::sourceKey)
+                .containsExactly(sourceForActionA.sourceKey());
+    }
+
+    @Test
     void accountLawDateSelectorUsesTransactionDateRegardlessOfFactOrder() {
         AnalysisEvidenceSnapshotService snapshots = new AnalysisEvidenceSnapshotService(
                 null, null, null, null, null, null, null, null, null, null, null, null,
