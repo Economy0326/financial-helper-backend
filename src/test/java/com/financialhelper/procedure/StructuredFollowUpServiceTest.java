@@ -1,6 +1,7 @@
 package com.financialhelper.procedure;
 
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
+import com.financialhelper.consultation.ConsultationScenario;
 
 import org.junit.jupiter.api.Test;
 
@@ -181,6 +182,69 @@ class StructuredFollowUpServiceTest {
                 Map.of("transferCompleted", "UNKNOWN"), 3, Set.of("transferCompleted"));
         assertThat(exhausted.questions()).isEmpty();
         assertThat(exhausted.missingFacts()).containsExactly("transferCompleted");
+    }
+
+    @Test
+    void accountTransactionDateQuestionGetsOneClarificationAfterUnknown() {
+        ProcedureVersionService procedures = mock(ProcedureVersionService.class);
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                java.util.UUID.randomUUID(), "UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT", 1,
+                ProcedureStatus.APPROVED, null, null,
+                List.of(new ProcedureVersionData.RequiredFact("transactionDate", "DATE", true)),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), "test", "test", null);
+        when(procedures.requireApproved("UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT")).thenReturn(procedure);
+        StructuredFollowUpService service = new StructuredFollowUpService(procedures);
+
+        StructuredFollowUpData initial = service.specifyForScenario(
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER, Map.of(), 3, Set.of());
+        assertThat(initial.missingFacts()).containsExactly("transactionDate");
+        assertThat(initial.questions()).singleElement().satisfies(question -> {
+            assertThat(question.factKey()).isEqualTo("transactionDate");
+            assertThat(question.requiredForDecision()).isTrue();
+            assertThat(question.inputType()).isEqualTo(FollowUpInputType.DATE);
+            assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::value)
+                    .containsExactly("UNKNOWN");
+        });
+
+        StructuredFollowUpData firstUnknown = service.specifyForScenario(
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER,
+                Map.of("transactionDate", "UNKNOWN"), 3, Set.of());
+        assertThat(firstUnknown.missingFacts()).containsExactly("transactionDate");
+        assertThat(firstUnknown.questions()).singleElement().satisfies(question -> {
+            assertThat(question.factKey()).isEqualTo("transactionDate");
+            assertThat(question.inputType()).isEqualTo(FollowUpInputType.DATE);
+            assertThat(question.questionIntent()).isEqualTo("CLARIFY_TRANSACTION_DATE");
+            assertThat(question.options()).extracting(FollowUpQuestionSpec.Option::value)
+                    .containsExactly("UNKNOWN");
+        });
+
+        StructuredFollowUpData repeatedUnknown = service.specifyForScenario(
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER,
+                Map.of("transactionDate", "UNKNOWN"), 3, Set.of("transactionDate"));
+        assertThat(repeatedUnknown.questions()).isEmpty();
+        assertThat(repeatedUnknown.missingFacts()).containsExactly("transactionDate");
+    }
+
+    @Test
+    void accountRepeatedUnknownDateIsStillMissingWithoutAnInfiniteQuestionLoop() {
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                java.util.UUID.randomUUID(), "UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT", 1,
+                ProcedureStatus.APPROVED, null, null,
+                List.of(new ProcedureVersionData.RequiredFact("transactionDate", "DATE", true)),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), "test", "test", null);
+        StructuredFollowUpService service = new StructuredFollowUpService(mock(ProcedureVersionService.class));
+
+        StructuredFollowUpData repeated = service.specify(procedure,
+                ScenarioCaseFactExtractor.fromValues(Map.of("transactionDate", "UNKNOWN")),
+                3, Set.of("transactionDate"), ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
+
+        assertThat(repeated.questions()).isEmpty();
+        assertThat(repeated.missingFacts()).containsExactly("transactionDate");
     }
 
     private ProcedureVersionData procedure(List<ProcedureVersionData.RequiredFact> requiredFacts) {

@@ -2,6 +2,7 @@ package com.financialhelper.account;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 
@@ -76,13 +77,16 @@ public record AccountProperties(
             int consultationAiAttempts,
             int rateLimitRequests,
             Duration rateLimitWindow,
-            boolean rateLimitEnabled,
+            @DefaultValue("true") boolean rateLimitEnabled,
             boolean globalAiBudgetEnabled,
             long globalAiBudgetUnits,
             int newConsultationLimit,
             int consultationWindowDays,
             int maxActiveConsultations
     ) {
+        @ConstructorBinding
+        public Limits { }
+
         public static Limits defaults() {
             return new Limits(
                     1000,

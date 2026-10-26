@@ -368,10 +368,11 @@ public class AnalysisEvidenceSnapshotService {
             ConfirmedCaseSnapshotData data,
             com.financialhelper.consultation.ConsultationScenario scenario
     ) {
+        String applicabilityFactKey = scenario
+                == com.financialhelper.consultation.ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                ? "transactionDate" : "incidentDate";
         return data.facts().stream()
-                .filter(fact -> "incidentDate".equals(fact.key())
-                        || (scenario == com.financialhelper.consultation.ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
-                        && "transactionDate".equals(fact.key())))
+                .filter(fact -> applicabilityFactKey.equals(fact.key()))
                 .map(ConfirmedCaseSnapshotData.Fact::value)
                 .filter(value -> value != null && !value.isBlank() && !"UNKNOWN".equalsIgnoreCase(value))
                 .findFirst()
