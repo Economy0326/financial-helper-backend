@@ -72,8 +72,23 @@ public record ProcedureVersionData(
             String articleReference,
             String pageReference,
             String role,
-            boolean historicalApplicabilityRequired
+            boolean historicalApplicabilityRequired,
+            String referenceId,
+            List<String> actionIds
     ) {
+        public EvidenceReference {
+            actionIds = actionIds == null ? null : List.copyOf(actionIds);
+        }
+
+        public EvidenceReference(
+                String sourceKey, int documentVersion, String expectedRawSha256,
+                String articleReference, String pageReference, String role,
+                boolean historicalApplicabilityRequired
+        ) {
+            this(sourceKey, documentVersion, expectedRawSha256, articleReference,
+                    pageReference, role, historicalApplicabilityRequired, null, null);
+        }
+
         public EvidenceReference(
                 String sourceKey,
                 int documentVersion,
@@ -85,6 +100,20 @@ public record ProcedureVersionData(
             this(sourceKey, documentVersion, expectedRawSha256, articleReference,
                     pageReference, role, true);
         }
+
+        public boolean isLegacy() {
+            return referenceId == null && actionIds == null;
+        }
+    }
+
+    public EvidenceContract evidenceContract() {
+        return evidenceReferences.stream().allMatch(EvidenceReference::isLegacy)
+                ? EvidenceContract.LEGACY : EvidenceContract.ACTION_SCOPED;
+    }
+
+    public enum EvidenceContract {
+        LEGACY,
+        ACTION_SCOPED
     }
 
     public record ReviewedContact(String key, String value, String evidenceRef) {

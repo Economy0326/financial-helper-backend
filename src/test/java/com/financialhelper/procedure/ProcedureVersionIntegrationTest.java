@@ -29,6 +29,12 @@ class ProcedureVersionIntegrationTest {
         assertThat(procedure.actionSteps()).extracting(ProcedureVersionData.ActionStep::actionId)
                 .contains("report-loss", "submit-compensation-request");
         assertThat(procedure.evidenceReferences()).hasSize(7);
+        assertThat(procedure.evidenceContract()).isEqualTo(ProcedureVersionData.EvidenceContract.LEGACY);
+        assertThat(procedure.evidenceReferences()).allSatisfy(reference -> {
+            assertThat(reference.isLegacy()).isTrue();
+            assertThat(reference.referenceId()).isNull();
+            assertThat(reference.actionIds()).isNull();
+        });
     }
 
     @Test

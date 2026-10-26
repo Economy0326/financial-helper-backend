@@ -9,8 +9,12 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 public class ProcedureVersionService {
@@ -21,6 +25,9 @@ public class ProcedureVersionService {
     public static final String CARD_COMPENSATION_RESULT_SCENARIO = "CARD_COMPENSATION_RESULT";
     public static final String KB_INSTITUTION = "㈜KB국민카드";
     public static final String PERSONAL_CREDIT_CARD = "PERSONAL_CREDIT_CARD";
+    private static final Set<String> EVIDENCE_ROLES = Set.of(
+            "REPORT_CHANNEL", "PROCEDURE", "FORM", "INVESTIGATION",
+            "FOLLOW_UP", "SAFE_GUIDANCE", "TERMS", "GUIDELINE");
 
     private final ProcedureVersionRepository repository;
     private final JsonMapper jsonMapper;
@@ -99,15 +106,19 @@ public class ProcedureVersionService {
             throw new IllegalStateException("procedure version is not approved");
         }
         try {
+            List<ProcedureVersionData.ActionStep> actions = parseActionSteps(entity.getActionStepsJson());
+            List<ProcedureVersionData.EvidenceReference> references =
+                    parseEvidenceReferences(entity.getEvidenceReferencesJson());
+            validateEvidenceContract(actions, references);
             return new ProcedureVersionData(
                     entity.getId(), entity.getScenario(), entity.getInstitution(),
                     entity.getProductType(), entity.getVersion(), entity.getStatus(),
                     entity.getApplicabilityStartDate(), entity.getApplicabilityEndDate(),
                     parseRequiredFacts(entity.getRequiredFactsJson()),
                     parseConditionRules(entity.getConditionRulesJson()),
-                    parseActionSteps(entity.getActionStepsJson()),
+                    actions,
                     parseDocumentRequirements(entity.getDocumentRequirementsJson()),
-                    parseEvidenceReferences(entity.getEvidenceReferencesJson()),
+                    references,
                     parseReviewedContacts(entity.getReviewedContactsJson()),
                     parseReviewedValues(entity.getReviewedValuesJson()),
                     parseStrings(entity.getConditionsExceptionsJson()),
@@ -223,15 +234,95 @@ public class ProcedureVersionService {
             throws JacksonException {
         List<ProcedureVersionData.EvidenceReference> result = new ArrayList<>();
         for (JsonNode node : jsonMapper.readTree(json)) {
+            JsonNode idNode = node.get("referenceId");
+            JsonNode actionsNode = node.get("actionIds");
+            if ((idNode == null) != (actionsNode == null)) {
+                throw new IllegalArgumentException("referenceId and actionIds must both be present or absent");
+            }
+            String referenceId = null;
+            List<String> actionIds = null;
+            if (idNode != null) {
+                if (!idNode.isString() || idNode.asText().isBlank()) {
+                    throw new IllegalArgumentException("referenceId must be nonblank text");
+                }
+                if ("*".equals(idNode.asText())) {
+                    throw new IllegalArgumentException("referenceId wildcard is not allowed");
+                }
+                referenceId = idNode.asText();
+                if (!actionsNode.isArray() || actionsNode.isEmpty()) {
+                    throw new IllegalArgumentException("actionIds must be a nonempty array");
+                }
+                actionIds = new ArrayList<>();
+                Set<String> seenActions = new HashSet<>();
+                for (JsonNode actionNode : actionsNode) {
+                    if (!actionNode.isString() || actionNode.asText().isBlank()
+                            || "*".equals(actionNode.asText())) {
+                        throw new IllegalArgumentException("actionIds must contain explicit nonblank action IDs");
+                    }
+                    if (!seenActions.add(actionNode.asText())) {
+                        throw new IllegalArgumentException("actionIds contains a duplicate action ID");
+                    }
+                    actionIds.add(actionNode.asText());
+                }
+            }
             result.add(new ProcedureVersionData.EvidenceReference(
                     requiredText(node, "sourceKey"), integerValue(node, "documentVersion"),
                     requiredText(node, "expectedRawSha256"), nullableText(node, "articleReference"),
                     nullableText(node, "pageReference"), requiredText(node, "role"),
                     booleanValue(node, "historicalApplicabilityRequired",
                             !"PROCEDURE".equals(requiredText(node, "role"))
-                                    && !"REPORT_CHANNEL".equals(requiredText(node, "role")))));
+                                    && !"REPORT_CHANNEL".equals(requiredText(node, "role"))),
+                    referenceId, actionIds));
         }
         return List.copyOf(result);
+    }
+
+    private static void validateEvidenceContract(
+            List<ProcedureVersionData.ActionStep> actions,
+            List<ProcedureVersionData.EvidenceReference> references
+    ) {
+        if (references.stream().allMatch(ProcedureVersionData.EvidenceReference::isLegacy)) {
+            return;
+        }
+        if (references.stream().anyMatch(ProcedureVersionData.EvidenceReference::isLegacy)) {
+            throw new IllegalArgumentException("legacy and action-scoped evidence references cannot be mixed");
+        }
+        Map<String, ProcedureVersionData.ActionStep> actionsById = new HashMap<>();
+        for (ProcedureVersionData.ActionStep action : actions) {
+            if (actionsById.putIfAbsent(action.actionId(), action) != null) {
+                throw new IllegalArgumentException("actionId must be unique in an action-scoped procedure");
+            }
+            if (!EVIDENCE_ROLES.containsAll(action.evidenceRoles())) {
+                throw new IllegalArgumentException("action evidenceRoles contains an unsupported role");
+            }
+        }
+        Set<String> referenceIds = new HashSet<>();
+        Map<String, Set<String>> rolesByAction = new HashMap<>();
+        for (ProcedureVersionData.EvidenceReference reference : references) {
+            if (!referenceIds.add(reference.referenceId())) {
+                throw new IllegalArgumentException("referenceId must be unique in a procedure version");
+            }
+            if (!EVIDENCE_ROLES.contains(reference.role())) {
+                throw new IllegalArgumentException("reference role is unsupported");
+            }
+            for (String actionId : reference.actionIds()) {
+                ProcedureVersionData.ActionStep action = actionsById.get(actionId);
+                if (action == null) {
+                    throw new IllegalArgumentException("actionIds contains an unknown action ID");
+                }
+                if (!action.evidenceRoles().contains(reference.role())) {
+                    throw new IllegalArgumentException("reference role is not required by its actionId");
+                }
+                rolesByAction.computeIfAbsent(actionId, ignored -> new HashSet<>())
+                        .add(reference.role());
+            }
+        }
+        for (ProcedureVersionData.ActionStep action : actions) {
+            if (!rolesByAction.getOrDefault(action.actionId(), Set.of())
+                    .containsAll(action.evidenceRoles())) {
+                throw new IllegalArgumentException("actionId is missing a required evidence role reference");
+            }
+        }
     }
 
     private List<ProcedureVersionData.ReviewedContact> parseReviewedContacts(String json)
