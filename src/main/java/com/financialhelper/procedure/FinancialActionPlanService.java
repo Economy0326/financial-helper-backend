@@ -981,6 +981,59 @@ public class FinancialActionPlanService {
         }
     }
 
+    /** Internal, revalidated relation; referenceIds never enter the public plan DTO. */
+    @Transactional(readOnly = true)
+    public ValidatedEvidencePlan validatedEvidencePlan(UUID planId) {
+        FinancialActionPlan entity = planRepository.findById(planId)
+                .orElseThrow(() -> new IllegalStateException("financial action plan is unavailable"));
+        FinancialActionPlanData current = currentPlanOrFailure(entity.getConsultation(), entity);
+        if (entity.getPlanStatus() != PlanStatus.READY
+                || current.status() != PlanStatus.READY || !planId.equals(current.id())) {
+            throw new IllegalStateException("financial action plan is not current and READY");
+        }
+        ProcedureVersionData procedure = procedureVersionService.toData(entity.getProcedureVersion());
+        if (procedure == null || !procedure.id().equals(current.procedureVersionId())) {
+            throw new IllegalStateException("financial action plan procedure is unavailable");
+        }
+        if (procedure.evidenceContract() == ProcedureVersionData.EvidenceContract.LEGACY) {
+            return new ValidatedEvidencePlan(current, procedure.evidenceContract(), List.of());
+        }
+        try {
+            StoredActionScopedPlan stored = jsonMapper.readValue(entity.getPlanJson(),
+                    StoredActionScopedPlan.class);
+            List<ValidatedReference> references = new ArrayList<>();
+            for (int i = 0; i < stored.referenceIds().size(); i++) {
+                String id = stored.referenceIds().get(i);
+                ProcedureVersionData.EvidenceReference reference = procedure.evidenceReferences().stream()
+                        .filter(candidate -> id.equals(candidate.referenceId()))
+                        .findFirst().orElseThrow(() -> new IllegalStateException(
+                                "financial action plan reference is unavailable"));
+                references.add(new ValidatedReference(id, reference.actionIds(),
+                        reference.expectedRawSha256(),
+                        current.evidence().get(i)));
+            }
+            return new ValidatedEvidencePlan(current, procedure.evidenceContract(), references);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("financial action plan relation is invalid", exception);
+        }
+    }
+
+    public record ValidatedReference(String referenceId, List<String> actionIds,
+                                     String expectedRawSha256,
+                                     FinancialActionPlanData.EvidenceBinding binding) {
+        public ValidatedReference {
+            actionIds = List.copyOf(actionIds);
+        }
+    }
+
+    public record ValidatedEvidencePlan(FinancialActionPlanData plan,
+                                        ProcedureVersionData.EvidenceContract contract,
+                                        List<ValidatedReference> references) {
+        public ValidatedEvidencePlan {
+            references = List.copyOf(references);
+        }
+    }
+
     private boolean actionScopedStoredPlanInvalid(
             FinancialActionPlan entity,
             FinancialActionPlanData stored,

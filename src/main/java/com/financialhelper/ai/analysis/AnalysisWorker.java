@@ -94,6 +94,10 @@ public class AnalysisWorker {
 
             12. Procedure-backed 입력에서는 실제로 사용한
                 snapshot evidenceId와 locator를 명시한다.
+             13. actionEvidenceRelations가 있는 경우 각 선택 Action은
+                 target ACTION, 해당 actionId와 허용된 source evidenceId·locator로 인용한다.
+                 공통 설명은 target GENERAL로 인용하고 actionId를 지정하지 않는다.
+                 법령 인용을 Action 전용 근거로 표시하지 않는다.
             """;
 
     private final AnalysisPersistenceService
@@ -455,7 +459,12 @@ public class AnalysisWorker {
                             evidenceSnapshot
                     );
 
-            String serialized = jsonMapper.writeValueAsString(input);
+            String serialized = evidenceSnapshot != null
+                    && evidenceSnapshot.actionEvidenceRelations() != null
+                    ? jsonMapper.writeValueAsString(java.util.Map.of(
+                            "context", input,
+                            "actionEvidenceRelations", evidenceSnapshot.actionEvidenceRelations()))
+                    : jsonMapper.writeValueAsString(input);
             log.info(
                     "Analysis prompt prepared caseRevision={} followUpRevision={} inputCharacters={} limit={}",
                     snapshot.caseInputRevision(),

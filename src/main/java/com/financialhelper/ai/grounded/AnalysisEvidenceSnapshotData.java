@@ -34,8 +34,29 @@ public record AnalysisEvidenceSnapshotData(
         int snapshotRevision,
         AnalysisEvidenceSnapshotStatus status,
         OffsetDateTime capturedAt,
-        ConsultationScenario scenario
+        ConsultationScenario scenario,
+        List<ActionEvidenceRelation> actionEvidenceRelations
 ) {
+    /** Existing snapshot JSON and fixtures do not contain Action-scoped relations. */
+    public AnalysisEvidenceSnapshotData(
+            UUID id, UUID consultationId, UUID analysisJobId, long caseInputRevision,
+            long followUpAnswerRevision, UUID procedureVersionId, UUID financialActionPlanId,
+            UUID retrievalGenerationId, String retrievalGenerationKey,
+            String retrievalModelIdentifier, String retrievalModelRevision,
+            String retrievalTokenizerIdentifier, String retrievalTokenizerRevision,
+            String retrievalEncodingConfigJson, String retrievalIndexConfigJson,
+            String retrievalCorpusSnapshotSha256, FinancialActionPlanData actionPlan,
+            List<SourceEvidence> sourceEvidence, List<ReviewedLawEvidence> reviewedLawEvidence,
+            int snapshotRevision, AnalysisEvidenceSnapshotStatus status,
+            OffsetDateTime capturedAt, ConsultationScenario scenario
+    ) {
+        this(id, consultationId, analysisJobId, caseInputRevision, followUpAnswerRevision,
+                procedureVersionId, financialActionPlanId, retrievalGenerationId,
+                retrievalGenerationKey, retrievalModelIdentifier, retrievalModelRevision,
+                retrievalTokenizerIdentifier, retrievalTokenizerRevision, retrievalEncodingConfigJson,
+                retrievalIndexConfigJson, retrievalCorpusSnapshotSha256, actionPlan, sourceEvidence,
+                reviewedLawEvidence, snapshotRevision, status, capturedAt, scenario, null);
+    }
     /** legacy CARD snapshot fixture를 위한 호환 생성자다. */
     public AnalysisEvidenceSnapshotData(
             UUID id,
@@ -67,12 +88,13 @@ public record AnalysisEvidenceSnapshotData(
                 retrievalTokenizerIdentifier, retrievalTokenizerRevision,
                 retrievalEncodingConfigJson, retrievalIndexConfigJson,
                 retrievalCorpusSnapshotSha256, actionPlan, sourceEvidence,
-                reviewedLawEvidence, snapshotRevision, status, capturedAt, null);
+                reviewedLawEvidence, snapshotRevision, status, capturedAt, null, null);
     }
 
     public AnalysisEvidenceSnapshotData {
         sourceEvidence = sourceEvidence == null ? List.of() : List.copyOf(sourceEvidence);
         reviewedLawEvidence = reviewedLawEvidence == null ? List.of() : List.copyOf(reviewedLawEvidence);
+        actionEvidenceRelations = actionEvidenceRelations == null ? null : List.copyOf(actionEvidenceRelations);
     }
 
     public Set<String> evidenceIds() {
@@ -83,6 +105,11 @@ public record AnalysisEvidenceSnapshotData(
     public Set<String> lawEvidenceIds() {
         return reviewedLawEvidence.stream().map(ReviewedLawEvidence::evidenceId)
                 .collect(Collectors.toUnmodifiableSet());
+    }
+
+    /** Exact Action -> approved Procedure reference -> captured source chunk relation. */
+    public record ActionEvidenceRelation(String actionId, String referenceId,
+                                         String evidenceId, String locator) {
     }
 
     public record SourceEvidence(

@@ -90,17 +90,69 @@ public class GroundedOutputValidator {
         }
         Set<String> valid = new HashSet<>(snapshot.evidenceIds());
         valid.addAll(snapshot.lawEvidenceIds());
+        boolean scoped = snapshot.actionEvidenceRelations() != null;
+        if (scoped && (snapshot.actionEvidenceRelations().isEmpty()
+                || snapshot.actionPlan() == null
+                || snapshot.actionPlan().status() != com.financialhelper.procedure.PlanStatus.READY)) {
+            throw new AiOutputContractException("action evidence snapshot relation is unavailable");
+        }
+        Set<String> selectedActions = new HashSet<>();
+        if (scoped) {
+            snapshot.actionPlan().actions().forEach(action -> selectedActions.add(action.actionId()));
+        }
         Set<String> seen = new HashSet<>();
+        Set<String> citedActions = new HashSet<>();
         for (GroundedEvidenceCitation citation : citations) {
             if (citation == null || citation.evidenceId == null || citation.evidenceId.isBlank()
                     || citation.locator == null || citation.locator.isBlank()
-                    || !valid.contains(citation.evidenceId) || !seen.add(citation.evidenceId)) {
+                    || !valid.contains(citation.evidenceId)) {
                 throw new AiOutputContractException("grounded output contains an unknown or duplicate evidence reference");
+            }
+            if (scoped) {
+                if ("ACTION".equals(citation.target)) {
+                    if (citation.actionId == null || !selectedActions.contains(citation.actionId)
+                            || !snapshot.sourceEvidence().stream().anyMatch(item ->
+                                    item.evidenceId().equals(citation.evidenceId))
+                            || snapshot.actionEvidenceRelations().stream().noneMatch(relation ->
+                                    relation.actionId().equals(citation.actionId)
+                                    && relation.evidenceId().equals(citation.evidenceId)
+                                    && relation.locator() != null && !relation.locator().isBlank()
+                                    && relation.locator().equals(citation.locator))) {
+                        throw new AiOutputContractException("citation is not assigned to the action");
+                    }
+                    citedActions.add(citation.actionId);
+                } else if ("GENERAL".equals(citation.target)) {
+                    if (citation.actionId != null && !citation.actionId.isBlank()) {
+                        throw new AiOutputContractException("general citation cannot name an action");
+                    }
+                    if (snapshot.sourceEvidence().stream().anyMatch(item ->
+                            item.evidenceId().equals(citation.evidenceId))) {
+                        boolean shared = selectedActions.stream().allMatch(actionId ->
+                                snapshot.actionEvidenceRelations().stream().anyMatch(relation ->
+                                        relation.actionId().equals(actionId)
+                                        && relation.evidenceId().equals(citation.evidenceId)));
+                        if (!shared) {
+                            throw new AiOutputContractException("action-only evidence cannot be general");
+                        }
+                    }
+                } else {
+                    throw new AiOutputContractException("citation target is required");
+                }
+            } else if ((citation.target != null && !"GENERAL".equals(citation.target))
+                    || (citation.actionId != null && !citation.actionId.isBlank())) {
+                throw new AiOutputContractException("legacy citation cannot claim action grounding");
+            }
+            String citationKey = scoped
+                    ? citation.target + ":" + citation.actionId + ":" + citation.evidenceId
+                    : citation.evidenceId;
+            if (!seen.add(citationKey)) {
+                throw new AiOutputContractException("grounded output contains a duplicate evidence reference");
             }
             boolean locatorMatches = snapshot.sourceEvidence().stream()
                     .filter(item -> item.evidenceId().equals(citation.evidenceId))
                     .map(AnalysisEvidenceSnapshotData.SourceEvidence::locator)
-                    .anyMatch(locator -> locator == null || locator.isBlank() || locator.equals(citation.locator));
+                    .anyMatch(locator -> !scoped && (locator == null || locator.isBlank())
+                            || locator != null && locator.equals(citation.locator));
             if (!locatorMatches) {
                 locatorMatches = snapshot.reviewedLawEvidence().stream()
                         .filter(item -> item.evidenceId().equals(citation.evidenceId))
@@ -110,6 +162,9 @@ public class GroundedOutputValidator {
             if (!locatorMatches) {
                 throw new AiOutputContractException("grounded output locator does not match evidence");
             }
+        }
+        if (scoped && !citedActions.containsAll(selectedActions)) {
+            throw new AiOutputContractException("each selected action requires its own citation");
         }
     }
 }

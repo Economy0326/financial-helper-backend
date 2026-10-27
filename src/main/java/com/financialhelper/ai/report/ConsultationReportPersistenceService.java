@@ -6,6 +6,9 @@ import com.financialhelper.ai.analysis.AnalysisJobRepository;
 import com.financialhelper.ai.analysis.AnalysisJobStatus;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotData;
 import com.financialhelper.ai.grounded.AnalysisEvidenceSnapshotService;
+import com.financialhelper.ai.grounded.GroundedEvidenceUnavailableException;
+import com.financialhelper.ai.grounded.GroundedOutputValidator;
+import com.financialhelper.ai.AiOutputContractException;
 
 import com.financialhelper.ai.summary.ConsultationSummary;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
@@ -57,6 +60,7 @@ public class ConsultationReportPersistenceService {
     private final JsonMapper jsonMapper;
 
     private final AnalysisEvidenceSnapshotService evidenceSnapshotService;
+    private final GroundedOutputValidator groundedOutputValidator;
     private final AccountSessionService accountSessionService;
 
     public ConsultationReportPersistenceService(
@@ -67,6 +71,7 @@ public class ConsultationReportPersistenceService {
             GuestSessionService guestSessionService,
             JsonMapper jsonMapper,
             AnalysisEvidenceSnapshotService evidenceSnapshotService,
+            GroundedOutputValidator groundedOutputValidator,
             AccountSessionService accountSessionService
     ) {
         this.consultationRepository =
@@ -88,6 +93,7 @@ public class ConsultationReportPersistenceService {
                 jsonMapper;
 
         this.evidenceSnapshotService = evidenceSnapshotService;
+        this.groundedOutputValidator = groundedOutputValidator;
         this.accountSessionService = accountSessionService;
     }
 
@@ -111,6 +117,7 @@ public class ConsultationReportPersistenceService {
                         consultation.getCaseInputRevision(),
                         consultation.getFollowUpAnswerRevision()
                 )
+                .filter(this::isCurrentGroundedReport)
                 .map(this::toDocument);
     }
 
@@ -251,6 +258,9 @@ public class ConsultationReportPersistenceService {
                         );
 
         if (existing.isPresent()) {
+            if (!isCurrentGroundedReport(existing.get())) {
+                throw new GroundedEvidenceUnavailableException("stored report evidence is stale");
+            }
             return toDocument(
                     existing.get()
             );
@@ -324,6 +334,7 @@ public class ConsultationReportPersistenceService {
                         );
 
         return report
+                .filter(this::isCurrentGroundedReport)
                 .map(this::toDocument)
                 .map(
                         ConsultationReportStateResponse::ready
@@ -338,6 +349,7 @@ public class ConsultationReportPersistenceService {
         Account account = accountSessionService.currentAccount()
                 .orElseThrow(com.financialhelper.account.AccountAuthenticationException::required);
         return reportRepository.findByConsultation_IdAndConsultation_Account_Id(consultationId, account.getId())
+                .filter(this::isCurrentGroundedReport)
                 .map(this::toDocument)
                 .map(ConsultationReportStateResponse::ready)
                 .orElseGet(ConsultationReportStateResponse::notPrepared);
@@ -452,5 +464,35 @@ public class ConsultationReportPersistenceService {
                 report.getAnalysisEvidenceSnapshotId(),
                 ConsultationScenarioResolver.resolve(report.getConsultation())
         );
+    }
+
+    private boolean isCurrentGroundedReport(ConsultationReport report) {
+        Consultation consultation = report.getConsultation();
+        if (consultation.getCaseInputRevision() != report.getCaseInputRevision()
+                || consultation.getFollowUpAnswerRevision() != report.getFollowUpAnswerRevision()) {
+            return false;
+        }
+        if (ConsultationScenarioResolver.resolve(consultation)
+                == com.financialhelper.consultation.ConsultationScenario.UNKNOWN) {
+            return true;
+        }
+        if (report.getAnalysisEvidenceSnapshotId() == null) {
+            return false;
+        }
+        try {
+            AnalysisEvidenceSnapshotData snapshot = evidenceSnapshotService.loadForId(
+                    report.getAnalysisEvidenceSnapshotId());
+            evidenceSnapshotService.assertCurrentForReport(snapshot);
+            if (!snapshot.consultationId().equals(consultation.getId())
+                    || !snapshot.analysisJobId().equals(report.getAnalysisJob().getId())
+                    || snapshot.caseInputRevision() != report.getCaseInputRevision()
+                    || snapshot.followUpAnswerRevision() != report.getFollowUpAnswerRevision()) {
+                return false;
+            }
+            groundedOutputValidator.validateReport(deserializeReport(report.getResultJson()), snapshot);
+            return true;
+        } catch (GroundedEvidenceUnavailableException | AiOutputContractException | IllegalStateException exception) {
+            return false;
+        }
     }
 }
