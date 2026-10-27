@@ -16,14 +16,28 @@ public record StructuredFollowUpStateResponse(
         String savedAnswer,
         String unsupportedReason,
         BlockingFact blockingFact,
-        String message
+        String message,
+        String versionBlockReason
 ) {
+    public StructuredFollowUpStateResponse(String kind, long caseInputRevision,
+            List<String> missingFacts, Question question, Integer currentQuestionNumber,
+            Integer totalQuestions, String savedAnswer, String unsupportedReason,
+            BlockingFact blockingFact, String message) {
+        this(kind, caseInputRevision, missingFacts, question, currentQuestionNumber,
+                totalQuestions, savedAnswer, unsupportedReason, blockingFact, message, null);
+    }
     public StructuredFollowUpStateResponse {
         missingFacts = missingFacts == null ? List.of() : List.copyOf(missingFacts);
     }
 
     public static StructuredFollowUpStateResponse complete(long revision) {
         return new StructuredFollowUpStateResponse("complete", revision, List.of(), null, null, null, null, null, null, null);
+    }
+
+    public static StructuredFollowUpStateResponse versionBlocked(long revision, String reason) {
+        return new StructuredFollowUpStateResponse("version_blocked", revision, List.of(),
+                null, null, null, null, null, null,
+                "현재 상황에 적용할 공식 절차를 확인할 수 없습니다.", reason);
     }
 
     public static StructuredFollowUpStateResponse question(
@@ -40,6 +54,13 @@ public record StructuredFollowUpStateResponse(
             int total,
             List<String> missingFacts
     ) {
+        return question(entity, options, entity.getSequenceNo(), total, missingFacts);
+    }
+
+    public static StructuredFollowUpStateResponse question(
+            FollowUpQuestion entity, List<FollowUpQuestionSpec.Option> options,
+            int displayNumber, int total, List<String> missingFacts
+    ) {
         return new StructuredFollowUpStateResponse(
                 "question",
                 entity.getCaseInputRevision(),
@@ -48,7 +69,7 @@ public record StructuredFollowUpStateResponse(
                         parseInputType(entity.getInputType()), options,
                         entity.getQuestionText(), entity.getDescription(),
                         entity.isRequiredForDecision(), entity.getQuestionIntent()),
-                entity.getSequenceNo(), total, entity.getAnswerValue(), null, null, null);
+                displayNumber, total, entity.getAnswerValue(), null, null, null);
     }
 
     public static StructuredFollowUpStateResponse unsupported(

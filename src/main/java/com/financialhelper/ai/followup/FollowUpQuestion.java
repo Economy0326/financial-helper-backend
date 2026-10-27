@@ -136,6 +136,18 @@ public class FollowUpQuestion {
     )
     private String questionIntent;
 
+    @Column(name = "question_scope", nullable = false, length = 32)
+    private String questionScope = "LEGACY_UNATTRIBUTED";
+
+    @Column(name = "procedure_version_id")
+    private UUID procedureVersionId;
+
+    @Column(name = "fact_contract_id", length = 128)
+    private String factContractId;
+
+    @Column(name = "superseded_at")
+    private OffsetDateTime supersededAt;
+
     // protected -> JPA가 엔티티 생성가능하게, 일반 생성자 사용 금지
     protected FollowUpQuestion() {
     }
@@ -272,6 +284,34 @@ public class FollowUpQuestion {
 
     public String getQuestionIntent() {
         return questionIntent;
+    }
+
+    public String getQuestionScope() { return questionScope; }
+    public UUID getProcedureVersionId() { return procedureVersionId; }
+    public String getFactContractId() { return factContractId; }
+    public OffsetDateTime getSupersededAt() { return supersededAt; }
+    public boolean isActive() { return supersededAt == null; }
+
+    public void attributeToVersion(UUID versionId) {
+        if (versionId == null) throw new IllegalArgumentException("procedureVersionId is required");
+        questionScope = "VERSION_BOUND";
+        procedureVersionId = versionId;
+        factContractId = null;
+    }
+
+    public void attributeToCommonFact(String scope, String contractId) {
+        if (!("SCENARIO_ROUTING".equals(scope) || "COMMON_DATE".equals(scope))
+                || contractId == null || contractId.isBlank())
+            throw new IllegalArgumentException("valid common fact contract is required");
+        questionScope = scope;
+        factContractId = contractId;
+        procedureVersionId = null;
+    }
+
+    public boolean supersede(OffsetDateTime at) {
+        if (supersededAt != null) return false;
+        supersededAt = Objects.requireNonNull(at);
+        return true;
     }
 
     public boolean isAnswered() {

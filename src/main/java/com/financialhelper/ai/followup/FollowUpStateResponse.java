@@ -8,8 +8,19 @@ public record FollowUpStateResponse(
         Question question,
         Integer currentQuestionNumber,
         Integer totalQuestions,
-        String savedAnswer
+        String savedAnswer,
+        String versionBlockReason,
+        String message
 ) {
+    public FollowUpStateResponse(String kind, Question question, Integer currentQuestionNumber,
+            Integer totalQuestions, String savedAnswer) {
+        this(kind, question, currentQuestionNumber, totalQuestions, savedAnswer, null, null);
+    }
+
+    public static FollowUpStateResponse versionBlocked(String reason) {
+        return new FollowUpStateResponse("version_blocked", null, null, null, null,
+                reason, "현재 상황에 적용할 공식 절차를 확인할 수 없습니다.");
+    }
 
     public static FollowUpStateResponse notPrepared() {
         return new FollowUpStateResponse(
@@ -38,6 +49,13 @@ public record FollowUpStateResponse(
             List<Option> options,
             int totalQuestions
     ) {
+        return question(followUpQuestion, options, followUpQuestion.getSequenceNo(), totalQuestions);
+    }
+
+    public static FollowUpStateResponse question(
+            FollowUpQuestion followUpQuestion, List<Option> options,
+            int displayNumber, int totalQuestions
+    ) {
 
         return new FollowUpStateResponse(
                 "question",
@@ -52,8 +70,7 @@ public record FollowUpStateResponse(
                         options
                 ),
 
-                followUpQuestion
-                        .getSequenceNo(),
+                displayNumber,
 
                 totalQuestions,
 

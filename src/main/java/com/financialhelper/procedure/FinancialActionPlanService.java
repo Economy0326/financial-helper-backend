@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
@@ -26,8 +27,11 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -111,12 +115,11 @@ public class FinancialActionPlanService {
         CardCaseFacts extractedFacts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
                 ? CardCaseFactExtractor.fromSnapshot(snapshotData)
                 : ScenarioCaseFactExtractor.fromSnapshot(snapshotData);
-        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
-                ? procedureVersionService.requireApprovedCard(extractedFacts)
-                : procedureVersionService.requireApproved(scenario.name(),
-                        "GENERIC_FINANCIAL_INSTITUTION",
-                        scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
-                                ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT");
+        ProcedureVersionService.Selection selection = selectCurrentProcedure(scenario, extractedFacts);
+        if (!selection.selected()) {
+            return selectionFailure(snapshotData, scenario.name(), selection);
+        }
+        ProcedureVersionData procedure = selection.procedure();
         ProcedureVersion procedureEntity = procedureRepository.findById(procedure.id())
                 .orElseThrow(() -> new IllegalStateException("approved procedure entity is unavailable"));
         log.debug("FAP evaluation consultationId={}, scenario={}, snapshotCaseRevision={}, "
@@ -125,8 +128,11 @@ public class FinancialActionPlanService {
                 snapshotData.followUpAnswerRevision(), procedure.id(), procedure.version(),
                 safeFactSummary(extractedFacts));
 
-        FinancialActionPlanData result = buildFromSnapshot(snapshotData, procedure, extractedFacts);
-        return saveIfAbsent(consultation, procedureEntity, snapshot, result);
+        List<EvidenceBindingResolver.ResolvedReference> resolvedReferences = new ArrayList<>();
+        FinancialActionPlanData result = buildFromSnapshot(
+                snapshotData, procedure, extractedFacts, resolvedReferences);
+        return saveIfAbsent(consultation, procedureEntity, procedure, snapshot, result,
+                resolvedReferences);
     }
 
     @Transactional(readOnly = true)
@@ -139,8 +145,118 @@ public class FinancialActionPlanService {
                         consultation.getId())
                 .filter(plan -> plan.getCaseInputRevision() == consultation.getCaseInputRevision()
                         && plan.getFollowUpAnswerRevision() == consultation.getFollowUpAnswerRevision())
-                .map(this::toData)
+                .map(plan -> currentPlanOrFailure(consultation, plan))
                 .orElseThrow(() -> new IllegalStateException("financial action plan does not exist"));
+    }
+
+    private ProcedureVersionService.Selection selectCurrentProcedure(
+            ConsultationScenario scenario, CardCaseFacts facts
+    ) {
+        boolean card = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE;
+        if (card) {
+            return procedureVersionService.selectApplicableCard(facts,
+                    parseDate(facts.value("incidentDate")));
+        }
+        String procedureScenario = scenario.name();
+        String institution = card ? ProcedureVersionService.KB_INSTITUTION
+                : "GENERIC_FINANCIAL_INSTITUTION";
+        String product = card ? ProcedureVersionService.PERSONAL_CREDIT_CARD
+                : scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                        ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT";
+        String dateKey = scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                ? "transactionDate" : "incidentDate";
+        return procedureVersionService.selectApplicable(procedureScenario, institution, product,
+                parseDate(facts.value(dateKey)),
+                scenario != ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP);
+    }
+
+    private FinancialActionPlanData selectionFailure(
+            ConfirmedCaseSnapshotData snapshot, String scenario,
+            ProcedureVersionService.Selection selection
+    ) {
+        ProcedureVersionService.SelectionFailure failure = selection.failure();
+        boolean missingDate = failure == ProcedureVersionService.SelectionFailure.DATE_REQUIRED;
+        boolean missingBranch = failure == ProcedureVersionService.SelectionFailure.BRANCH_FACT_REQUIRED;
+        String dateKey = "UNAUTHORIZED_ACCOUNT_TRANSFER".equals(scenario)
+                ? "transactionDate" : "incidentDate";
+        return new FinancialActionPlanData(null, snapshot.consultationId(), snapshot.id(),
+                null, scenario, 0, snapshot.caseInputRevision(), snapshot.followUpAnswerRevision(),
+                missingDate || missingBranch ? PlanStatus.NEEDS_CLARIFICATION : PlanStatus.FAILED,
+                List.of(), List.of(), List.of(),
+                missingDate ? List.of(dateKey) : missingBranch
+                        ? List.of(selection.blockingFact()) : List.of(),
+                missingDate || missingBranch ? List.of() : List.of(failure.name()), List.of());
+    }
+
+    private FinancialActionPlanData currentPlanOrFailure(
+            Consultation consultation, FinancialActionPlan plan
+    ) {
+        boolean ready = plan.getPlanStatus() == PlanStatus.READY;
+        try {
+            ConfirmedCaseSnapshot row = plan.getConfirmedCaseSnapshot();
+            if (row == null || row.getConsultation() == null
+                    || !consultation.getId().equals(row.getConsultation().getId())
+                    || row.getCaseInputRevision() != consultation.getCaseInputRevision()
+                    || row.getFollowUpAnswerRevision() != consultation.getFollowUpAnswerRevision()) {
+                return ready ? failedPlanFromEntity(plan, "CURRENT_SNAPSHOT_MISMATCH") : toData(plan);
+            }
+            ConfirmedCaseSnapshotData.Fact[] savedFacts = jsonMapper.readValue(
+                    row.getFactsJson(), ConfirmedCaseSnapshotData.Fact[].class);
+            ConfirmedCaseSnapshotData snapshot = new ConfirmedCaseSnapshotData(
+                    row.getId(), consultation.getId(), row.getCaseInputRevision(),
+                    row.getFollowUpAnswerRevision(),
+                    savedFacts == null ? List.of() : List.of(savedFacts), List.of(), null);
+            ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+            CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                    ? CardCaseFactExtractor.fromSnapshot(snapshot)
+                    : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
+            ProcedureVersionService.Selection selection = selectCurrentProcedure(scenario, facts);
+            if (!selection.selected()) {
+                if (!ready) {
+                    return toData(plan);
+                }
+                return selection.failure() == ProcedureVersionService.SelectionFailure.DATE_REQUIRED
+                        || selection.failure() == ProcedureVersionService.SelectionFailure.BRANCH_FACT_REQUIRED
+                        ? selectionFailure(snapshot, scenario.name(), selection)
+                        : failedPlanFromEntity(plan, selection.failure().name());
+            }
+            Set<String> scopeUnresolved = new LinkedHashSet<>();
+            if (!matchesScope(selection.procedure().scenario(), facts, scopeUnresolved)
+                    || !scopeUnresolved.isEmpty()) {
+                return ready ? failedPlanFromEntity(plan, "CURRENT_PROCEDURE_SCOPE_UNCONFIRMED")
+                        : toData(plan);
+            }
+            UUID currentId = selection.procedure().id();
+            FinancialActionPlan current = currentId.equals(plan.getProcedureVersion().getId())
+                    ? plan : planRepository
+                            .findByConsultation_IdAndProcedureVersion_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                                    consultation.getId(), currentId, snapshot.caseInputRevision(),
+                                    snapshot.followUpAnswerRevision())
+                            .orElse(null);
+            if (current != null && current != plan) {
+                ConfirmedCaseSnapshot currentSnapshot = current.getConfirmedCaseSnapshot();
+                if (currentSnapshot == null || currentSnapshot.getConsultation() == null
+                        || !consultation.getId().equals(currentSnapshot.getConsultation().getId())
+                        || currentSnapshot.getCaseInputRevision() != consultation.getCaseInputRevision()
+                        || currentSnapshot.getFollowUpAnswerRevision()
+                                != consultation.getFollowUpAnswerRevision()) {
+                    return failedPlanFromEntity(plan, "CURRENT_SNAPSHOT_MISMATCH");
+                }
+            }
+            return current == null ? ready ? failedPlanFromEntity(plan, "PROCEDURE_VERSION_MISMATCH")
+                    : toData(plan)
+                    : toData(current);
+        } catch (JacksonException exception) {
+            return ready ? failedPlanFromEntity(plan, "CURRENT_SNAPSHOT_INVALID") : toData(plan);
+        }
+    }
+
+    private FinancialActionPlanData failedPlanFromEntity(FinancialActionPlan plan, String gap) {
+        return new FinancialActionPlanData(plan.getId(), plan.getConsultation().getId(),
+                plan.getConfirmedCaseSnapshot().getId(), plan.getProcedureVersion().getId(),
+                plan.getScenario(), plan.getProcedureVersion().getVersion(),
+                plan.getCaseInputRevision(), plan.getFollowUpAnswerRevision(), PlanStatus.FAILED,
+                List.of(), List.of(), List.of(), List.of(), List.of(gap), List.of());
     }
 
     /** unit test와 향후 orchestration에서 사용하는 순수 판단 진입점이다. */
@@ -148,6 +264,15 @@ public class FinancialActionPlanService {
             ConfirmedCaseSnapshotData snapshot,
             ProcedureVersionData procedure,
             CardCaseFacts facts
+    ) {
+        return buildFromSnapshot(snapshot, procedure, facts, new ArrayList<>());
+    }
+
+    private FinancialActionPlanData buildFromSnapshot(
+            ConfirmedCaseSnapshotData snapshot,
+            ProcedureVersionData procedure,
+            CardCaseFacts facts,
+            List<EvidenceBindingResolver.ResolvedReference> resolvedReferences
     ) {
         if (snapshot == null || procedure == null || facts == null) {
             throw new IllegalArgumentException("snapshot, procedure and facts are required");
@@ -229,47 +354,61 @@ public class FinancialActionPlanService {
                     List.of(), unresolved, coverageGaps, warnings);
         }
 
-        List<ProcedureVersionData.EvidenceReference> applicableReferences = procedure.evidenceReferences()
-                .stream()
-                // K5는 과거 시행일을 독립적으로 검증하지 못한 업무 양식이다.
-                // 보상 신청을 선택한 뒤에는 필요하지만 신고 여부가 FALSE로 확인된
-                // 즉시 분실 신고 branch를 막아서는 안 된다.
-                .filter(reference -> !cardProcedure
-                        || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
-                        || "TRUE".equalsIgnoreCase(facts.value("reported"))
-                        || applicabilityDate == null)
-                .toList();
+        boolean actionScoped = procedure.evidenceContract()
+                == ProcedureVersionData.EvidenceContract.ACTION_SCOPED;
+        List<FinancialActionPlanData.Action> actions = actionScoped
+                ? selectedActions(procedure, facts, unresolved) : new ArrayList<>();
+        if (actionScoped && actions.stream().anyMatch(action -> procedure.actionSteps().stream()
+                .filter(step -> step.actionId().equals(action.actionId()))
+                .findFirst().map(step -> step.evidenceRoles().isEmpty()).orElse(true))) {
+            return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
+                    List.of(), unresolved, List.of("ACTION_EVIDENCE_ROLE_UNAVAILABLE"), warnings);
+        }
+        Set<String> selectedIds = actions.stream()
+                .map(FinancialActionPlanData.Action::actionId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<ProcedureVersionData.EvidenceReference> applicableReferences = actionScoped
+                ? procedure.evidenceReferences().stream()
+                        .filter(reference -> reference.actionIds().stream().anyMatch(selectedIds::contains))
+                        .toList()
+                : procedure.evidenceReferences().stream()
+                        // Preserve the reviewed legacy CARD document condition.
+                        .filter(reference -> !cardProcedure
+                                || !"kb-unauthorized-compensation-form-260209".equals(reference.sourceKey())
+                                || "TRUE".equalsIgnoreCase(facts.value("reported"))
+                                || applicabilityDate == null)
+                        .toList();
+        if (actionScoped && !actions.isEmpty() && applicableReferences.isEmpty()) {
+            return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
+                    List.of(), unresolved, List.of("ACTION_EVIDENCE_REFERENCE_UNAVAILABLE"), warnings);
+        }
         EvidenceBindingResolver.Resolution resolution = evidenceResolver.resolve(
                 applicableReferences, applicabilityDate);
         coverageGaps.addAll(resolution.coverageGaps());
         if (!coverageGaps.isEmpty()) {
-            return data(snapshot, procedure, PlanStatus.NEEDS_CLARIFICATION, List.of(), List.of(),
-                    resolution.bindings(), List.of(), coverageGaps, warnings);
+            return data(snapshot, procedure,
+                    actionScoped ? PlanStatus.FAILED : PlanStatus.NEEDS_CLARIFICATION,
+                    List.of(), List.of(), resolution.bindings(),
+                    actionScoped ? List.copyOf(unresolved) : List.of(), coverageGaps, warnings);
+        }
+        if (actionScoped && !matchesResolvedReferences(applicableReferences, resolution)) {
+            return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
+                    resolution.bindings(), unresolved,
+                    List.of("ACTION_EVIDENCE_REFERENCE_UNAVAILABLE"), warnings);
+        }
+        if (actionScoped) {
+            resolvedReferences.addAll(resolution.resolvedReferences());
+        } else {
+            actions = selectedActions(procedure, facts, unresolved);
         }
 
-        List<FinancialActionPlanData.Action> actions = new ArrayList<>();
-        for (ProcedureVersionData.ConditionRule rule : procedure.conditionRules()) {
-            ConditionResult result = ConditionEvaluator.evaluate(rule.expression(), facts);
-            traceCondition(procedure, rule, facts, result);
-            if (result == ConditionResult.UNKNOWN
-                    && !"request-result-review".equals(rule.actionId())) {
-                collectUnknownFacts(rule.expression(), facts, unresolved);
-            }
-            if (result == ConditionResult.TRUE) {
-                procedure.actionSteps().stream()
-                        .filter(step -> step.actionId().equals(rule.actionId()))
-                        .findFirst()
-                        .ifPresent(step -> actions.add(new FinancialActionPlanData.Action(
-                                step.actionId(), step.order(), step.title(), step.description(),
-                                result, step.channelRef())));
-            }
+        if (actionScoped && selectedActionMissingScopedRole(procedure, actions,
+                resolution.resolvedReferences())) {
+            return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
+                    resolution.bindings(), unresolved,
+                    List.of("ACTION_EVIDENCE_ROLE_UNAVAILABLE"), warnings);
         }
-        actions.sort(Comparator.comparingInt(FinancialActionPlanData.Action::order));
-
-        // Resolve all Procedure references first, then require every selected Action's
-        // declared role. A role on another reference is not a substitute for a
-        // missing role, and an unselected Action cannot block this Plan.
-        if (selectedActionMissingRole(procedure, actions, resolution.bindings())) {
+        if (!actionScoped && selectedActionMissingRole(procedure, actions, resolution.bindings())) {
             return data(snapshot, procedure, PlanStatus.FAILED, List.of(), List.of(),
                     resolution.bindings(), unresolved,
                     List.of("ACTION_EVIDENCE_ROLE_UNAVAILABLE"), warnings);
@@ -301,6 +440,82 @@ public class FinancialActionPlanService {
         }
         return data(snapshot, procedure, PlanStatus.READY, actions, documents,
                 resolution.bindings(), List.of(), coverageGaps, warnings);
+    }
+
+    private List<FinancialActionPlanData.Action> selectedActions(
+            ProcedureVersionData procedure, CardCaseFacts facts, Set<String> unresolved
+    ) {
+        List<FinancialActionPlanData.Action> actions = new ArrayList<>();
+        for (ProcedureVersionData.ConditionRule rule : procedure.conditionRules()) {
+            ConditionResult result = ConditionEvaluator.evaluate(rule.expression(), facts);
+            traceCondition(procedure, rule, facts, result);
+            if (result == ConditionResult.UNKNOWN
+                    && !"request-result-review".equals(rule.actionId())) {
+                collectUnknownFacts(rule.expression(), facts, unresolved);
+            }
+            if (result == ConditionResult.TRUE) {
+                procedure.actionSteps().stream()
+                        .filter(step -> step.actionId().equals(rule.actionId()))
+                        .findFirst()
+                        .ifPresent(step -> actions.add(new FinancialActionPlanData.Action(
+                                step.actionId(), step.order(), step.title(), step.description(),
+                                result, step.channelRef())));
+            }
+        }
+        actions.sort(Comparator.comparingInt(FinancialActionPlanData.Action::order));
+        return actions;
+    }
+
+    private boolean matchesResolvedReferences(
+            List<ProcedureVersionData.EvidenceReference> references,
+            EvidenceBindingResolver.Resolution resolution
+    ) {
+        if (references.size() != resolution.resolvedReferences().size()
+                || references.size() != resolution.bindings().size()) {
+            return false;
+        }
+        for (int i = 0; i < references.size(); i++) {
+            EvidenceBindingResolver.ResolvedReference resolved = resolution.resolvedReferences().get(i);
+            if (!references.get(i).referenceId().equals(resolved.referenceId())
+                    || !resolution.bindings().get(i).equals(resolved.binding())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean selectedActionMissingScopedRole(
+            ProcedureVersionData procedure,
+            List<FinancialActionPlanData.Action> actions,
+            List<EvidenceBindingResolver.ResolvedReference> resolved
+    ) {
+        Map<String, ProcedureVersionData.EvidenceReference> references = new HashMap<>();
+        for (ProcedureVersionData.EvidenceReference reference : procedure.evidenceReferences()) {
+            references.put(reference.referenceId(), reference);
+        }
+        for (FinancialActionPlanData.Action action : actions) {
+            ProcedureVersionData.ActionStep step = procedure.actionSteps().stream()
+                    .filter(candidate -> candidate.actionId().equals(action.actionId()))
+                    .findFirst().orElse(null);
+            if (step == null || step.evidenceRoles().isEmpty()) {
+                return true;
+            }
+            Set<String> roles = new HashSet<>();
+            for (EvidenceBindingResolver.ResolvedReference item : resolved) {
+                ProcedureVersionData.EvidenceReference reference = references.get(item.referenceId());
+                if (reference == null || !reference.actionIds().contains(action.actionId())) {
+                    continue;
+                }
+                if (!reference.role().equals(item.binding().role())) {
+                    return true;
+                }
+                roles.add(item.binding().role());
+            }
+            if (!roles.containsAll(step.evidenceRoles())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void traceCondition(
@@ -629,9 +844,36 @@ public class FinancialActionPlanService {
     private FinancialActionPlanData saveIfAbsent(
             Consultation consultation,
             ProcedureVersion procedure,
+            ProcedureVersionData procedureData,
             ConfirmedCaseSnapshot snapshot,
-            FinancialActionPlanData result
+            FinancialActionPlanData result,
+            List<EvidenceBindingResolver.ResolvedReference> resolvedReferences
     ) {
+        if (result.status() == PlanStatus.READY) {
+            if (consultation.getCaseInputRevision() != snapshot.getCaseInputRevision()
+                    || consultation.getFollowUpAnswerRevision() != snapshot.getFollowUpAnswerRevision()) {
+                return failedStoredPlan(result, "STALE_CONSULTATION_REVISION");
+            }
+            try {
+                ConfirmedCaseSnapshotData.Fact[] savedFacts = jsonMapper.readValue(
+                        snapshot.getFactsJson(), ConfirmedCaseSnapshotData.Fact[].class);
+                ConfirmedCaseSnapshotData snapshotData = new ConfirmedCaseSnapshotData(
+                        snapshot.getId(), consultation.getId(), snapshot.getCaseInputRevision(),
+                        snapshot.getFollowUpAnswerRevision(),
+                        savedFacts == null ? List.of() : List.of(savedFacts), List.of(), null);
+                ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+                CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                        ? CardCaseFactExtractor.fromSnapshot(snapshotData)
+                        : ScenarioCaseFactExtractor.fromSnapshot(snapshotData);
+                ProcedureVersionService.Selection current = selectCurrentProcedure(scenario, facts);
+                if (!current.selected() || !current.procedure().id().equals(procedure.getId())) {
+                    return failedStoredPlan(result, current.selected()
+                            ? "PROCEDURE_VERSION_MISMATCH" : current.failure().name());
+                }
+            } catch (JacksonException exception) {
+                return failedStoredPlan(result, "CURRENT_SNAPSHOT_INVALID");
+            }
+        }
         return planRepository
                 .findByConsultation_IdAndProcedureVersion_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
                         consultation.getId(), procedure.getId(), snapshot.getCaseInputRevision(),
@@ -639,7 +881,15 @@ public class FinancialActionPlanService {
                 .map(this::toData)
                 .orElseGet(() -> {
                     try {
-                        String json = jsonMapper.writeValueAsString(result);
+                        boolean actionScoped = result.status() == PlanStatus.READY
+                                && procedureData.evidenceContract()
+                                == ProcedureVersionData.EvidenceContract.ACTION_SCOPED;
+                        String json = actionScoped
+                                ? jsonMapper.writeValueAsString(new StoredActionScopedPlan(result,
+                                        resolvedReferences.stream()
+                                                .map(EvidenceBindingResolver.ResolvedReference::referenceId)
+                                                .toList()))
+                                : jsonMapper.writeValueAsString(result);
                         FinancialActionPlan saved = planRepository.saveAndFlush(new FinancialActionPlan(
                                 consultation, procedure, snapshot, result.status(), json,
                                 OffsetDateTime.now(ZoneOffset.UTC)));
@@ -660,18 +910,25 @@ public class FinancialActionPlanService {
 
     private FinancialActionPlanData toData(FinancialActionPlan plan) {
         try {
-            FinancialActionPlanData parsed = jsonMapper.readValue(
-                    plan.getPlanJson(), FinancialActionPlanData.class);
+            JsonNode root = jsonMapper.readTree(plan.getPlanJson());
+            boolean hasScopedEnvelope = root.get("plan") != null;
+            StoredActionScopedPlan envelope = hasScopedEnvelope
+                    ? jsonMapper.readValue(plan.getPlanJson(), StoredActionScopedPlan.class) : null;
+            FinancialActionPlanData parsed = hasScopedEnvelope ? envelope.plan()
+                    : jsonMapper.readValue(plan.getPlanJson(), FinancialActionPlanData.class);
             FinancialActionPlanData stored = withId(parsed, plan.getId());
-            if (stored.status() == PlanStatus.READY
-                    && "UNAUTHORIZED_ACCOUNT_TRANSFER".equals(stored.scenario())) {
+            if (stored.status() != PlanStatus.READY) {
+                return stored;
+            }
+            LocalDate transactionDate = null;
+            if ("UNAUTHORIZED_ACCOUNT_TRANSFER".equals(stored.scenario())) {
                 ConfirmedCaseSnapshotData.Fact[] savedFacts = jsonMapper.readValue(
                         plan.getConfirmedCaseSnapshot().getFactsJson(), ConfirmedCaseSnapshotData.Fact[].class);
                 ConfirmedCaseSnapshotData snapshot = new ConfirmedCaseSnapshotData(
                         stored.confirmedCaseSnapshotId(), stored.consultationId(),
                         stored.caseInputRevision(), stored.followUpAnswerRevision(),
                         savedFacts == null ? List.of() : List.of(savedFacts), List.of(), null);
-                LocalDate transactionDate = parseDate(
+                transactionDate = parseDate(
                         ScenarioCaseFactExtractor.fromSnapshot(snapshot).value("transactionDate"));
                 if (transactionDate == null) {
                     return new FinancialActionPlanData(
@@ -682,8 +939,22 @@ public class FinancialActionPlanService {
                             List.of("transactionDate"), stored.coverageGaps(),
                             List.of("ACCOUNT_TRANSACTION_DATE_REQUIRED"));
                 }
+            }
+            ProcedureVersionData procedure = procedureVersionService.toData(plan.getProcedureVersion());
+            if (procedure == null) {
+                return failedStoredPlan(stored, "PROCEDURE_NOT_APPROVED");
+            }
+            if (procedure.evidenceContract()
+                    == ProcedureVersionData.EvidenceContract.ACTION_SCOPED) {
+                if (envelope == null || actionScopedStoredPlanInvalid(
+                        plan, stored, procedure, envelope.referenceIds())) {
+                    return failedStoredPlan(stored, "ACTION_EVIDENCE_REFERENCE_UNAVAILABLE");
+                }
+                return stored;
+            }
+            if (transactionDate != null) {
                 EvidenceBindingResolver.Resolution currentEvidence = evidenceResolver.resolve(
-                        procedureVersionService.toData(plan.getProcedureVersion()).evidenceReferences(),
+                        procedure.evidenceReferences(),
                         transactionDate);
                 if (!currentEvidence.coverageGaps().isEmpty()) {
                     return new FinancialActionPlanData(
@@ -695,7 +966,7 @@ public class FinancialActionPlanService {
                 }
             }
             if (stored.status() == PlanStatus.READY
-                    && selectedActionMissingRole(procedureVersionService.toData(plan.getProcedureVersion()),
+                    && selectedActionMissingRole(procedure,
                             stored.actions(), stored.evidence())) {
                 return new FinancialActionPlanData(
                         stored.id(), stored.consultationId(), stored.confirmedCaseSnapshotId(),
@@ -708,6 +979,81 @@ public class FinancialActionPlanService {
         } catch (JacksonException exception) {
             throw new IllegalStateException("stored financial action plan is invalid", exception);
         }
+    }
+
+    private boolean actionScopedStoredPlanInvalid(
+            FinancialActionPlan entity,
+            FinancialActionPlanData stored,
+            ProcedureVersionData procedure,
+            List<String> storedReferenceIds
+    ) throws JacksonException {
+        if (!procedure.id().equals(stored.procedureVersionId())
+                || procedure.version() != stored.procedureVersion()
+                || !procedure.scenario().equals(stored.scenario())
+                || entity.getPlanStatus() != PlanStatus.READY
+                || !entity.getConfirmedCaseSnapshot().getId().equals(stored.confirmedCaseSnapshotId())
+                || entity.getCaseInputRevision() != stored.caseInputRevision()
+                || entity.getFollowUpAnswerRevision() != stored.followUpAnswerRevision()
+                || storedReferenceIds == null
+                || storedReferenceIds.size() != stored.evidence().size()) {
+            return true;
+        }
+        Set<String> selected = new HashSet<>();
+        for (FinancialActionPlanData.Action action : stored.actions()) {
+            if (action.conditionResult() != ConditionResult.TRUE
+                    || !selected.add(action.actionId())
+                    || procedure.actionSteps().stream()
+                            .noneMatch(step -> step.actionId().equals(action.actionId()))) {
+                return true;
+            }
+        }
+        List<ProcedureVersionData.EvidenceReference> references = procedure.evidenceReferences().stream()
+                .filter(reference -> reference.actionIds().stream().anyMatch(selected::contains))
+                .toList();
+        if (references.size() != storedReferenceIds.size()
+                || !references.stream().map(ProcedureVersionData.EvidenceReference::referenceId)
+                        .toList().equals(storedReferenceIds)) {
+            return true;
+        }
+        ConfirmedCaseSnapshotData.Fact[] savedFacts = jsonMapper.readValue(
+                entity.getConfirmedCaseSnapshot().getFactsJson(), ConfirmedCaseSnapshotData.Fact[].class);
+        ConfirmedCaseSnapshotData snapshot = new ConfirmedCaseSnapshotData(
+                stored.confirmedCaseSnapshotId(), stored.consultationId(),
+                stored.caseInputRevision(), stored.followUpAnswerRevision(),
+                savedFacts == null ? List.of() : List.of(savedFacts), List.of(), null);
+        CardCaseFacts facts = ProcedureVersionService.isCardProcedureScenario(procedure.scenario())
+                ? CardCaseFactExtractor.fromSnapshot(snapshot)
+                : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
+        Set<String> unresolved = new LinkedHashSet<>();
+        if (!selectedActions(procedure, facts, unresolved).equals(stored.actions())
+                || !unresolved.isEmpty()) {
+            return true;
+        }
+        LocalDate date = "UNAUTHORIZED_ACCOUNT_TRANSFER".equals(procedure.scenario())
+                ? parseDate(facts.value("transactionDate"))
+                : parseDate(facts.value("incidentDate"));
+        if ("UNAUTHORIZED_ACCOUNT_TRANSFER".equals(procedure.scenario()) && date == null) {
+            return true;
+        }
+        EvidenceBindingResolver.Resolution current = evidenceResolver.resolve(references, date);
+        if (!current.coverageGaps().isEmpty()
+                || !matchesResolvedReferences(references, current)
+                || !current.bindings().equals(stored.evidence())) {
+            return true;
+        }
+        return selectedActionMissingScopedRole(procedure, stored.actions(), current.resolvedReferences());
+    }
+
+    private FinancialActionPlanData failedStoredPlan(FinancialActionPlanData stored, String gap) {
+        return new FinancialActionPlanData(
+                stored.id(), stored.consultationId(), stored.confirmedCaseSnapshotId(),
+                stored.procedureVersionId(), stored.scenario(), stored.procedureVersion(),
+                stored.caseInputRevision(), stored.followUpAnswerRevision(), PlanStatus.FAILED,
+                List.of(), List.of(), List.of(), stored.unresolvedFacts(), List.of(gap), stored.warnings());
+    }
+
+    /** Stored only in plan_json; the public FinancialActionPlanData response remains unchanged. */
+    private record StoredActionScopedPlan(FinancialActionPlanData plan, List<String> referenceIds) {
     }
 
     private boolean selectedActionMissingRole(

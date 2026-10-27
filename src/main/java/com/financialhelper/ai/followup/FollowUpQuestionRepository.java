@@ -16,10 +16,18 @@ public interface FollowUpQuestionRepository
             long caseInputRevision
     );
 
+    List<FollowUpQuestion>
+    findByConsultation_IdAndCaseInputRevisionAndSupersededAtIsNullOrderBySequenceNoAsc(
+            UUID consultationId, long caseInputRevision);
+
     Optional<FollowUpQuestion>
     findByIdAndConsultation_IdAndCaseInputRevision(
             UUID questionId,
             UUID consultationId,
             long caseInputRevision
     );
+
+    Optional<FollowUpQuestion>
+    findByIdAndConsultation_IdAndCaseInputRevisionAndSupersededAtIsNull(
+            UUID questionId, UUID consultationId, long caseInputRevision);
 }

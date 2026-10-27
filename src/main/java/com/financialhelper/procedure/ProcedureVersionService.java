@@ -2,6 +2,8 @@ package com.financialhelper.procedure;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -18,6 +20,7 @@ import java.util.Set;
 
 @Service
 public class ProcedureVersionService {
+    private static final Logger log = LoggerFactory.getLogger(ProcedureVersionService.class);
     public static final String CARD_SCENARIO = "CARD_LOSS_UNAUTHORIZED_USE";
     public static final String CARD_LOSS_ONLY_SCENARIO = "CARD_LOSS_ONLY";
     public static final String CARD_HELD_UNAUTHORIZED_SCENARIO = "CARD_HELD_UNAUTHORIZED_USE";
@@ -72,6 +75,110 @@ public class ProcedureVersionService {
         return requireApproved(branch, KB_INSTITUTION, PERSONAL_CREDIT_CARD);
     }
 
+    public enum SelectionFailure {
+        DATE_REQUIRED, BRANCH_FACT_REQUIRED, NO_APPLICABLE_VERSION,
+        OVERLAPPING_APPROVED_VERSIONS
+    }
+
+    public record Selection(ProcedureVersionData procedure, SelectionFailure failure,
+                            String blockingFact) {
+        public Selection(ProcedureVersionData procedure, SelectionFailure failure) {
+            this(procedure, failure, null);
+        }
+        public boolean selected() { return procedure != null; }
+    }
+
+    public record CardBranchSelection(String scenario, String missingFact) {
+        public boolean selected() { return missingFact == null; }
+    }
+
+    /** Only facts that can change the selected CARD branch are required. */
+    public CardBranchSelection selectCardBranch(CardCaseFacts facts) {
+        if (facts == null || !facts.hasKnownValue("cardLost"))
+            return new CardBranchSelection(null, "cardLost");
+        if (!facts.hasKnownValue("unauthorizedPayment"))
+            return new CardBranchSelection(null, "unauthorizedPayment");
+        String lost = facts.value("cardLost");
+        String payment = facts.value("unauthorizedPayment");
+        if ("TRUE".equalsIgnoreCase(lost) && "FALSE".equalsIgnoreCase(payment))
+            return new CardBranchSelection(CARD_LOSS_ONLY_SCENARIO, null);
+        if ("FALSE".equalsIgnoreCase(lost) && "TRUE".equalsIgnoreCase(payment))
+            return new CardBranchSelection(CARD_HELD_UNAUTHORIZED_SCENARIO, null);
+        if ("TRUE".equalsIgnoreCase(lost) && "TRUE".equalsIgnoreCase(payment)) {
+            if (!facts.hasKnownValue("reported"))
+                return new CardBranchSelection(null, "reported");
+            if ("TRUE".equalsIgnoreCase(facts.value("reported"))) {
+                if (!facts.hasKnownValue("compensationStatus"))
+                    return new CardBranchSelection(null, "compensationStatus");
+                return new CardBranchSelection(
+                        "RESULT_RECEIVED".equalsIgnoreCase(facts.value("compensationStatus"))
+                                ? CARD_COMPENSATION_RESULT_SCENARIO
+                                : CARD_COMPENSATION_PROCESS_SCENARIO, null);
+            }
+        }
+        return new CardBranchSelection(CARD_SCENARIO, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Selection selectApplicableCard(CardCaseFacts facts, LocalDate date) {
+        CardBranchSelection branch = selectCardBranch(facts);
+        if (!branch.selected())
+            return new Selection(null, SelectionFailure.BRANCH_FACT_REQUIRED, branch.missingFact());
+        return selectApplicable(branch.scenario(), KB_INSTITUTION, PERSONAL_CREDIT_CARD, date, true);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProcedureVersionData> approvedCandidates(
+            String scenario, String institution, String productType) {
+        return repository.findByScenarioAndInstitutionAndProductTypeAndStatus(
+                scenario, canonicalInstitution(institution), canonicalProduct(productType),
+                ProcedureStatus.APPROVED).stream().map(this::toData).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Selection selectApplicable(
+            String scenario, String institution, String productType, LocalDate date,
+            boolean dateRequired
+    ) {
+        if (scenario == null || institution == null || productType == null) {
+            throw new IllegalArgumentException("scenario, institution and productType are required");
+        }
+        if (dateRequired && date == null) {
+            return new Selection(null, SelectionFailure.DATE_REQUIRED);
+        }
+        List<ProcedureVersion> candidates = repository.findByScenarioAndInstitutionAndProductTypeAndStatus(
+                scenario, canonicalInstitution(institution), canonicalProduct(productType),
+                ProcedureStatus.APPROVED);
+        if (date == null && (candidates.size() != 1
+                || candidates.getFirst().getApplicabilityStartDate() != null
+                || candidates.getFirst().getApplicabilityEndDate() != null)) {
+            return new Selection(null, candidates.size() > 1
+                    ? SelectionFailure.OVERLAPPING_APPROVED_VERSIONS
+                    : SelectionFailure.NO_APPLICABLE_VERSION);
+        }
+        List<ProcedureVersion> applicable = candidates.stream()
+                .filter(candidate -> date == null
+                        ? candidate.getApplicabilityStartDate() == null
+                                && candidate.getApplicabilityEndDate() == null
+                        : (candidate.getApplicabilityStartDate() == null
+                                || !date.isBefore(candidate.getApplicabilityStartDate()))
+                                && (candidate.getApplicabilityEndDate() == null
+                                || !date.isAfter(candidate.getApplicabilityEndDate())))
+                .toList();
+        if (applicable.isEmpty()) {
+            return new Selection(null, SelectionFailure.NO_APPLICABLE_VERSION);
+        }
+        if (applicable.size() != 1) {
+            log.warn("Overlapping approved ProcedureVersions scenario={}, institution={}, productType={}, "
+                            + "candidates={}", scenario, institution, productType,
+                    applicable.stream().map(candidate -> candidate.getId() + ":"
+                            + candidate.getApplicabilityStartDate() + ".."
+                            + candidate.getApplicabilityEndDate()).toList());
+            return new Selection(null, SelectionFailure.OVERLAPPING_APPROVED_VERSIONS);
+        }
+        return new Selection(toData(applicable.getFirst()), null);
+    }
+
     public String selectCardProcedureScenario(CardCaseFacts facts) {
         if (facts == null) return CARD_SCENARIO;
         String cardLost = facts.value("cardLost");
@@ -107,9 +214,9 @@ public class ProcedureVersionService {
         }
         try {
             List<ProcedureVersionData.ActionStep> actions = parseActionSteps(entity.getActionStepsJson());
-            List<ProcedureVersionData.EvidenceReference> references =
+            ParsedEvidenceReferences parsed =
                     parseEvidenceReferences(entity.getEvidenceReferencesJson());
-            validateEvidenceContract(actions, references);
+            validateEvidenceContract(actions, parsed);
             return new ProcedureVersionData(
                     entity.getId(), entity.getScenario(), entity.getInstitution(),
                     entity.getProductType(), entity.getVersion(), entity.getStatus(),
@@ -118,11 +225,12 @@ public class ProcedureVersionService {
                     parseConditionRules(entity.getConditionRulesJson()),
                     actions,
                     parseDocumentRequirements(entity.getDocumentRequirementsJson()),
-                    references,
+                    parsed.references(),
                     parseReviewedContacts(entity.getReviewedContactsJson()),
                     parseReviewedValues(entity.getReviewedValuesJson()),
                     parseStrings(entity.getConditionsExceptionsJson()),
-                    entity.getReviewNotes(), entity.getReviewedBy(), entity.getReviewedAt());
+                    entity.getReviewNotes(), entity.getReviewedBy(), entity.getReviewedAt(),
+                    parsed.contract());
         } catch (JacksonException exception) {
             throw new IllegalStateException("approved procedure definition is invalid", exception);
         }
@@ -230,14 +338,43 @@ public class ProcedureVersionService {
         return List.copyOf(result);
     }
 
-    private List<ProcedureVersionData.EvidenceReference> parseEvidenceReferences(String json)
+    private ParsedEvidenceReferences parseEvidenceReferences(String json)
             throws JacksonException {
+        JsonNode root = jsonMapper.readTree(json);
+        ProcedureVersionData.EvidenceContract contract;
+        JsonNode nodes;
+        if (root.isArray()) {
+            contract = ProcedureVersionData.EvidenceContract.LEGACY;
+            nodes = root;
+        } else if (root.isObject()) {
+            if (!"ACTION_SCOPED".equals(nullableText(root, "contract"))) {
+                throw new IllegalArgumentException("evidence contract must be ACTION_SCOPED");
+            }
+            nodes = root.get("references");
+            if (nodes == null || !nodes.isArray()) {
+                throw new IllegalArgumentException("evidence references must be an array");
+            }
+            contract = ProcedureVersionData.EvidenceContract.ACTION_SCOPED;
+        } else {
+            throw new IllegalArgumentException("evidence references must be a legacy array or action-scoped object");
+        }
         List<ProcedureVersionData.EvidenceReference> result = new ArrayList<>();
-        for (JsonNode node : jsonMapper.readTree(json)) {
+        for (JsonNode node : nodes) {
+            if (!node.isObject()) {
+                throw new IllegalArgumentException("evidence reference must be an object");
+            }
             JsonNode idNode = node.get("referenceId");
             JsonNode actionsNode = node.get("actionIds");
-            if ((idNode == null) != (actionsNode == null)) {
-                throw new IllegalArgumentException("referenceId and actionIds must both be present or absent");
+            if (contract == ProcedureVersionData.EvidenceContract.LEGACY
+                    && (idNode != null || actionsNode != null)) {
+                throw new IllegalArgumentException("legacy array cannot contain referenceId or actionIds");
+            }
+            if (contract == ProcedureVersionData.EvidenceContract.ACTION_SCOPED
+                    && (idNode == null || actionsNode == null)) {
+                if (idNode == null && actionsNode == null) {
+                    throw new IllegalArgumentException("legacy and action-scoped evidence references cannot be mixed");
+                }
+                throw new IllegalArgumentException("action-scoped referenceId and actionIds are required");
             }
             String referenceId = null;
             List<String> actionIds = null;
@@ -274,16 +411,22 @@ public class ProcedureVersionService {
                                     && !"REPORT_CHANNEL".equals(requiredText(node, "role"))),
                     referenceId, actionIds));
         }
-        return List.copyOf(result);
+        return new ParsedEvidenceReferences(contract, List.copyOf(result));
     }
+
+    private record ParsedEvidenceReferences(
+            ProcedureVersionData.EvidenceContract contract,
+            List<ProcedureVersionData.EvidenceReference> references
+    ) {}
 
     private static void validateEvidenceContract(
             List<ProcedureVersionData.ActionStep> actions,
-            List<ProcedureVersionData.EvidenceReference> references
+            ParsedEvidenceReferences parsed
     ) {
-        if (references.stream().allMatch(ProcedureVersionData.EvidenceReference::isLegacy)) {
+        if (parsed.contract() == ProcedureVersionData.EvidenceContract.LEGACY) {
             return;
         }
+        List<ProcedureVersionData.EvidenceReference> references = parsed.references();
         if (references.stream().anyMatch(ProcedureVersionData.EvidenceReference::isLegacy)) {
             throw new IllegalArgumentException("legacy and action-scoped evidence references cannot be mixed");
         }
