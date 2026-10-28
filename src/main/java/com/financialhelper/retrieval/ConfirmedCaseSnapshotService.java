@@ -5,7 +5,14 @@ import com.financialhelper.ai.followup.FollowUpQuestionRepository;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationScenarioResolver;
+import com.financialhelper.consultation.ConsultationScenario;
+import com.financialhelper.procedure.CardCaseFactExtractor;
+import com.financialhelper.procedure.CardCaseFacts;
+import com.financialhelper.procedure.ProcedureVersionService;
+import com.financialhelper.procedure.ScenarioCaseFactExtractor;
+import com.financialhelper.procedure.ScenarioRoutingFactContract;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +25,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.HashMap;
+import java.util.Map;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 
 /** 사용자 소유 입력만으로 consultation 범위의 immutable context를 만든다. */
 @Service
@@ -27,7 +38,24 @@ public class ConfirmedCaseSnapshotService {
     private final FollowUpQuestionRepository followUpQuestionRepository;
     private final ConfirmedCaseSnapshotRepository snapshotRepository;
     private final JsonMapper jsonMapper;
+    private final ProcedureVersionService procedureVersionService;
 
+    @Autowired
+    public ConfirmedCaseSnapshotService(
+            ConsultationRepository consultationRepository,
+            FollowUpQuestionRepository followUpQuestionRepository,
+            ConfirmedCaseSnapshotRepository snapshotRepository,
+            JsonMapper jsonMapper,
+            ProcedureVersionService procedureVersionService
+    ) {
+        this.consultationRepository = consultationRepository;
+        this.followUpQuestionRepository = followUpQuestionRepository;
+        this.snapshotRepository = snapshotRepository;
+        this.jsonMapper = jsonMapper;
+        this.procedureVersionService = procedureVersionService;
+    }
+
+    /** Compatibility constructor for the existing isolated unit test. */
     public ConfirmedCaseSnapshotService(
             ConsultationRepository consultationRepository,
             FollowUpQuestionRepository followUpQuestionRepository,
@@ -38,15 +66,22 @@ public class ConfirmedCaseSnapshotService {
         this.followUpQuestionRepository = followUpQuestionRepository;
         this.snapshotRepository = snapshotRepository;
         this.jsonMapper = jsonMapper;
+        this.procedureVersionService = null;
     }
 
     @Transactional
     public ConfirmedCaseSnapshotData capture(UUID consultationId) {
+        return capture(consultationId, null);
+    }
+
+    @Transactional
+    public ConfirmedCaseSnapshotData capture(UUID consultationId, Long logicalStartRevision) {
         if (consultationId == null) {
             throw new IllegalArgumentException("consultationId must not be null");
         }
         Consultation consultation = consultationRepository.findForUpdateById(consultationId)
                 .orElseThrow(() -> new IllegalArgumentException("consultation does not exist"));
+        reconcileQuestionAttribution(consultation, logicalStartRevision);
         long caseRevision = consultation.getCaseInputRevision();
         long answerRevision = consultation.getFollowUpAnswerRevision();
         return snapshotRepository
@@ -54,6 +89,100 @@ public class ConfirmedCaseSnapshotService {
                         consultationId, caseRevision, answerRevision)
                 .map(this::toData)
                 .orElseGet(() -> saveSnapshot(consultation, caseRevision, answerRevision));
+    }
+
+    private void reconcileQuestionAttribution(Consultation consultation, Long logicalStartRevision) {
+        if (procedureVersionService == null) return;
+        ConsultationScenario scenario = ConsultationScenarioResolver.resolve(consultation);
+        if (scenario != ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                && scenario != ConsultationScenario.VOICE_PHISHING_SUSPICIOUS_TRANSFER
+                && scenario != ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                && scenario != ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP) return;
+        List<FollowUpQuestion> questions = followUpQuestionRepository
+                .findByConsultation_IdAndCaseInputRevisionAndSupersededAtIsNullOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision());
+        List<ConfirmedCaseSnapshotData.Fact> preliminary = new ArrayList<>();
+        if (consultation.getSituationText() != null)
+            preliminary.add(new ConfirmedCaseSnapshotData.Fact("SITUATION", "situationText",
+                    consultation.getSituationText(), null, "USER_STATED", null));
+        preliminary.add(new ConfirmedCaseSnapshotData.Fact("SCENARIO", "scenario",
+                scenario.name(), null, "SYSTEM_RESOLVED_FROM_EXPLICIT_INPUT", null));
+        for (FollowUpQuestion question : questions) {
+            if (!"SCENARIO_ROUTING".equals(question.getQuestionScope())
+                    && !"COMMON_DATE".equals(question.getQuestionScope())) continue;
+            ScenarioRoutingFactContract.Contract contract =
+                    ScenarioRoutingFactContract.byId(question.getFactContractId());
+            if (contract != null && contract.scenario() == scenario
+                    && contract.matches(question, jsonMapper) && question.isAnswered()) {
+                preliminary.add(new ConfirmedCaseSnapshotData.Fact(question.getInputType(),
+                        question.getFactKey(), question.getAnswerValue(), question.getAnswerLabel(),
+                        "USER_ANSWERED", question.getId()));
+            }
+        }
+        ConfirmedCaseSnapshotData preview = new ConfirmedCaseSnapshotData(null,
+                consultation.getId(), consultation.getCaseInputRevision(),
+                consultation.getFollowUpAnswerRevision(), preliminary, List.of(), null);
+        CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? CardCaseFactExtractor.fromSnapshot(preview)
+                : ScenarioCaseFactExtractor.fromSnapshot(preview);
+        java.util.UUID currentVersion = currentProcedureId(scenario, facts);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        boolean changed = false;
+        Map<String, FollowUpQuestion> latestAnswered = new HashMap<>();
+        for (FollowUpQuestion question : questions) {
+            if (question.isAnswered() && question.getFactKey() != null
+                    && validAttribution(question, scenario, currentVersion))
+                latestAnswered.put(question.getFactKey(), question);
+        }
+        for (FollowUpQuestion question : questions) {
+            boolean valid = validAttribution(question, scenario, currentVersion);
+            if (valid && question.isAnswered() && question.getFactKey() != null
+                    && latestAnswered.get(question.getFactKey()) != question) valid = false;
+            if (!valid) changed |= question.supersede(now);
+        }
+        if (changed && (logicalStartRevision == null
+                || consultation.getFollowUpAnswerRevision() == logicalStartRevision))
+            consultation.recordFollowUpAnswerChanged(now);
+    }
+
+    private boolean validAttribution(FollowUpQuestion question, ConsultationScenario scenario,
+            UUID currentVersion) {
+        return switch (question.getQuestionScope()) {
+            case "SCENARIO_ROUTING", "COMMON_DATE" -> {
+                ScenarioRoutingFactContract.Contract contract =
+                        ScenarioRoutingFactContract.byId(question.getFactContractId());
+                yield contract != null && contract.scenario() == scenario
+                        && contract.matches(question, jsonMapper);
+            }
+            case "VERSION_BOUND" -> currentVersion != null
+                    && currentVersion.equals(question.getProcedureVersionId());
+            case "LEGACY_UNATTRIBUTED" -> false;
+            default -> false;
+        };
+    }
+
+    private java.util.UUID currentProcedureId(ConsultationScenario scenario, CardCaseFacts facts) {
+        String branch = scenario.name();
+        String institution = "GENERIC_FINANCIAL_INSTITUTION";
+        String product = scenario == ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP
+                ? "DIGITAL_FINANCIAL_SERVICE" : "BANK_ACCOUNT";
+        if (scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
+            ProcedureVersionService.CardBranchSelection selected =
+                    procedureVersionService.selectCardBranch(facts);
+            if (!selected.selected()) return null;
+            branch = selected.scenario();
+            institution = ProcedureVersionService.KB_INSTITUTION;
+            product = ProcedureVersionService.PERSONAL_CREDIT_CARD;
+        }
+        String dateValue = facts.value(scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                ? "transactionDate" : "incidentDate");
+        LocalDate date;
+        try { date = dateValue == null ? null : LocalDate.parse(dateValue); }
+        catch (DateTimeParseException exception) { date = null; }
+        ProcedureVersionService.Selection selection = procedureVersionService.selectApplicable(
+                branch, institution, product, date,
+                scenario != ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP);
+        return selection.selected() ? selection.procedure().id() : null;
     }
 
     @Transactional(readOnly = true)
@@ -121,9 +250,12 @@ public class ConfirmedCaseSnapshotService {
                     null, "USER_STATED", null));
         }
 
-        List<FollowUpQuestion> questions = followUpQuestionRepository
-                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
-                        consultation.getId(), caseRevision);
+        List<FollowUpQuestion> questions = procedureVersionService == null
+                ? followUpQuestionRepository.findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), caseRevision)
+                : followUpQuestionRepository
+                        .findByConsultation_IdAndCaseInputRevisionAndSupersededAtIsNullOrderBySequenceNoAsc(
+                                consultation.getId(), caseRevision);
         for (FollowUpQuestion question : questions) {
             if (question.isAnswered() && question.getAnswerValue() != null
                     && !question.getAnswerValue().isBlank()) {

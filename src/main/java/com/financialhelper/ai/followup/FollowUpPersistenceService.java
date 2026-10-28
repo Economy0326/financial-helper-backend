@@ -121,18 +121,8 @@ public class FollowUpPersistenceService {
                 throw new FollowUpQuestionNotFoundException();
             }
 
-            target =
-                    questions.stream()
-                            .filter(
-                                    question ->
-                                            question
-                                                    .getSequenceNo()
-                                                    == questionNumber
-                            )
-                            .findFirst()
-                            .orElseThrow(
-                                    FollowUpQuestionNotFoundException::new
-                            );
+            if (questionNumber > questions.size()) throw new FollowUpQuestionNotFoundException();
+            target = questions.get(questionNumber - 1);
 
         } else {
 
@@ -279,6 +269,16 @@ public class FollowUpPersistenceService {
             long expectedCaseInputRevision,
             List<FollowUpQuestionSpec> specs
     ) {
+        return appendStructuredQuestionsIfCurrent(consultationId, rawToken,
+                expectedCaseInputRevision, specs, "LEGACY_UNATTRIBUTED", null, null);
+    }
+
+    @Transactional
+    public List<FollowUpQuestion> appendStructuredQuestionsIfCurrent(
+            UUID consultationId, String rawToken, long expectedCaseInputRevision,
+            List<FollowUpQuestionSpec> specs, String scope, UUID procedureVersionId,
+            String factContractId
+    ) {
         Consultation consultation = findOwnedConsultation(consultationId, rawToken);
         ensureInProgress(consultation);
         ensureFollowUpStep(consultation);
@@ -293,7 +293,9 @@ public class FollowUpPersistenceService {
             return existing;
         }
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        int nextSequence = existing.stream()
+        int nextSequence = followUpQuestionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultationId, expectedCaseInputRevision).stream()
                 .mapToInt(FollowUpQuestion::getSequenceNo)
                 .max()
                 .orElse(0) + 1;
@@ -301,7 +303,7 @@ public class FollowUpPersistenceService {
                 .range(0, specs.size())
                 .mapToObj(index -> {
                     FollowUpQuestionSpec spec = specs.get(index);
-                    return new FollowUpQuestion(
+                    FollowUpQuestion question = new FollowUpQuestion(
                             consultation,
                             expectedCaseInputRevision,
                             nextSequence + index,
@@ -315,6 +317,12 @@ public class FollowUpPersistenceService {
                             spec.requiredForDecision(),
                             spec.questionIntent()
                     );
+                    if ("VERSION_BOUND".equals(scope)) question.attributeToVersion(procedureVersionId);
+                    else if ("SCENARIO_ROUTING".equals(scope) || "COMMON_DATE".equals(scope))
+                        question.attributeToCommonFact(scope, factContractId);
+                    else if (!"LEGACY_UNATTRIBUTED".equals(scope))
+                        throw new IllegalArgumentException("unsupported question scope");
+                    return question;
                 })
                 .toList();
         return followUpQuestionRepository.saveAll(questions);
@@ -398,7 +406,7 @@ public class FollowUpPersistenceService {
 
         FollowUpQuestion question =
                 followUpQuestionRepository
-                        .findByIdAndConsultation_IdAndCaseInputRevision(
+                        .findByIdAndConsultation_IdAndCaseInputRevisionAndSupersededAtIsNull(
                                 questionId,
                                 consultation.getId(),
                                 consultation
@@ -464,7 +472,7 @@ public class FollowUpPersistenceService {
                         .filter(candidate -> candidate.getSequenceNo() > question.getSequenceNo())
                         .toList();
                 if (!dependentQuestions.isEmpty()) {
-                    followUpQuestionRepository.deleteAll(dependentQuestions);
+                    dependentQuestions.forEach(candidate -> candidate.supersede(now));
                 }
             }
         }
@@ -473,6 +481,7 @@ public class FollowUpPersistenceService {
         // 없으면 Follow-up 완료 상태를 반환
         FollowUpQuestion nextQuestion =
                 questions.stream()
+                        .filter(FollowUpQuestion::isActive)
                         .filter(
                                 candidate ->
                                         !candidate.isAnswered()
@@ -615,6 +624,7 @@ public class FollowUpPersistenceService {
                 .question(
                         question,
                         readOptions(question),
+                        currentQuestions(question.getConsultation()).indexOf(question) + 1,
                         totalQuestions
                 );
     }
@@ -624,7 +634,7 @@ public class FollowUpPersistenceService {
     ) {
 
         return followUpQuestionRepository
-                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                .findByConsultation_IdAndCaseInputRevisionAndSupersededAtIsNullOrderBySequenceNoAsc(
                         consultation.getId(),
                         consultation
                                 .getCaseInputRevision()

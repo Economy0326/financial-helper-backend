@@ -5,9 +5,13 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface ProcedureVersionRepository extends JpaRepository<ProcedureVersion, UUID> {
+    List<ProcedureVersion> findByScenarioAndInstitutionAndProductTypeAndStatus(
+            String scenario, String institution, String productType, ProcedureStatus status);
+
     @Query("""
             select procedure
             from ProcedureVersion procedure

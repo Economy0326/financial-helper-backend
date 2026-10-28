@@ -271,7 +271,11 @@ public class FollowUpService {
         if (consultationRepository.findById(consultationId)
                 .map(consultation -> isProcedureBacked(consultation))
                 .orElse(false)) {
-            procedureFollowUpService.answer(consultationId, questionId, rawToken, request);
+            StructuredFollowUpStateResponse result =
+                    procedureFollowUpService.answer(consultationId, questionId, rawToken, request);
+            if ("version_blocked".equals(result.kind())) {
+                return FollowUpStateResponse.versionBlocked(result.versionBlockReason());
+            }
             return procedureFollowUpService.getLegacyState(consultationId, rawToken);
         }
 

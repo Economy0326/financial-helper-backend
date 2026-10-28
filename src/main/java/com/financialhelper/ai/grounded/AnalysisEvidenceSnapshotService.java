@@ -10,6 +10,7 @@ import com.financialhelper.procedure.FinancialActionPlanData;
 import com.financialhelper.procedure.FinancialActionPlanRepository;
 import com.financialhelper.procedure.FinancialActionPlanService;
 import com.financialhelper.procedure.PlanStatus;
+import com.financialhelper.procedure.ProcedureVersionData;
 import com.financialhelper.procedure.ProcedureVersion;
 import com.financialhelper.procedure.ProcedureVersionRepository;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshot;
@@ -38,7 +39,11 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -124,6 +129,14 @@ public class AnalysisEvidenceSnapshotService {
         if (sourceEvidence.isEmpty()) {
             throw new GroundedEvidenceUnavailableException("official evidence is unavailable");
         }
+        FinancialActionPlanService.ValidatedEvidencePlan validatedPlan =
+                actionPlanService.validatedEvidencePlan(plan.id());
+        if (!validatedPlan.plan().equals(plan)) {
+            throw new GroundedEvidenceUnavailableException("financial action plan changed");
+        }
+        List<AnalysisEvidenceSnapshotData.ActionEvidenceRelation> actionRelations =
+                validatedPlan.contract() == ProcedureVersionData.EvidenceContract.ACTION_SCOPED
+                        ? expectedActionRelations(validatedPlan, sourceEvidence) : null;
 
         // 의도적으로 saveSnapshot transaction 밖에서 실행한다. live law API 호출은
         // 느리거나 실패할 수 있으므로 DB lock을 점유해서는 안 된다.
@@ -157,7 +170,8 @@ public class AnalysisEvidenceSnapshotService {
                 1,
                 AnalysisEvidenceSnapshotStatus.READY,
                 OffsetDateTime.now(ZoneOffset.UTC),
-                input.scenario()
+                input.scenario(),
+                actionRelations
         );
         AnalysisEvidenceSnapshotData saved = transactionTemplate.execute(status -> saveIfCurrent(draft));
         if (saved == null) {
@@ -206,6 +220,7 @@ public class AnalysisEvidenceSnapshotService {
                 || current.getStatus() != RetrievalGenerationStatus.READY) {
             throw new GroundedEvidenceUnavailableException("retrieval generation changed");
         }
+        validateStoredRelations(snapshot);
     }
 
     /** Report 생성은 완료된 analysis job을 읽을 수 있지만 case와 active generation은
@@ -225,6 +240,7 @@ public class AnalysisEvidenceSnapshotService {
                 || current.getStatus() != RetrievalGenerationStatus.READY) {
             throw new GroundedEvidenceUnavailableException("report retrieval generation changed");
         }
+        validateStoredRelations(snapshot);
     }
 
     @Transactional(readOnly = true)
@@ -251,7 +267,7 @@ public class AnalysisEvidenceSnapshotService {
                 if (indexing.getIndexingStatus() != SourceChunkIndexingStatus.READY) {
                     throw new GroundedEvidenceUnavailableException("source chunk index is not READY");
                 }
-                result.add(new AnalysisEvidenceSnapshotData.SourceEvidence(
+                AnalysisEvidenceSnapshotData.SourceEvidence captured = new AnalysisEvidenceSnapshotData.SourceEvidence(
                         "source:" + chunkId,
                         chunk.getSourceDocument().getId(),
                         chunk.getSourceDocument().getDocumentVersion(),
@@ -267,7 +283,10 @@ public class AnalysisEvidenceSnapshotService {
                         chunk.getArticleReference(),
                         chunk.getPageReference(),
                         chunk.getLocator(),
-                        chunk.getBody()));
+                        chunk.getBody());
+                if (result.stream().noneMatch(item -> item.evidenceId().equals(captured.evidenceId()))) {
+                    result.add(captured);
+                }
             }
         }
         return List.copyOf(result);
@@ -283,6 +302,7 @@ public class AnalysisEvidenceSnapshotService {
                 || consultation.getFollowUpAnswerRevision() != draft.followUpAnswerRevision()) {
             throw new GroundedEvidenceUnavailableException("analysis evidence snapshot is stale");
         }
+        validateStoredRelations(draft);
         AnalysisEvidenceSnapshot existing = snapshotRepository
                 .findByAnalysisJob_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
                         draft.analysisJobId(), draft.caseInputRevision(), draft.followUpAnswerRevision())
@@ -331,7 +351,14 @@ public class AnalysisEvidenceSnapshotService {
         try {
             AnalysisEvidenceSnapshotData data = jsonMapper.readValue(
                     entity.getSnapshotJson(), AnalysisEvidenceSnapshotData.class);
-            return withId(data, entity.getId());
+            AnalysisEvidenceSnapshotData current = withId(data, entity.getId());
+            if (!entity.getProcedureVersion().getId().equals(current.procedureVersionId())
+                    || !entity.getFinancialActionPlan().getId().equals(current.financialActionPlanId())
+                    || !entity.getRetrievalGeneration().getId().equals(current.retrievalGenerationId())) {
+                throw new GroundedEvidenceUnavailableException("stored evidence snapshot identity changed");
+            }
+            validateStoredRelations(current);
+            return current;
         } catch (JacksonException exception) {
             throw new GroundedEvidenceUnavailableException("stored analysis evidence snapshot is malformed", exception);
         }
@@ -345,7 +372,84 @@ public class AnalysisEvidenceSnapshotService {
                 data.retrievalModelRevision(), data.retrievalTokenizerIdentifier(), data.retrievalTokenizerRevision(),
                 data.retrievalEncodingConfigJson(), data.retrievalIndexConfigJson(), data.retrievalCorpusSnapshotSha256(),
                 data.actionPlan(), data.sourceEvidence(), data.reviewedLawEvidence(), data.snapshotRevision(),
-                data.status(), data.capturedAt(), data.scenario());
+                data.status(), data.capturedAt(), data.scenario(), data.actionEvidenceRelations());
+    }
+
+    private void validateStoredRelations(AnalysisEvidenceSnapshotData snapshot) {
+        if (snapshot.financialActionPlanId() == null || snapshot.actionPlan() == null
+                || !snapshot.financialActionPlanId().equals(snapshot.actionPlan().id())
+                || !snapshot.procedureVersionId().equals(snapshot.actionPlan().procedureVersionId())
+                || snapshot.caseInputRevision() != snapshot.actionPlan().caseInputRevision()
+                || snapshot.followUpAnswerRevision() != snapshot.actionPlan().followUpAnswerRevision()) {
+            throw new GroundedEvidenceUnavailableException("stored evidence snapshot plan changed");
+        }
+        FinancialActionPlanService.ValidatedEvidencePlan validated =
+                actionPlanService.validatedEvidencePlan(snapshot.financialActionPlanId());
+        if (!validated.plan().equals(snapshot.actionPlan())) {
+            throw new GroundedEvidenceUnavailableException("stored evidence snapshot plan changed");
+        }
+        if (validated.contract() == ProcedureVersionData.EvidenceContract.LEGACY) {
+            if (snapshot.actionEvidenceRelations() != null) {
+                throw new GroundedEvidenceUnavailableException("legacy snapshot has action relations");
+            }
+            return;
+        }
+        if (snapshot.actionEvidenceRelations() == null || snapshot.actionEvidenceRelations().isEmpty()) {
+            throw new GroundedEvidenceUnavailableException("action evidence snapshot relation is unavailable");
+        }
+        RetrievalGeneration generation = activeGeneration.current().orElse(null);
+        if (generation == null || generation.getStatus() != RetrievalGenerationStatus.READY
+                || !generation.getId().equals(snapshot.retrievalGenerationId())
+                || !loadSourceEvidence(validated.plan(), generation).equals(snapshot.sourceEvidence())) {
+            throw new GroundedEvidenceUnavailableException("stored source evidence changed");
+        }
+        if (!expectedActionRelations(validated, snapshot.sourceEvidence())
+                        .equals(snapshot.actionEvidenceRelations())) {
+            throw new GroundedEvidenceUnavailableException("action evidence snapshot relation changed");
+        }
+    }
+
+    List<AnalysisEvidenceSnapshotData.ActionEvidenceRelation> expectedActionRelations(
+            FinancialActionPlanService.ValidatedEvidencePlan validated,
+            List<AnalysisEvidenceSnapshotData.SourceEvidence> evidence
+    ) {
+        Map<String, AnalysisEvidenceSnapshotData.SourceEvidence> byId = new HashMap<>();
+        for (AnalysisEvidenceSnapshotData.SourceEvidence item : evidence) {
+            if (byId.putIfAbsent(item.evidenceId(), item) != null) {
+                throw new GroundedEvidenceUnavailableException("duplicate source evidence identity");
+            }
+        }
+        Set<String> selected = new HashSet<>();
+        validated.plan().actions().forEach(action -> selected.add(action.actionId()));
+        List<AnalysisEvidenceSnapshotData.ActionEvidenceRelation> relations = new ArrayList<>();
+        for (FinancialActionPlanService.ValidatedReference reference : validated.references()) {
+            for (UUID chunkId : reference.binding().sourceChunkIds()) {
+                String evidenceId = "source:" + chunkId;
+                AnalysisEvidenceSnapshotData.SourceEvidence item = byId.get(evidenceId);
+                if (item == null || !item.sourceDocumentId().equals(reference.binding().sourceDocumentId())
+                        || item.documentVersion() != reference.binding().documentVersion()
+                        || !item.rawSha256().equals(reference.expectedRawSha256())
+                        || !item.sourceChunkId().equals(chunkId)
+                        || item.locator() == null || item.locator().isBlank()) {
+                    throw new GroundedEvidenceUnavailableException("source evidence reference changed");
+                }
+                for (String actionId : reference.actionIds()) {
+                    if (selected.contains(actionId)) {
+                        relations.add(new AnalysisEvidenceSnapshotData.ActionEvidenceRelation(
+                                actionId, reference.referenceId(), evidenceId, item.locator()));
+                    }
+                }
+            }
+        }
+        if (relations.isEmpty()) {
+            throw new GroundedEvidenceUnavailableException("action evidence relation is unavailable");
+        }
+        Set<String> relatedEvidence = new HashSet<>();
+        relations.forEach(relation -> relatedEvidence.add(relation.evidenceId()));
+        if (!relatedEvidence.equals(byId.keySet())) {
+            throw new GroundedEvidenceUnavailableException("unassigned source evidence in snapshot");
+        }
+        return List.copyOf(relations);
     }
 
     private ConfirmedCaseSnapshotData toCaseData(ConfirmedCaseSnapshot entity) {

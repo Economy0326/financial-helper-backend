@@ -65,7 +65,7 @@ public class ConsultationReportAiResult {
     @Size(max = 20)
     @Valid
     @JsonPropertyDescription(
-            "Typed evidence IDs and locators from the supplied evidence snapshot. Never invent URLs or legal citations."
+            "Typed evidence IDs and locators from the supplied evidence snapshot. For action-scoped snapshots, cite each selected action with target ACTION, its actionId and assigned source evidence. Use target GENERAL without actionId only for common explanation. Never invent URLs or legal citations."
     )
     public List<GroundedEvidenceCitation> evidenceCitations = List.of();
 

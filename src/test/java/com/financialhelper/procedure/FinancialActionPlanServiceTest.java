@@ -41,11 +41,540 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.nullable;
+import org.mockito.ArgumentCaptor;
 
 class FinancialActionPlanServiceTest {
+    @Test
+    void actionScopedDoesNotBorrowAnotherActionsReferenceWithTheSameRole() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a"),
+                        scopedReference("source-b", "ref-b", "PROCEDURE", "action-b")),
+                List.of("PROCEDURE"));
+        EvidenceBindingResolver resolver = scopedResolver(Set.of("ref-a"));
+        FinancialActionPlanData plan = service(scopedApplicability(), resolver)
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(plan.actions()).isEmpty();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ProcedureVersionData.EvidenceReference>> references =
+                ArgumentCaptor.forClass(List.class);
+        verify(resolver).resolve(references.capture(), nullable(LocalDate.class));
+        assertThat(references.getValue()).extracting(ProcedureVersionData.EvidenceReference::referenceId)
+                .containsExactly("ref-b");
+    }
+
+    @Test
+    void actionScopedExplicitlySharedReferenceAllowsSelectedAction() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("shared", "ref-shared", "PROCEDURE",
+                        "action-a", "action-b")), List.of("PROCEDURE"));
+        FinancialActionPlanData plan = service(scopedApplicability(), scopedResolver(Set.of("ref-shared")))
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+        assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("action-b");
+        assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::sourceKey)
+                .containsExactly("shared");
+    }
+
+    @Test
+    void actionScopedMissingOneOfMultipleRolesFailsClosed() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a"),
+                        scopedReference("source-b", "ref-b", "PROCEDURE", "action-b"),
+                        scopedReference("guidance-b", "ref-guidance-b", "SAFE_GUIDANCE", "action-b")),
+                List.of("PROCEDURE", "SAFE_GUIDANCE"));
+        FinancialActionPlanData plan = service(scopedApplicability(),
+                scopedResolver(Set.of("ref-b")))
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(plan.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedMissingUnselectedActionsSourceDoesNotBlock() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a"),
+                        scopedReference("source-b", "ref-b", "PROCEDURE", "action-b")),
+                List.of("PROCEDURE"));
+        FinancialActionPlanData plan = service(scopedApplicability(), scopedResolver(Set.of("ref-b")))
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+        assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::sourceKey)
+                .containsExactly("source-b");
+    }
+
+    @Test
+    void actionScopedEmptyRequiredRolesCannotProduceReadyPlan() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a")),
+                List.of());
+        FinancialActionPlanData plan = service(scopedApplicability(), scopedResolver(Set.of("ref-a")))
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(plan.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedSelectedActionWithoutReferenceCannotProduceReadyPlan() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a")),
+                List.of("PROCEDURE"));
+        FinancialActionPlanData plan = service(scopedApplicability(), scopedResolver(Set.of("ref-a")))
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(plan.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedRejectsResolverBindingWithoutMatchingReferenceIdentity() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-b", "ref-b", "PROCEDURE", "action-b")),
+                List.of("PROCEDURE"));
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        FinancialActionPlanData.EvidenceBinding unrelated = new FinancialActionPlanData.EvidenceBinding(
+                "source-a", UUID.randomUUID(), 1, List.of(UUID.randomUUID()),
+                null, null, "PROCEDURE");
+        when(resolver.resolve(anyList(), nullable(LocalDate.class)))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(unrelated), List.of(),
+                        List.of(new EvidenceBindingResolver.ResolvedReference("ref-a", unrelated))));
+        FinancialActionPlanData plan = service(scopedApplicability(), resolver)
+                .buildFromSnapshot(snapshot(), procedure, scopedFacts());
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.FAILED);
+    }
+
+    private ProcedureVersionService scopedApplicability() {
+        ProcedureVersionService service = mock(ProcedureVersionService.class);
+        when(service.isApplicable(any(), nullable(LocalDate.class))).thenReturn(true);
+        return service;
+    }
+
+    private CardCaseFacts scopedFacts() {
+        return new CardCaseFacts(Map.of("maliciousAppInstalled", "FALSE",
+                "suspiciousLinkClicked", "TRUE"));
+    }
+
+    private ProcedureVersionData.EvidenceReference scopedReference(
+            String sourceKey, String referenceId, String role, String... actionIds
+    ) {
+        return new ProcedureVersionData.EvidenceReference(sourceKey, 1, "0".repeat(64),
+                null, null, role, false, referenceId, List.of(actionIds));
+    }
+
+    private ProcedureVersionData scopedProcedure(
+            List<ProcedureVersionData.EvidenceReference> references,
+            List<String> actionBRoles
+    ) {
+        return new ProcedureVersionData(
+                UUID.randomUUID(), "PERSONAL_INFO_SMISHING_MALICIOUS_APP",
+                "GENERIC_FINANCIAL_INSTITUTION", "DIGITAL_FINANCIAL_SERVICE", 2,
+                ProcedureStatus.APPROVED, null, null, List.of(),
+                List.of(new ProcedureVersionData.ConditionRule("action-a",
+                                new ConditionExpression(null, "maliciousAppInstalled",
+                                        ConditionOperator.EQ, "TRUE", List.of())),
+                        new ProcedureVersionData.ConditionRule("action-b",
+                                new ConditionExpression(null, "suspiciousLinkClicked",
+                                        ConditionOperator.EQ, "TRUE", List.of()))),
+                List.of(new ProcedureVersionData.ActionStep("action-a", 1, "A", "A", null,
+                                List.of("PROCEDURE")),
+                        new ProcedureVersionData.ActionStep("action-b", 2, "B", "B", null,
+                                actionBRoles)),
+                List.of(), references, List.of(), List.of(), List.of(), "test", "test", null);
+    }
+
+    private EvidenceBindingResolver scopedResolver(Set<String> availableReferenceIds) {
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(resolver.resolve(anyList(), nullable(LocalDate.class))).thenAnswer(invocation -> {
+            List<ProcedureVersionData.EvidenceReference> references = invocation.getArgument(0);
+            List<FinancialActionPlanData.EvidenceBinding> bindings = new ArrayList<>();
+            List<EvidenceBindingResolver.ResolvedReference> resolved = new ArrayList<>();
+            List<String> gaps = new ArrayList<>();
+            for (ProcedureVersionData.EvidenceReference reference : references) {
+                if (!availableReferenceIds.contains(reference.referenceId())) {
+                    gaps.add("EVIDENCE_SOURCE_UNAVAILABLE:" + reference.sourceKey());
+                    continue;
+                }
+                FinancialActionPlanData.EvidenceBinding binding =
+                        new FinancialActionPlanData.EvidenceBinding(reference.sourceKey(),
+                                UUID.randomUUID(), reference.documentVersion(), List.of(UUID.randomUUID()),
+                                reference.articleReference(), reference.pageReference(), reference.role());
+                bindings.add(binding);
+                resolved.add(new EvidenceBindingResolver.ResolvedReference(reference.referenceId(), binding));
+            }
+            return new EvidenceBindingResolver.Resolution(bindings, gaps, resolved);
+        });
+        return resolver;
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanRevalidatesItsAssignedReference() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        String storedJson = fixture.mapper().writeValueAsString(Map.of(
+                "plan", fixture.plan(), "referenceIds", List.of("ref-b")));
+
+        FinancialActionPlanData result = readStoredScopedPlan(fixture, storedJson);
+
+        assertThat(result.status()).isEqualTo(PlanStatus.READY);
+        assertThat(result.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("action-b");
+        assertThat(fixture.mapper().writeValueAsString(result)).doesNotContain("referenceIds");
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanWithoutRelationshipFailsClosed() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        FinancialActionPlanData result = readStoredScopedPlan(fixture,
+                fixture.mapper().writeValueAsString(fixture.plan()));
+
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanCannotUseAnotherActionsReferenceId() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        String storedJson = fixture.mapper().writeValueAsString(Map.of(
+                "plan", fixture.plan(), "referenceIds", List.of("ref-a")));
+        FinancialActionPlanData result = readStoredScopedPlan(fixture, storedJson);
+
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedSaveIfAbsentDoesNotReuseReadyPlanWithoutRelationship() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        FinancialActionPlanData result = readStoredScopedPlan(fixture,
+                fixture.mapper().writeValueAsString(fixture.plan()), true);
+
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+    }
+
+    @Test
+    void saveIfAbsentDoesNotReusePreviousProcedureVersionReadyPlan() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        String storedJson = fixture.mapper().writeValueAsString(Map.of(
+                "plan", fixture.plan(), "referenceIds", List.of("ref-b")));
+
+        FinancialActionPlanData result = readStoredScopedPlan(fixture, storedJson, true, true);
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+        assertThat(result.coverageGaps()).contains("PROCEDURE_VERSION_MISMATCH");
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanRejectsDuplicateReferenceIds() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        String storedJson = fixture.mapper().writeValueAsString(Map.of(
+                "plan", fixture.plan(), "referenceIds", List.of("ref-b", "ref-b")));
+
+        assertThat(readStoredScopedPlan(fixture, storedJson).status()).isEqualTo(PlanStatus.FAILED);
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanRejectsSameCountReferenceOrderSwap() throws Exception {
+        StoredScopedFixture fixture = storedScopedTwoReferenceFixture();
+        String swapped = fixture.mapper().writeValueAsString(Map.of(
+                "plan", fixture.plan(), "referenceIds", List.of("ref-b-2", "ref-b")));
+
+        FinancialActionPlanData result = readStoredScopedPlan(fixture, swapped);
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedStoredReadyPlanRejectsSameRoleEvidenceReplacement() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        FinancialActionPlanData.EvidenceBinding replacement =
+                new FinancialActionPlanData.EvidenceBinding("other-source", UUID.randomUUID(), 1,
+                        List.of(UUID.randomUUID()), null, null, "PROCEDURE");
+        FinancialActionPlanData original = fixture.plan();
+        FinancialActionPlanData tampered = new FinancialActionPlanData(original.id(),
+                original.consultationId(), original.confirmedCaseSnapshotId(),
+                original.procedureVersionId(), original.scenario(), original.procedureVersion(),
+                original.caseInputRevision(), original.followUpAnswerRevision(), original.status(),
+                original.actions(), original.requiredDocuments(), List.of(replacement),
+                original.unresolvedFacts(), original.coverageGaps(), original.warnings());
+        String storedJson = fixture.mapper().writeValueAsString(Map.of(
+                "plan", tampered, "referenceIds", List.of("ref-b")));
+
+        FinancialActionPlanData result = readStoredScopedPlan(fixture, storedJson);
+        assertThat(result.status()).isEqualTo(PlanStatus.FAILED);
+        assertThat(result.actions()).isEmpty();
+    }
+
+    @Test
+    void actionScopedBuildStoresRelationshipOutsidePublicPlanJsonShape() throws Exception {
+        StoredScopedFixture fixture = storedScopedFixture();
+        ConsultationRepository consultations = mock(ConsultationRepository.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshotService snapshots =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository snapshotRows =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository.class);
+        ProcedureVersionRepository versions = mock(ProcedureVersionRepository.class);
+        ProcedureVersionService procedures = scopedApplicability();
+        FinancialActionPlanRepository plans = mock(FinancialActionPlanRepository.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        Consultation consultation = mock(Consultation.class);
+        ProcedureVersion version = mock(ProcedureVersion.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshot snapshotRow =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshot.class);
+        UUID consultationId = fixture.plan().consultationId();
+        UUID snapshotId = fixture.plan().confirmedCaseSnapshotId();
+        List<ConfirmedCaseSnapshotData.Fact> facts = List.of(
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "maliciousAppInstalled",
+                        "FALSE", "A", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "suspiciousLinkClicked",
+                        "TRUE", "B", "USER", null));
+        ConfirmedCaseSnapshotData snapshotData = new ConfirmedCaseSnapshotData(
+                snapshotId, consultationId, 2, 1, facts, List.of(), null);
+        when(consultations.findById(consultationId)).thenReturn(Optional.of(consultation));
+        when(consultation.getId()).thenReturn(consultationId);
+        when(consultation.getScenario()).thenReturn(
+                ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP);
+        when(consultation.getCaseInputRevision()).thenReturn(2L);
+        when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(snapshots.capture(consultationId)).thenReturn(snapshotData);
+        when(snapshotRows.findById(snapshotId)).thenReturn(Optional.of(snapshotRow));
+        when(snapshotRow.getCaseInputRevision()).thenReturn(2L);
+        when(snapshotRow.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(snapshotRow.getFactsJson()).thenReturn(fixture.mapper().writeValueAsString(facts));
+        when(procedures.requireApproved(fixture.procedure().scenario(),
+                fixture.procedure().institution(), fixture.procedure().productType()))
+                .thenReturn(fixture.procedure());
+        when(procedures.selectApplicable(fixture.procedure().scenario(),
+                fixture.procedure().institution(), fixture.procedure().productType(), null, false))
+                .thenReturn(new ProcedureVersionService.Selection(fixture.procedure(), null));
+        when(version.getId()).thenReturn(fixture.procedure().id());
+        when(versions.findById(fixture.procedure().id())).thenReturn(Optional.of(version));
+        when(plans.findByConsultation_IdAndProcedureVersion_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                consultationId, fixture.procedure().id(), 2, 1)).thenReturn(Optional.empty());
+        when(plans.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(resolver.resolve(anyList(), nullable(LocalDate.class)))
+                .thenReturn(new EvidenceBindingResolver.Resolution(
+                        List.of(fixture.binding()), List.of(),
+                        List.of(new EvidenceBindingResolver.ResolvedReference(
+                                "ref-b", fixture.binding()))));
+        FinancialActionPlanService service = new FinancialActionPlanService(
+                consultations, mock(GuestSessionService.class), snapshots, snapshotRows,
+                versions, procedures, resolver, plans, fixture.mapper());
+
+        FinancialActionPlanData result = service.buildForCurrent(consultationId);
+        org.mockito.ArgumentCaptor<FinancialActionPlan> saved =
+                org.mockito.ArgumentCaptor.forClass(FinancialActionPlan.class);
+        verify(plans, times(1)).saveAndFlush(saved.capture());
+        assertThat(result.status()).isEqualTo(PlanStatus.READY);
+        assertThat(saved.getValue().getPlanJson()).contains("\"referenceIds\":[\"ref-b\"]");
+        assertThat(fixture.mapper().writeValueAsString(result)).doesNotContain("referenceIds");
+    }
+
+    private StoredScopedFixture storedScopedFixture() {
+        ProcedureVersionData procedure = scopedProcedure(
+                List.of(scopedReference("source-a", "ref-a", "PROCEDURE", "action-a"),
+                        scopedReference("source-b", "ref-b", "PROCEDURE", "action-b")),
+                List.of("PROCEDURE"));
+        FinancialActionPlanData.EvidenceBinding binding = new FinancialActionPlanData.EvidenceBinding(
+                "source-b", UUID.randomUUID(), 1, List.of(UUID.randomUUID()),
+                null, null, "PROCEDURE");
+        FinancialActionPlanData stored = new FinancialActionPlanData(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), procedure.id(),
+                procedure.scenario(), procedure.version(), 2, 1, PlanStatus.READY,
+                List.of(new FinancialActionPlanData.Action("action-b", 2, "B", "B",
+                        ConditionResult.TRUE, null)),
+                List.of(), List.of(binding), List.of(), List.of(), List.of());
+        return new StoredScopedFixture(procedure, stored, binding, null,
+                tools.jackson.databind.json.JsonMapper.builder().build());
+    }
+
+    private StoredScopedFixture storedScopedTwoReferenceFixture() {
+        StoredScopedFixture single = storedScopedFixture();
+        ProcedureVersionData p = single.procedure();
+        ProcedureVersionData.EvidenceReference second = scopedReference(
+                "source-b-2", "ref-b-2", "PROCEDURE", "action-b");
+        ProcedureVersionData procedure = new ProcedureVersionData(p.id(), p.scenario(),
+                p.institution(), p.productType(), p.version(), p.status(),
+                p.applicabilityStartDate(), p.applicabilityEndDate(), p.requiredFacts(),
+                p.conditionRules(), p.actionSteps(), p.documentRequirements(),
+                List.of(p.evidenceReferences().get(0), p.evidenceReferences().get(1), second),
+                p.reviewedContacts(), p.reviewedValues(), p.conditionsExceptions(),
+                p.reviewNotes(), p.reviewedBy(), p.reviewedAt(), p.evidenceContract());
+        FinancialActionPlanData.EvidenceBinding additional = new FinancialActionPlanData.EvidenceBinding(
+                "source-b-2", UUID.randomUUID(), 1, List.of(UUID.randomUUID()),
+                null, null, "PROCEDURE");
+        FinancialActionPlanData old = single.plan();
+        FinancialActionPlanData plan = new FinancialActionPlanData(old.id(), old.consultationId(),
+                old.confirmedCaseSnapshotId(), old.procedureVersionId(), old.scenario(),
+                old.procedureVersion(), old.caseInputRevision(), old.followUpAnswerRevision(),
+                old.status(), old.actions(), old.requiredDocuments(),
+                List.of(single.binding(), additional), old.unresolvedFacts(),
+                old.coverageGaps(), old.warnings());
+        return new StoredScopedFixture(procedure, plan, single.binding(), additional, single.mapper());
+    }
+
+    private FinancialActionPlanData readStoredScopedPlan(
+            StoredScopedFixture fixture, String storedJson
+    ) {
+        return readStoredScopedPlan(fixture, storedJson, false);
+    }
+
+    private FinancialActionPlanData readStoredScopedPlan(
+            StoredScopedFixture fixture, String storedJson, boolean throughSaveIfAbsent
+    ) {
+        return readStoredScopedPlan(fixture, storedJson, throughSaveIfAbsent, false);
+    }
+
+    private FinancialActionPlanData readStoredScopedPlan(
+            StoredScopedFixture fixture, String storedJson, boolean throughSaveIfAbsent,
+            boolean differentCurrentVersion
+    ) {
+        ConsultationRepository consultations = mock(ConsultationRepository.class);
+        GuestSessionService sessions = mock(GuestSessionService.class);
+        FinancialActionPlanRepository plans = mock(FinancialActionPlanRepository.class);
+        ProcedureVersionService procedures = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        Consultation consultation = mock(Consultation.class);
+        GuestSession guest = mock(GuestSession.class);
+        FinancialActionPlan saved = mock(FinancialActionPlan.class);
+        ProcedureVersion version = mock(ProcedureVersion.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshot snapshot =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshot.class);
+        UUID guestId = UUID.randomUUID();
+        when(sessions.requireValidSession("token")).thenReturn(guest);
+        when(guest.getId()).thenReturn(guestId);
+        when(consultations.findByIdAndGuestSession_Id(fixture.plan().consultationId(), guestId))
+                .thenReturn(Optional.of(consultation));
+        when(consultation.getId()).thenReturn(fixture.plan().consultationId());
+        when(consultation.getScenario()).thenReturn(
+                ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP);
+        when(consultation.getCaseInputRevision()).thenReturn(2L);
+        when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(plans.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(
+                fixture.plan().consultationId())).thenReturn(Optional.of(saved));
+        when(saved.getId()).thenReturn(fixture.plan().id());
+        when(saved.getCaseInputRevision()).thenReturn(2L);
+        when(saved.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(saved.getPlanJson()).thenReturn(storedJson);
+        when(saved.getPlanStatus()).thenReturn(PlanStatus.READY);
+        when(saved.getProcedureVersion()).thenReturn(version);
+        when(saved.getConfirmedCaseSnapshot()).thenReturn(snapshot);
+        when(snapshot.getId()).thenReturn(fixture.plan().confirmedCaseSnapshotId());
+        when(snapshot.getConsultation()).thenReturn(consultation);
+        when(snapshot.getFactsJson()).thenReturn(fixture.mapper().writeValueAsString(List.of(
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "maliciousAppInstalled",
+                        "FALSE", "A", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "suspiciousLinkClicked",
+                        "TRUE", "B", "USER", null))));
+        when(snapshot.getCaseInputRevision()).thenReturn(2L);
+        when(snapshot.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(version.getId()).thenReturn(fixture.procedure().id());
+        when(procedures.toData(version)).thenReturn(fixture.procedure());
+        ProcedureVersionData currentProcedure = differentCurrentVersion
+                ? new ProcedureVersionData(UUID.randomUUID(), fixture.procedure().scenario(),
+                        fixture.procedure().institution(), fixture.procedure().productType(), 3,
+                        fixture.procedure().status(), fixture.procedure().applicabilityStartDate(),
+                        fixture.procedure().applicabilityEndDate(), fixture.procedure().requiredFacts(),
+                        fixture.procedure().conditionRules(), fixture.procedure().actionSteps(),
+                        fixture.procedure().documentRequirements(), fixture.procedure().evidenceReferences(),
+                        fixture.procedure().reviewedContacts(), fixture.procedure().reviewedValues(),
+                        fixture.procedure().conditionsExceptions(), fixture.procedure().reviewNotes(),
+                        fixture.procedure().reviewedBy(), fixture.procedure().reviewedAt(),
+                        fixture.procedure().evidenceContract()) : fixture.procedure();
+        when(procedures.selectApplicable(fixture.procedure().scenario(),
+                fixture.procedure().institution(), fixture.procedure().productType(), null, false))
+                .thenReturn(new ProcedureVersionService.Selection(currentProcedure, null));
+        List<FinancialActionPlanData.EvidenceBinding> currentBindings = fixture.additionalBinding() == null
+                ? List.of(fixture.binding()) : List.of(fixture.binding(), fixture.additionalBinding());
+        List<EvidenceBindingResolver.ResolvedReference> currentReferences = fixture.additionalBinding() == null
+                ? List.of(new EvidenceBindingResolver.ResolvedReference("ref-b", fixture.binding()))
+                : List.of(new EvidenceBindingResolver.ResolvedReference("ref-b", fixture.binding()),
+                        new EvidenceBindingResolver.ResolvedReference("ref-b-2", fixture.additionalBinding()));
+        when(resolver.resolve(anyList(), nullable(LocalDate.class)))
+                .thenReturn(new EvidenceBindingResolver.Resolution(
+                        currentBindings, List.of(), currentReferences));
+        FinancialActionPlanService service = new FinancialActionPlanService(
+                consultations, sessions,
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class),
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository.class),
+                mock(ProcedureVersionRepository.class), procedures, resolver, plans, fixture.mapper());
+        if (throughSaveIfAbsent) {
+            when(plans.findByConsultation_IdAndProcedureVersion_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
+                    fixture.plan().consultationId(), fixture.procedure().id(), 2, 1))
+                    .thenReturn(Optional.of(saved));
+            return ReflectionTestUtils.invokeMethod(service, "saveIfAbsent",
+                    consultation, version, fixture.procedure(), snapshot, fixture.plan(), List.of());
+        }
+        return service.getLatest(fixture.plan().consultationId(), "token");
+    }
+
+    private record StoredScopedFixture(
+            ProcedureVersionData procedure,
+            FinancialActionPlanData plan,
+            FinancialActionPlanData.EvidenceBinding binding,
+            FinancialActionPlanData.EvidenceBinding additionalBinding,
+            tools.jackson.databind.json.JsonMapper mapper
+    ) {
+    }
+
+    @Test
+    void characterizationProcedureRoleFromActionASourceAlsoAllowsActionB() {
+        // Characterization only: the current model has no Action-to-Evidence assignment.
+        // The source name describes intended use for A, but the runtime cannot enforce it.
+        ProcedureVersionData.EvidenceReference sourceForActionA =
+                new ProcedureVersionData.EvidenceReference(
+                        "synthetic-source-intended-for-action-a", 1, "0".repeat(64),
+                        null, null, "PROCEDURE");
+        ProcedureVersionData procedure = new ProcedureVersionData(
+                UUID.randomUUID(), "PERSONAL_INFO_SMISHING_MALICIOUS_APP",
+                "GENERIC_FINANCIAL_INSTITUTION", "DIGITAL_FINANCIAL_SERVICE", 1,
+                ProcedureStatus.APPROVED, null, null, List.of(),
+                List.of(
+                        new ProcedureVersionData.ConditionRule("action-a",
+                                new ConditionExpression(null, "actionAEligible",
+                                        ConditionOperator.EQ, "TRUE", List.of())),
+                        new ProcedureVersionData.ConditionRule("action-b",
+                                new ConditionExpression(null, "actionBEligible",
+                                        ConditionOperator.EQ, "TRUE", List.of()))),
+                List.of(
+                        new ProcedureVersionData.ActionStep("action-a", 1, "A", "A", null,
+                                List.of("PROCEDURE")),
+                        new ProcedureVersionData.ActionStep("action-b", 2, "B", "B", null,
+                                List.of("PROCEDURE"))),
+                List.of(), List.of(sourceForActionA), List.of(), List.of(), List.of(),
+                "synthetic characterization", "test", null);
+        FinancialActionPlanData.EvidenceBinding bindingForActionA =
+                new FinancialActionPlanData.EvidenceBinding(
+                        sourceForActionA.sourceKey(), UUID.randomUUID(), 1,
+                        List.of(UUID.randomUUID()), null, null, "PROCEDURE");
+        ProcedureVersionService procedureService = mock(ProcedureVersionService.class);
+        EvidenceBindingResolver resolver = mock(EvidenceBindingResolver.class);
+        when(procedureService.isApplicable(any(), nullable(LocalDate.class))).thenReturn(true);
+        when(resolver.resolve(anyList(), nullable(LocalDate.class)))
+                .thenReturn(new EvidenceBindingResolver.Resolution(List.of(bindingForActionA), List.of()));
+
+        FinancialActionPlanData plan = service(procedureService, resolver).buildFromSnapshot(
+                snapshot(), procedure, new CardCaseFacts(Map.of(
+                        "actionAEligible", "FALSE", "actionBEligible", "TRUE")));
+
+        assertThat(plan.status()).isEqualTo(PlanStatus.READY);
+        assertThat(plan.actions()).extracting(FinancialActionPlanData.Action::actionId)
+                .containsExactly("action-b");
+        assertThat(plan.evidence()).extracting(FinancialActionPlanData.EvidenceBinding::sourceKey)
+                .containsExactly(sourceForActionA.sourceKey());
+    }
+
     @Test
     void accountLawDateSelectorUsesTransactionDateRegardlessOfFactOrder() {
         AnalysisEvidenceSnapshotService snapshots = new AnalysisEvidenceSnapshotService(
@@ -146,6 +675,8 @@ class FinancialActionPlanServiceTest {
         GuestSession guest = mock(GuestSession.class);
         FinancialActionPlan saved = mock(FinancialActionPlan.class);
         ProcedureVersion version = mock(ProcedureVersion.class);
+        com.financialhelper.retrieval.ConfirmedCaseSnapshot savedSnapshot =
+                mock(com.financialhelper.retrieval.ConfirmedCaseSnapshot.class);
         UUID consultationId = UUID.randomUUID();
         UUID guestId = UUID.randomUUID();
         UUID planId = UUID.randomUUID();
@@ -163,6 +694,7 @@ class FinancialActionPlanServiceTest {
         when(consultations.findByIdAndGuestSession_Id(consultationId, guestId))
                 .thenReturn(Optional.of(consultation));
         when(consultation.getId()).thenReturn(consultationId);
+        when(consultation.getScenario()).thenReturn(ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE);
         when(consultation.getCaseInputRevision()).thenReturn(2L);
         when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
         when(plans.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(consultationId))
@@ -172,7 +704,28 @@ class FinancialActionPlanServiceTest {
         when(saved.getPlanJson()).thenReturn(mapper.writeValueAsString(oldReady));
         when(saved.getId()).thenReturn(planId);
         when(saved.getProcedureVersion()).thenReturn(version);
+        when(saved.getPlanStatus()).thenReturn(PlanStatus.READY);
+        when(saved.getConfirmedCaseSnapshot()).thenReturn(savedSnapshot);
+        when(savedSnapshot.getId()).thenReturn(oldReady.confirmedCaseSnapshotId());
+        when(savedSnapshot.getConsultation()).thenReturn(consultation);
+        when(savedSnapshot.getCaseInputRevision()).thenReturn(2L);
+        when(savedSnapshot.getFollowUpAnswerRevision()).thenReturn(1L);
+        when(savedSnapshot.getFactsJson()).thenReturn(mapper.writeValueAsString(List.of(
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "institution",
+                        ProcedureVersionService.KB_INSTITUTION, "I", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "productType",
+                        ProcedureVersionService.PERSONAL_CREDIT_CARD, "P", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "cardLost", "FALSE", "A", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "unauthorizedPayment", "TRUE", "B", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "transactionType",
+                        "CREDIT_SALE", "T", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "domestic", "TRUE", "D", "USER", null),
+                new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "incidentDate", "2026-05-20", "C", "USER", null))));
+        when(version.getId()).thenReturn(procedure.id());
         when(procedures.toData(version)).thenReturn(procedure);
+        when(procedures.selectApplicableCard(any(),
+                org.mockito.ArgumentMatchers.eq(LocalDate.of(2026, 5, 20))))
+                .thenReturn(new ProcedureVersionService.Selection(procedure, null));
 
         FinancialActionPlanService service = new FinancialActionPlanService(
                 consultations, sessions, mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class),
@@ -211,6 +764,8 @@ class FinancialActionPlanServiceTest {
         when(consultations.findByIdAndGuestSession_Id(consultationId, guestId))
                 .thenReturn(Optional.of(consultation));
         when(consultation.getId()).thenReturn(consultationId);
+        when(consultation.getScenario()).thenReturn(
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER);
         when(consultation.getCaseInputRevision()).thenReturn(2L);
         when(consultation.getFollowUpAnswerRevision()).thenReturn(1L);
         when(plans.findTopByConsultation_IdOrderByCaseInputRevisionDescFollowUpAnswerRevisionDesc(consultationId))
@@ -219,15 +774,25 @@ class FinancialActionPlanServiceTest {
         when(saved.getFollowUpAnswerRevision()).thenReturn(1L);
         when(saved.getPlanJson()).thenReturn(mapper.writeValueAsString(oldReady));
         when(saved.getId()).thenReturn(planId);
+        when(saved.getPlanStatus()).thenReturn(PlanStatus.READY);
         when(saved.getConfirmedCaseSnapshot()).thenReturn(savedSnapshot);
+        when(savedSnapshot.getId()).thenReturn(snapshotId);
+        when(savedSnapshot.getConsultation()).thenReturn(consultation);
+        when(savedSnapshot.getCaseInputRevision()).thenReturn(2L);
+        when(savedSnapshot.getFollowUpAnswerRevision()).thenReturn(1L);
         when(savedSnapshot.getFactsJson()).thenReturn(mapper.writeValueAsString(List.of(
                 new ConfirmedCaseSnapshotData.Fact("FOLLOW_UP", "incidentDate", "2026-05-20",
                         "발생일", "USER", null))));
 
+        ProcedureVersionService procedures = mock(ProcedureVersionService.class);
+        when(procedures.selectApplicable("UNAUTHORIZED_ACCOUNT_TRANSFER",
+                "GENERIC_FINANCIAL_INSTITUTION", "BANK_ACCOUNT", null, true))
+                .thenReturn(new ProcedureVersionService.Selection(null,
+                        ProcedureVersionService.SelectionFailure.DATE_REQUIRED));
         FinancialActionPlanService service = new FinancialActionPlanService(
                 consultations, sessions, mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotService.class),
                 mock(com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository.class),
-                mock(ProcedureVersionRepository.class), mock(ProcedureVersionService.class),
+                mock(ProcedureVersionRepository.class), procedures,
                 mock(EvidenceBindingResolver.class), plans, mapper);
         FinancialActionPlanData result = service.getLatest(consultationId, "token");
 

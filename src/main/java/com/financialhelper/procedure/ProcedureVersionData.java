@@ -24,9 +24,13 @@ public record ProcedureVersionData(
         List<String> conditionsExceptions,
         String reviewNotes,
         String reviewedBy,
-        OffsetDateTime reviewedAt
+        OffsetDateTime reviewedAt,
+        EvidenceContract evidenceContract
 ) {
     public ProcedureVersionData {
+        if (evidenceContract == null) {
+            throw new IllegalArgumentException("evidenceContract is required");
+        }
         requiredFacts = requiredFacts == null ? List.of() : List.copyOf(requiredFacts);
         conditionRules = conditionRules == null ? List.of() : List.copyOf(conditionRules);
         actionSteps = actionSteps == null ? List.of() : List.copyOf(actionSteps);
@@ -35,6 +39,25 @@ public record ProcedureVersionData(
         reviewedContacts = reviewedContacts == null ? List.of() : List.copyOf(reviewedContacts);
         reviewedValues = reviewedValues == null ? List.of() : List.copyOf(reviewedValues);
         conditionsExceptions = conditionsExceptions == null ? List.of() : List.copyOf(conditionsExceptions);
+    }
+
+    // Compatibility for existing in-memory LEGACY fixtures and explicitly scoped fixtures.
+    public ProcedureVersionData(
+            UUID id, String scenario, String institution, String productType, int version,
+            ProcedureStatus status, LocalDate applicabilityStartDate, LocalDate applicabilityEndDate,
+            List<RequiredFact> requiredFacts, List<ConditionRule> conditionRules,
+            List<ActionStep> actionSteps, List<DocumentRequirement> documentRequirements,
+            List<EvidenceReference> evidenceReferences, List<ReviewedContact> reviewedContacts,
+            List<ReviewedValue> reviewedValues, List<String> conditionsExceptions,
+            String reviewNotes, String reviewedBy, OffsetDateTime reviewedAt
+    ) {
+        this(id, scenario, institution, productType, version, status,
+                applicabilityStartDate, applicabilityEndDate, requiredFacts, conditionRules,
+                actionSteps, documentRequirements, evidenceReferences, reviewedContacts,
+                reviewedValues, conditionsExceptions, reviewNotes, reviewedBy, reviewedAt,
+                evidenceReferences != null && !evidenceReferences.isEmpty()
+                        && evidenceReferences.stream().anyMatch(reference -> !reference.isLegacy())
+                        ? EvidenceContract.ACTION_SCOPED : EvidenceContract.LEGACY);
     }
 
     public record RequiredFact(String key, String type, boolean requiredForDecision) {
@@ -72,8 +95,23 @@ public record ProcedureVersionData(
             String articleReference,
             String pageReference,
             String role,
-            boolean historicalApplicabilityRequired
+            boolean historicalApplicabilityRequired,
+            String referenceId,
+            List<String> actionIds
     ) {
+        public EvidenceReference {
+            actionIds = actionIds == null ? null : List.copyOf(actionIds);
+        }
+
+        public EvidenceReference(
+                String sourceKey, int documentVersion, String expectedRawSha256,
+                String articleReference, String pageReference, String role,
+                boolean historicalApplicabilityRequired
+        ) {
+            this(sourceKey, documentVersion, expectedRawSha256, articleReference,
+                    pageReference, role, historicalApplicabilityRequired, null, null);
+        }
+
         public EvidenceReference(
                 String sourceKey,
                 int documentVersion,
@@ -85,6 +123,15 @@ public record ProcedureVersionData(
             this(sourceKey, documentVersion, expectedRawSha256, articleReference,
                     pageReference, role, true);
         }
+
+        public boolean isLegacy() {
+            return referenceId == null && actionIds == null;
+        }
+    }
+
+    public enum EvidenceContract {
+        LEGACY,
+        ACTION_SCOPED
     }
 
     public record ReviewedContact(String key, String value, String evidenceRef) {

@@ -15,4 +15,10 @@ public class GroundedEvidenceCitation {
 
     @Size(max = 240)
     public String label;
+
+    /** Internal AI contract. Null is accepted only for an existing LEGACY snapshot. */
+    public String target;
+
+    @Size(max = 120)
+    public String actionId;
 }

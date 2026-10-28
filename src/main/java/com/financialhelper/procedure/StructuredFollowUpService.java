@@ -9,6 +9,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.UUID;
 
 /** 무엇을 물을지는 여기서 결정하고 language model은 이후 표현 방식만 담당한다. */
 @Service
@@ -17,6 +20,128 @@ public class StructuredFollowUpService {
 
     public StructuredFollowUpService(ProcedureVersionService procedureVersionService) {
         this.procedureVersionService = procedureVersionService;
+    }
+
+    public record ProcedureResolution(ProcedureVersionData procedure,
+            FollowUpQuestionSpec commonQuestion, String commonScope, String factContractId,
+            String blockReason, String exhaustedFact) {
+        public boolean selected() { return procedure != null; }
+    }
+
+    /** Shared applicability policy for persisted follow-up and action plans. */
+    public ProcedureResolution resolveForConsultation(
+            ConfirmedCaseSnapshotData snapshot, Set<String> clarificationAsked) {
+        ConsultationScenario scenario = scenario(snapshot);
+        if (scenario == ConsultationScenario.UNKNOWN)
+            return new ProcedureResolution(null, null, null, null, "NO_APPLICABLE_VERSION", null);
+        CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
+                ? CardCaseFactExtractor.fromSnapshot(snapshot)
+                : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
+        String procedureScenario = scenario.name();
+        String institution = "GENERIC_FINANCIAL_INSTITUTION";
+        String product = genericProduct(scenario);
+        if (scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE) {
+            ProcedureVersionService.CardBranchSelection branch =
+                    procedureVersionService.selectCardBranch(facts);
+            if (!branch.selected()) {
+                String key = branch.missingFact();
+                ScenarioRoutingFactContract.Contract contract = ScenarioRoutingFactContract.routing(key);
+                if (contract == null || !routingContractValid(key, contract))
+                    return new ProcedureResolution(null, null, null, null,
+                            "INCOMPATIBLE_COMMON_FACT_CONTRACT", null);
+                return commonQuestion(facts, key, contract, "SCENARIO_ROUTING", scenario,
+                        clarificationAsked);
+            }
+            procedureScenario = branch.scenario();
+            institution = ProcedureVersionService.KB_INSTITUTION;
+            product = ProcedureVersionService.PERSONAL_CREDIT_CARD;
+        }
+        String dateKey = scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
+                ? "transactionDate" : "incidentDate";
+        boolean dateRequired = scenario != ConsultationScenario.PERSONAL_INFO_SMISHING_MALICIOUS_APP;
+        LocalDate date = parseDate(facts.value(dateKey));
+        if (dateRequired && date == null) {
+            ScenarioRoutingFactContract.Contract contract = ScenarioRoutingFactContract.date(scenario);
+            if (procedureVersionService.approvedCandidates(
+                    procedureScenario, institution, product).isEmpty())
+                return new ProcedureResolution(null, null, null, null,
+                        "NO_APPLICABLE_VERSION", null);
+            if (contract == null || !dateContractValid(procedureScenario, institution, product,
+                    dateKey, contract, scenario))
+                return new ProcedureResolution(null, null, null, null,
+                        "INCOMPATIBLE_DATE_CONTRACT", null);
+            return commonQuestion(facts, dateKey, contract, "COMMON_DATE", scenario,
+                    clarificationAsked);
+        }
+        ProcedureVersionService.Selection selection = procedureVersionService.selectApplicable(
+                procedureScenario, institution, product, date, dateRequired);
+        if (!selection.selected()) {
+            return new ProcedureResolution(null, null, null, null,
+                    selection.failure() == ProcedureVersionService.SelectionFailure.OVERLAPPING_APPROVED_VERSIONS
+                            ? "AMBIGUOUS_VERSION" : "NO_APPLICABLE_VERSION", null);
+        }
+        return new ProcedureResolution(selection.procedure(), null, null, null, null, null);
+    }
+
+    private ProcedureResolution commonQuestion(CardCaseFacts facts, String key,
+            ScenarioRoutingFactContract.Contract contract, String scope,
+            ConsultationScenario scenario, Set<String> clarificationAsked) {
+        ProcedureVersionData.RequiredFact required = new ProcedureVersionData.RequiredFact(
+                key, contract.factType(), true);
+        String value = facts.value(key);
+        if ("UNKNOWN".equalsIgnoreCase(value)
+                && clarificationAsked != null && clarificationAsked.contains(key))
+            return new ProcedureResolution(null, null, null, null, null, key);
+        FollowUpQuestionSpec spec = "UNKNOWN".equalsIgnoreCase(value)
+                ? clarificationSpecFor(required, scenario) : specFor(required, scenario);
+        if (spec.inputType() != contract.inputType()
+                || (!"UNKNOWN".equalsIgnoreCase(value)
+                    && (!contract.question().equals(spec.question())
+                        || !contract.intent().equals(spec.questionIntent()))))
+            return new ProcedureResolution(null, null, null, null,
+                    "INCOMPATIBLE_COMMON_FACT_CONTRACT", null);
+        return new ProcedureResolution(null, spec, scope, contract.id(), null, null);
+    }
+
+    private boolean routingContractValid(String key, ScenarioRoutingFactContract.Contract contract) {
+        boolean seen = false;
+        for (String branch : List.of(ProcedureVersionService.CARD_SCENARIO,
+                ProcedureVersionService.CARD_LOSS_ONLY_SCENARIO,
+                ProcedureVersionService.CARD_HELD_UNAUTHORIZED_SCENARIO,
+                ProcedureVersionService.CARD_COMPENSATION_PROCESS_SCENARIO,
+                ProcedureVersionService.CARD_COMPENSATION_RESULT_SCENARIO)) {
+            for (ProcedureVersionData candidate : procedureVersionService.approvedCandidates(branch,
+                    ProcedureVersionService.KB_INSTITUTION,
+                    ProcedureVersionService.PERSONAL_CREDIT_CARD)) {
+                for (ProcedureVersionData.RequiredFact required : candidate.requiredFacts()) {
+                    if (key.equals(required.key())) {
+                        seen = true;
+                        if (!contract.factType().equals(required.type())
+                                || !required.requiredForDecision()) return false;
+                    }
+                }
+            }
+        }
+        return seen;
+    }
+
+    private boolean dateContractValid(String branch, String institution, String product,
+            String key, ScenarioRoutingFactContract.Contract contract,
+            ConsultationScenario scenario) {
+        List<ProcedureVersionData> candidates = procedureVersionService.approvedCandidates(
+                branch, institution, product);
+        if (candidates.isEmpty()) return false;
+        return candidates.stream().allMatch(candidate -> candidate.requiredFacts().stream()
+                .anyMatch(required -> key.equals(required.key()) && "DATE".equals(required.type())
+                        && required.requiredForDecision()
+                        && contract.question().equals(specFor(required, scenario).question())
+                        && contract.intent().equals(specFor(required, scenario).questionIntent())));
+    }
+
+    private LocalDate parseDate(String value) {
+        if (value == null || "UNKNOWN".equalsIgnoreCase(value)) return null;
+        try { return LocalDate.parse(value); }
+        catch (DateTimeParseException exception) { return null; }
     }
 
     public StructuredFollowUpData specify(ConfirmedCaseSnapshotData snapshot) {
@@ -42,15 +167,13 @@ public class StructuredFollowUpService {
     }
 
     public boolean hasActionCandidate(ConfirmedCaseSnapshotData snapshot) {
+        ProcedureResolution resolution = resolveForConsultation(snapshot, Set.of());
+        if (!resolution.selected()) return false;
         ConsultationScenario scenario = scenario(snapshot);
         CardCaseFacts facts = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
                 ? CardCaseFactExtractor.fromSnapshot(snapshot)
                 : ScenarioCaseFactExtractor.fromSnapshot(snapshot);
-        ProcedureVersionData procedure = scenario == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
-                ? procedureVersionService.requireApprovedCard(facts)
-                : procedureVersionService.requireApproved(scenario.name(),
-                        "GENERIC_FINANCIAL_INSTITUTION", genericProduct(scenario));
-        return ActionDependencyEvaluator.hasCandidate(procedure, facts);
+        return ActionDependencyEvaluator.hasCandidate(resolution.procedure(), facts);
     }
 
     public StructuredFollowUpData specify(

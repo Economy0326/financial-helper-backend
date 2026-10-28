@@ -48,6 +48,7 @@ public class EvidenceBindingResolver {
             LocalDate incidentDate
     ) {
         List<FinancialActionPlanData.EvidenceBinding> bindings = new ArrayList<>();
+        List<ResolvedReference> resolvedReferences = new ArrayList<>();
         List<String> gaps = new ArrayList<>();
         RetrievalGeneration generation = activeGeneration.current().orElse(null);
         if (generation == null
@@ -92,12 +93,16 @@ public class EvidenceBindingResolver {
                 gaps.add("EVIDENCE_CHUNK_UNAVAILABLE:" + reference.sourceKey());
                 continue;
             }
-            bindings.add(new FinancialActionPlanData.EvidenceBinding(
+            FinancialActionPlanData.EvidenceBinding binding = new FinancialActionPlanData.EvidenceBinding(
                     reference.sourceKey(), document.getId(), document.getDocumentVersion(),
                     chunks.stream().map(SourceChunk::getId).toList(), reference.articleReference(),
-                    reference.pageReference(), reference.role()));
+                    reference.pageReference(), reference.role());
+            bindings.add(binding);
+            if (reference.referenceId() != null) {
+                resolvedReferences.add(new ResolvedReference(reference.referenceId(), binding));
+            }
         }
-        return new Resolution(List.copyOf(bindings), List.copyOf(gaps));
+        return new Resolution(List.copyOf(bindings), List.copyOf(gaps), List.copyOf(resolvedReferences));
     }
 
     private boolean isReady(SourceChunk chunk, RetrievalGeneration generation) {
@@ -124,11 +129,21 @@ public class EvidenceBindingResolver {
 
     public record Resolution(
             List<FinancialActionPlanData.EvidenceBinding> bindings,
-            List<String> coverageGaps
+            List<String> coverageGaps,
+            List<ResolvedReference> resolvedReferences
     ) {
+        public Resolution(List<FinancialActionPlanData.EvidenceBinding> bindings,
+                          List<String> coverageGaps) {
+            this(bindings, coverageGaps, List.of());
+        }
+
         public Resolution {
             bindings = bindings == null ? List.of() : List.copyOf(bindings);
             coverageGaps = coverageGaps == null ? List.of() : List.copyOf(coverageGaps);
+            resolvedReferences = resolvedReferences == null ? List.of() : List.copyOf(resolvedReferences);
         }
+    }
+
+    public record ResolvedReference(String referenceId, FinancialActionPlanData.EvidenceBinding binding) {
     }
 }

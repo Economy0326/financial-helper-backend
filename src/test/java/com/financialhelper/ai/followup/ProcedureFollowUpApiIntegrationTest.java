@@ -15,6 +15,9 @@ import com.financialhelper.procedure.ProcedureVersionService;
 import com.financialhelper.procedure.ScenarioCaseFactExtractor;
 import com.financialhelper.procedure.CardCaseFactExtractor;
 import com.financialhelper.procedure.ProcedureVersionData;
+import com.financialhelper.procedure.ProcedureVersion;
+import com.financialhelper.procedure.ProcedureStatus;
+import com.financialhelper.procedure.ProcedureVersionRepository;
 import com.financialhelper.procedure.ConditionEvaluator;
 import com.financialhelper.procedure.ConditionResult;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotService;
@@ -28,6 +31,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -36,6 +41,10 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -58,10 +67,14 @@ class ProcedureFollowUpApiIntegrationTest {
     @Autowired private StructuredFollowUpService structuredFollowUpService;
     @Autowired private ConfirmedCaseSnapshotService confirmedCaseSnapshotService;
     @Autowired private ProcedureVersionService procedureVersionService;
+    @Autowired private ProcedureVersionRepository procedureVersionRepository;
     @Autowired private tools.jackson.databind.json.JsonMapper jsonMapper;
+    @Autowired private PlatformTransactionManager transactionManager;
+    @Autowired private ProcedureFollowUpService procedureFollowUpService;
 
     private Consultation consultation;
     private GuestSession guest;
+    private ProcedureVersion syntheticVersion;
 
     @AfterEach
     void cleanup() {
@@ -74,6 +87,9 @@ class ProcedureFollowUpApiIntegrationTest {
         }
         if (guest != null) {
             guestSessionRepository.deleteById(guest.getId());
+        }
+        if (syntheticVersion != null) {
+            procedureVersionRepository.deleteById(syntheticVersion.getId());
         }
     }
 
@@ -148,6 +164,7 @@ class ProcedureFollowUpApiIntegrationTest {
         consultation = consultationRepository.saveAndFlush(consultation);
         Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
 
+        advanceCardToVersionQuestions(cookie);
         mockMvc.perform(post(
                         "/api/v1/consultations/{id}/follow-up/prepare", consultation.getId())
                 .cookie(cookie).with(csrf()))
@@ -156,7 +173,7 @@ class ProcedureFollowUpApiIntegrationTest {
 
         FollowUpQuestion institution = questionRepository
                 .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
-                        consultation.getId(), consultation.getCaseInputRevision()).getFirst();
+                        consultation.getId(), consultation.getCaseInputRevision()).getLast();
         mockMvc.perform(put(
                         "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
                         consultation.getId(), institution.getId())
@@ -168,7 +185,7 @@ class ProcedureFollowUpApiIntegrationTest {
 
         FollowUpQuestion product = questionRepository
                 .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
-                        consultation.getId(), consultation.getCaseInputRevision()).get(1);
+                        consultation.getId(), consultation.getCaseInputRevision()).getLast();
         mockMvc.perform(put(
                         "/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
                         consultation.getId(), product.getId())
@@ -180,7 +197,7 @@ class ProcedureFollowUpApiIntegrationTest {
 
         FollowUpQuestion clarification = questionRepository
                 .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
-                        consultation.getId(), consultation.getCaseInputRevision()).get(2);
+                        consultation.getId(), consultation.getCaseInputRevision()).getLast();
         org.assertj.core.api.Assertions.assertThat(clarification.getQuestionIntent())
                 .isEqualTo("CLARIFY_PRODUCT");
 
@@ -206,11 +223,12 @@ class ProcedureFollowUpApiIntegrationTest {
         consultation = consultationRepository.saveAndFlush(consultation);
         Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
 
+        advanceCardToVersionQuestions(cookie);
         mockMvc.perform(post("/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
                         .cookie(cookie).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.question.factKey").value("institution"));
-        FollowUpQuestion institution = currentQuestions().getFirst();
+        FollowUpQuestion institution = currentQuestions().getLast();
 
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), institution.getId())
@@ -220,7 +238,7 @@ class ProcedureFollowUpApiIntegrationTest {
                 .andExpect(jsonPath("$.kind").value("question"))
                 .andExpect(jsonPath("$.question.questionIntent").value("CLARIFY_INSTITUTION"));
 
-        FollowUpQuestion clarification = currentQuestions().get(1);
+        FollowUpQuestion clarification = currentQuestions().getLast();
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), clarification.getId())
                         .cookie(cookie).with(csrf()).contentType("application/json")
@@ -231,7 +249,10 @@ class ProcedureFollowUpApiIntegrationTest {
                 .andExpect(jsonPath("$.blockingFact.label").isNotEmpty())
                 .andExpect(jsonPath("$.question.id").value(clarification.getId().toString()));
 
-        org.assertj.core.api.Assertions.assertThat(currentQuestions()).hasSize(2);
+        org.assertj.core.api.Assertions.assertThat(currentQuestions()).hasSize(3);
+        org.assertj.core.api.Assertions.assertThat(questionRepository
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+                        consultation.getId(), consultation.getCaseInputRevision())).hasSize(4);
 
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), clarification.getId())
@@ -253,18 +274,19 @@ class ProcedureFollowUpApiIntegrationTest {
         consultation = consultationRepository.saveAndFlush(consultation);
         Cookie cookie = new Cookie(GuestSessionCookie.NAME, rawToken);
 
+        advanceCardToVersionQuestions(cookie);
         mockMvc.perform(post("/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
                         .cookie(cookie).with(csrf()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.question.factKey").value("institution"));
         FollowUpQuestion institution = questionRepository
-                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(consultation.getId(), consultation.getCaseInputRevision()).getFirst();
+                .findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(consultation.getId(), consultation.getCaseInputRevision()).getLast();
 
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), institution.getId())
                         .cookie(cookie).with(csrf()).contentType("application/json").content("{\"answer\":\"OTHER\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.kind").value("unsupported"))
                 .andExpect(jsonPath("$.unsupportedReason").value("CARD_INSTITUTION_UNSUPPORTED"))
                 .andExpect(jsonPath("$.question.id").value(institution.getId().toString()))
-                .andExpect(jsonPath("$.totalQuestions").value(1));
+                .andExpect(jsonPath("$.totalQuestions").value(3));
 
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer", consultation.getId(), institution.getId())
                         .cookie(cookie).with(csrf()).contentType("application/json").content("{\"answer\":\"KB_KOOKMIN_CARD\"}"))
@@ -279,7 +301,9 @@ class ProcedureFollowUpApiIntegrationTest {
         answer(fixture, "OTHER").andExpect(jsonPath("$.kind").value("unsupported"))
                 .andExpect(jsonPath("$.unsupportedReason").value("CARD_PRODUCT_UNSUPPORTED"))
                 .andExpect(jsonPath("$.question.id").value(fixture.question().getId().toString()));
-        answer(fixture, "PERSONAL_CREDIT_CARD").andExpect(jsonPath("$.kind").value("question"));
+        answer(fixture, "PERSONAL_CREDIT_CARD")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("complete"));
     }
 
     @Test
@@ -436,7 +460,9 @@ class ProcedureFollowUpApiIntegrationTest {
         FollowUpQuestion blockingQuestion = null;
         for (int attempt = 0; attempt < 20; attempt++) {
             FollowUpQuestion question = currentQuestions().getLast();
-            String answer = unknownKeys.contains(question.getFactKey()) ? "UNKNOWN" :
+            String answer = "incidentDate".equals(question.getFactKey())
+                    ? LocalDate.now(ZoneId.of("Asia/Seoul")).toString()
+                    : unknownKeys.contains(question.getFactKey()) ? "UNKNOWN" :
                     "userInitiatedTransfer".equals(question.getFactKey()) ? "TRUE" : "FALSE";
             var response = mockMvc.perform(put(
                             "/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
@@ -560,7 +586,7 @@ class ProcedureFollowUpApiIntegrationTest {
         assertThat(consultation.getCaseInputRevision()).isEqualTo(caseRevision);
         assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(answerRevision + 1);
         assertThat(structuredFollowUpService.hasActionCandidate(
-                confirmedCaseSnapshotService.capture(consultation.getId()))).isTrue();
+                confirmedCaseSnapshotService.capture(consultation.getId()))).isFalse();
     }
 
     @Test
@@ -586,7 +612,7 @@ class ProcedureFollowUpApiIntegrationTest {
         assertThat(currentQuestions().getLast().getFactKey()).isEqualTo("transactionDate");
         assertThat(currentQuestions().getLast().getQuestionIntent()).isEqualTo("CLARIFY_TRANSACTION_DATE");
         assertThat(structuredFollowUpService.hasActionCandidate(
-                confirmedCaseSnapshotService.capture(consultation.getId()))).isTrue();
+                confirmedCaseSnapshotService.capture(consultation.getId()))).isFalse();
     }
 
     @Test
@@ -622,7 +648,7 @@ class ProcedureFollowUpApiIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.question.questionIntent").value("CLARIFY_TRANSACTION_DATE"));
         assertThat(structuredFollowUpService.hasActionCandidate(
-                confirmedCaseSnapshotService.capture(consultation.getId()))).isTrue();
+                confirmedCaseSnapshotService.capture(consultation.getId()))).isFalse();
         FollowUpQuestion clarification = currentQuestions().getLast();
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), clarification.getId())
@@ -665,25 +691,213 @@ class ProcedureFollowUpApiIntegrationTest {
             guestSessionRepository.deleteById(otherGuest.getId());
         }
 
-        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+        var recovered = mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), clarification.getId())
                         .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
                         .content("{\"answer\":\"2026-04-12\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.kind").value("complete"));
+                .andExpect(status().isOk()).andReturn();
+        int recoveryAnswers = 0;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            var state = jsonMapper.readTree(recovered.getResponse().getContentAsString());
+            if ("complete".equals(state.path("kind").asText())) break;
+            assertThat(state.path("kind").asText()).isEqualTo("question");
+            FollowUpQuestion next = currentQuestions().getLast();
+            String answer = switch (next.getFactKey()) {
+                case "unauthorizedTransaction" -> "TRUE";
+                case "reported", "accessCredentialExposed" -> "FALSE";
+                default -> throw new AssertionError("unexpected ACCOUNT recovery fact: " + next.getFactKey());
+            };
+            recovered = mockMvc.perform(put(
+                            "/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                            consultation.getId(), next.getId())
+                    .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                    .content("{\"answer\":\"" + answer + "\"}"))
+                    .andExpect(status().isOk()).andReturn();
+            recoveryAnswers++;
+        }
+        assertThat(jsonMapper.readTree(recovered.getResponse().getContentAsString())
+                .path("kind").asText()).isEqualTo("complete");
 
         consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
         assertThat(consultation.getCaseInputRevision()).isEqualTo(caseRevision);
-        assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(answerRevision + 3);
+        assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(answerRevision + 3 + recoveryAnswers);
         assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.SUMMARY);
-        assertThat(clarification.getId()).isEqualTo(currentQuestions().getLast().getId());
-        assertThat(currentQuestions().getLast().getAnswerValue()).isEqualTo("2026-04-12");
+        assertThat(currentQuestions()).anyMatch(question -> question.getId().equals(clarification.getId())
+                && "2026-04-12".equals(question.getAnswerValue()));
         mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
                         consultation.getId(), clarification.getId())
                         .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
                         .content("{\"answer\":\"2026-04-13\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("INVALID_CONSULTATION_STATE"));
+    }
+
+    @Test
+    void overlappingAccountVersionBlocksStructuredAndLegacyFollowUpWithoutCompleting() throws Exception {
+        AccountDateFixture fixture = prepareAccountDateQuestion();
+        addOverlappingAccountVersion();
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), fixture.question().getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"2026-04-12\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("version_blocked"))
+                .andExpect(jsonPath("$.versionBlockReason").value("AMBIGUOUS_VERSION"))
+                .andExpect(jsonPath("$.question").isEmpty());
+        mockMvc.perform(get("/api/v1/consultations/{id}/follow-up", consultation.getId())
+                        .cookie(fixture.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("version_blocked"))
+                .andExpect(jsonPath("$.versionBlockReason").value("AMBIGUOUS_VERSION"));
+        consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+    }
+
+    @Test
+    void versionConflictExpiresBoundAnswerButPreservesQuestionAuditRow() throws Exception {
+        AccountDateFixture fixture = prepareAccountDateQuestion();
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), fixture.question().getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"2026-04-12\"}"))
+                .andExpect(status().isOk());
+        FollowUpQuestion bound = currentQuestions().getLast();
+        assertThat(bound.getQuestionScope()).isEqualTo("VERSION_BOUND");
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), bound.getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"FALSE\"}"))
+                .andExpect(status().isOk());
+        addOverlappingAccountVersion();
+        long before = consultationRepository.findById(consultation.getId()).orElseThrow()
+                .getFollowUpAnswerRevision();
+        mockMvc.perform(get("/api/v1/consultations/{id}/procedure-follow-up", consultation.getId())
+                        .cookie(fixture.cookie()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("version_blocked"));
+        FollowUpQuestion historical = questionRepository.findById(bound.getId()).orElseThrow();
+        assertThat(historical.getAnswerValue()).isEqualTo("FALSE");
+        assertThat(historical.getSupersededAt()).isNotNull();
+        assertThat(confirmedCaseSnapshotService.capture(consultation.getId()).facts())
+                .noneMatch(fact -> bound.getId().equals(fact.questionId()));
+        consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(before + 1);
+        mockMvc.perform(get("/api/v1/consultations/{id}/procedure-follow-up", consultation.getId())
+                        .cookie(fixture.cookie()))
+                .andExpect(status().isOk());
+        assertThat(consultationRepository.findById(consultation.getId()).orElseThrow()
+                .getFollowUpAnswerRevision()).isEqualTo(before + 1);
+    }
+
+    @Test
+    void expiredQuestionAnswerKeepsSameBlockReasonInBothFollowUpApis() throws Exception {
+        AccountDateFixture fixture = prepareAccountDateQuestion();
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), fixture.question().getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"2026-04-12\"}"))
+                .andExpect(status().isOk());
+        FollowUpQuestion expired = currentQuestions().getLast();
+        assertThat(expired.getQuestionScope()).isEqualTo("VERSION_BOUND");
+        expired.supersede(OffsetDateTime.now(ZoneOffset.UTC));
+        questionRepository.saveAndFlush(expired);
+
+        mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                        consultation.getId(), expired.getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"FALSE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("version_blocked"))
+                .andExpect(jsonPath("$.versionBlockReason").value("STALE_QUESTION_VERSION"))
+                .andExpect(jsonPath("$.question").isEmpty());
+        mockMvc.perform(put("/api/v1/consultations/{id}/follow-up/questions/{questionId}/answer",
+                        consultation.getId(), expired.getId())
+                        .cookie(fixture.cookie()).with(csrf()).contentType("application/json")
+                        .content("{\"answer\":\"FALSE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("version_blocked"))
+                .andExpect(jsonPath("$.versionBlockReason").value("STALE_QUESTION_VERSION"))
+                .andExpect(jsonPath("$.question").isEmpty());
+        consultation = consultationRepository.findById(consultation.getId()).orElseThrow();
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.FOLLOW_UP);
+        assertThat(questionRepository.findById(expired.getId()).orElseThrow().getAnswerValue()).isNull();
+    }
+
+    @Test
+    void staleLoadedConsultationCannotSkipQuestionSetRevisionAfterAnotherTransactionCommits()
+            throws Exception {
+        String rawToken = tokenService.generateRawToken();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        guest = guestSessionRepository.save(new GuestSession(
+                tokenService.hashToken(rawToken), now, now.plusHours(1)));
+        consultation = new Consultation(guest, now);
+        consultation.updateCategory(ConsultationCategory.FINANCIAL_FRAUD,
+                ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER, now.plusSeconds(1));
+        consultation.updateSituation("제 계좌에서 제가 하지 않은 계좌이체가 있어요.", now.plusSeconds(2));
+        consultation = consultationRepository.saveAndFlush(consultation);
+        UUID consultationId = consultation.getId();
+        long initialRevision = consultation.getFollowUpAnswerRevision();
+        CountDownLatch staleLoaded = new CountDownLatch(1);
+        CountDownLatch firstCommitted = new CountDownLatch(1);
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        CompletableFuture<StructuredFollowUpStateResponse> second = CompletableFuture.supplyAsync(() ->
+                transaction.execute(status -> {
+                    consultationRepository.findById(consultationId).orElseThrow();
+                    staleLoaded.countDown();
+                    try {
+                        if (!firstCommitted.await(10, TimeUnit.SECONDS))
+                            throw new AssertionError("first transaction did not commit");
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(exception);
+                    }
+                    return procedureFollowUpService.prepare(consultationId, rawToken);
+                }));
+        assertThat(staleLoaded.await(10, TimeUnit.SECONDS)).isTrue();
+        UUID priorSnapshotId;
+        try {
+            priorSnapshotId = transaction.execute(status -> {
+                Consultation first = consultationRepository.findForUpdateById(consultationId).orElseThrow();
+                first.recordFollowUpAnswerChanged(OffsetDateTime.now(ZoneOffset.UTC));
+                return confirmedCaseSnapshotService.capture(consultationId).id();
+            });
+        } finally {
+            firstCommitted.countDown();
+        }
+        assertThat(second.get(10, TimeUnit.SECONDS).kind()).isEqualTo("question");
+        consultation = consultationRepository.findById(consultationId).orElseThrow();
+        assertThat(consultation.getFollowUpAnswerRevision()).isEqualTo(initialRevision + 2);
+        var current = confirmedCaseSnapshotService.capture(consultationId);
+        assertThat(current.id()).isNotEqualTo(priorSnapshotId);
+        assertThat(current.followUpAnswerRevision()).isEqualTo(initialRevision + 2);
+        assertThat(snapshotRepository.findById(priorSnapshotId)).isPresent();
+        long stableRevision = consultation.getFollowUpAnswerRevision();
+        UUID activeQuestionId = currentQuestions().getFirst().getId();
+        procedureFollowUpService.prepare(consultationId, rawToken);
+        procedureFollowUpService.prepare(consultationId, rawToken);
+        procedureFollowUpService.getState(consultationId, rawToken);
+        procedureFollowUpService.getState(consultationId, rawToken);
+        assertThat(consultationRepository.findById(consultationId).orElseThrow()
+                .getFollowUpAnswerRevision()).isEqualTo(stableRevision);
+        assertThat(currentQuestions()).hasSize(1);
+        assertThat(currentQuestions().getFirst().getId()).isEqualTo(activeQuestionId);
+    }
+
+    private void addOverlappingAccountVersion() {
+        ProcedureVersion source = procedureVersionRepository
+                .findByScenarioAndInstitutionAndProductTypeAndStatus(
+                        "UNAUTHORIZED_ACCOUNT_TRANSFER", "GENERIC_FINANCIAL_INSTITUTION",
+                        "BANK_ACCOUNT", ProcedureStatus.APPROVED).getFirst();
+        syntheticVersion = procedureVersionRepository.saveAndFlush(new ProcedureVersion(
+                source.getScenario(), source.getInstitution(), source.getProductType(),
+                source.getVersion() + 1, ProcedureStatus.APPROVED,
+                source.getApplicabilityStartDate(), source.getApplicabilityEndDate(),
+                source.getRequiredFactsJson(), source.getConditionRulesJson(),
+                source.getActionStepsJson(), source.getDocumentRequirementsJson(),
+                source.getEvidenceReferencesJson(), source.getReviewedContactsJson(),
+                source.getReviewedValuesJson(), source.getConditionsExceptionsJson(),
+                source.getReviewNotes(), source.getReviewedBy(), source.getReviewedAt(),
+                OffsetDateTime.now(ZoneOffset.UTC)));
     }
 
     private AccountDateFixture prepareAccountDateQuestion() throws Exception {
@@ -727,9 +941,16 @@ class ProcedureFollowUpApiIntegrationTest {
         String rawToken = tokenService.generateRawToken(); OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         guest = guestSessionRepository.save(new GuestSession(tokenService.hashToken(rawToken), now, now.plusHours(1)));
         consultation = new Consultation(guest, now); consultation.updateCategory(ConsultationCategory.CARD, now);
-        consultation.updateSituation("카드를 잃어버렸어요.", now.plusSeconds(1)); consultation = consultationRepository.saveAndFlush(consultation);
-        FollowUpQuestion question = questionRepository.save(new FollowUpQuestion(consultation, consultation.getCaseInputRevision(), 1,
-                "질문", "", options, "BACKEND_PROCEDURE", now, factKey, inputType, true, "TEST"));
+        consultation.updateSituation("KB국민카드 개인 본인 신용카드를 잃어버렸고 모르는 국내 신용판매 결제가 있어요. 아직 신고하지 않았어요. 2026-05-20",
+                now.plusSeconds(1)); consultation = consultationRepository.saveAndFlush(consultation);
+        FollowUpQuestion question = new FollowUpQuestion(consultation, consultation.getCaseInputRevision(), 1,
+                "질문", "", options, "BACKEND_PROCEDURE", now, factKey, inputType, true, "TEST");
+        var selected = procedureVersionService.selectApplicableCard(
+                CardCaseFactExtractor.fromValues(Map.of("cardLost", "TRUE", "unauthorizedPayment", "TRUE",
+                        "reported", "FALSE")), LocalDate.of(2026, 5, 20));
+        assertThat(selected.selected()).isTrue();
+        question.attributeToVersion(selected.procedure().id());
+        question = questionRepository.save(question);
         return new BoundaryFixture(new Cookie(GuestSessionCookie.NAME, rawToken), question);
     }
 
@@ -739,8 +960,29 @@ class ProcedureFollowUpApiIntegrationTest {
     }
 
     private java.util.List<FollowUpQuestion> currentQuestions() {
-        return questionRepository.findByConsultation_IdAndCaseInputRevisionOrderBySequenceNoAsc(
+        return questionRepository.findByConsultation_IdAndCaseInputRevisionAndSupersededAtIsNullOrderBySequenceNoAsc(
                 consultation.getId(), consultation.getCaseInputRevision());
+    }
+
+    private void advanceCardToVersionQuestions(Cookie cookie) throws Exception {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            var response = mockMvc.perform(post(
+                            "/api/v1/consultations/{id}/procedure-follow-up/prepare", consultation.getId())
+                    .cookie(cookie).with(csrf()))
+                    .andExpect(status().isOk()).andReturn();
+            var root = jsonMapper.readTree(response.getResponse().getContentAsString());
+            String key = root.path("question").path("factKey").asText();
+            if (!"unauthorizedPayment".equals(key) && !"incidentDate".equals(key)) return;
+            FollowUpQuestion question = currentQuestions().getLast();
+            String answer = "incidentDate".equals(key)
+                    ? LocalDate.now(ZoneId.of("Asia/Seoul")).toString() : "FALSE";
+            mockMvc.perform(put("/api/v1/consultations/{id}/procedure-follow-up/questions/{questionId}/answer",
+                            consultation.getId(), question.getId())
+                    .cookie(cookie).with(csrf()).contentType("application/json")
+                    .content("{\"answer\":\"" + answer + "\"}"))
+                    .andExpect(status().isOk());
+        }
+        throw new AssertionError("CARD routing/date questions did not resolve");
     }
 
     private record BoundaryFixture(Cookie cookie, FollowUpQuestion question) {}
