@@ -123,6 +123,15 @@ public class OfficialSourceRetrievalService {
     }
 
     public OfficialSearchResponse search(OfficialSearchRequest request) {
+        return searchInternal(request, true);
+    }
+
+    /** 상담 API에서 사용한다. 현재성 검증 전에는 검색 handle을 저장하지 않는다. */
+    public OfficialSearchResponse searchCandidates(OfficialSearchRequest request) {
+        return searchInternal(request, false);
+    }
+
+    private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
@@ -131,7 +140,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NEEDS_CLARIFICATION, false,
                     List.of("INSTITUTION"), List.of(), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -140,7 +149,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("NO_ACTIVE_READY_GENERATION"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -148,7 +157,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -156,7 +165,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("UNSUPPORTED_SCENARIO"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -177,7 +186,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     gaps, List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -285,7 +294,7 @@ public class OfficialSourceRetrievalService {
         }
         OfficialSearchResponse response = new OfficialSearchResponse(
                 searchId, status, degraded, List.of(), gaps, candidates);
-        remember(searchId, response, candidateById, null, 0L, 0L);
+        if (storeContext) remember(searchId, response, candidateById, null, 0L, 0L);
         return response;
     }
 
