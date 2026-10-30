@@ -30,8 +30,9 @@ class ConsultationOfficialInformationServiceTest {
     private final ActiveRetrievalGenerationPersistenceService generations =
             mock(ActiveRetrievalGenerationPersistenceService.class);
     private final RetrievalCorpusSnapshotService corpus = mock(RetrievalCorpusSnapshotService.class);
+    private final ReviewedSourceApplicabilityService applicability = mock(ReviewedSourceApplicabilityService.class);
     private final ConsultationOfficialInformationService service = new ConsultationOfficialInformationService(
-            sessions, consultations, snapshots, retrieval, generations, corpus);
+            sessions, consultations, snapshots, retrieval, generations, corpus, applicability);
     private final UUID consultationId = UUID.randomUUID();
     private final UUID guestId = UUID.randomUUID();
     private final UUID generationId = UUID.randomUUID();
@@ -60,6 +61,10 @@ class ConsultationOfficialInformationServiceTest {
         when(generation.getId()).thenReturn(generationId);
         when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
         when(generations.current()).thenReturn(Optional.of(generation));
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of());
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(
+                new OfficialSearchResponse(UUID.randomUUID(), RetrievalStatus.NO_MATCH,
+                        false, List.of(), List.of(), List.of()));
     }
 
     @Test
@@ -69,7 +74,7 @@ class ConsultationOfficialInformationServiceTest {
         OfficialEvidenceCandidate candidate = new OfficialEvidenceCandidate(UUID.randomUUID(), chunk,
                 doc, generationId, 1, 0.8, null, 0.03, "㈜KB국민카드", "공식 문서", 1,
                 null, null, "제1조", "1", "page:1", "https://example.invalid/official", "공식 원문");
-        when(retrieval.searchCandidates(any())).thenAnswer(invocation -> {
+        when(retrieval.searchReviewedCandidates(any(), any())).thenAnswer(invocation -> {
             OfficialSearchRequest search = invocation.getArgument(0);
             assertThat(search.institution()).isEqualTo("㈜KB국민카드");
             assertThat(search.productType()).isEqualTo("개인 신용카드");
@@ -82,6 +87,10 @@ class ConsultationOfficialInformationServiceTest {
                         java.time.LocalDate.of(2025, 1, 1), null, null, "㈜KB국민카드",
                         "공식 문서", null, "제1조", "1", "page:1",
                         "https://example.invalid/official")));
+        var match = new ReviewedSourceApplicabilityService.Match(UUID.randomUUID(),
+                "INSTITUTION_SPECIFIC", "㈜KB국민카드", "개인 신용카드",
+                java.time.LocalDate.of(2025, 1, 1), null, List.of(), List.of());
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of(chunk, match));
 
         var result = service.search(consultationId, "token", request);
 
@@ -109,7 +118,7 @@ class ConsultationOfficialInformationServiceTest {
     }
 
     @Test
-    void missing_institution_does_not_start_retrieval() {
+    void missing_institution_without_reviewed_common_corpus_returns_no_match() {
         when(consultation.getSituationText()).thenReturn("개인 신용카드 분실 2026-01-02");
         when(snapshots.capture(consultationId)).thenReturn(new ConfirmedCaseSnapshotData(
                 UUID.randomUUID(), consultationId, 2L, 3L,
@@ -117,9 +126,9 @@ class ConsultationOfficialInformationServiceTest {
                         "개인 신용카드 분실 2026-01-02", null, "USER_STATED", null)),
                 List.of(), null));
         var result = service.search(consultationId, "token", request);
-        assertThat(result.status()).isEqualTo("NEEDS_CLARIFICATION");
+        assertThat(result.status()).isEqualTo("NO_MATCH");
         assertThat(result.missingFacts()).contains("INSTITUTION");
-        verifyNoInteractions(retrieval);
+        verify(retrieval).searchReviewedCandidates(any(), any());
     }
 
     @Test
@@ -136,7 +145,7 @@ class ConsultationOfficialInformationServiceTest {
             if (reads.incrementAndGet() == 2) when(consultation.getFollowUpAnswerRevision()).thenReturn(4L);
             return Optional.of(consultation);
         });
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(), List.of()));
         var result = service.search(consultationId, "token", request);
         assertThat(result.status()).isEqualTo("STALE");
@@ -149,14 +158,14 @@ class ConsultationOfficialInformationServiceTest {
         when(next.getId()).thenReturn(UUID.randomUUID());
         when(next.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
         when(generations.current()).thenReturn(Optional.of(generation), Optional.of(next));
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(), List.of()));
         assertThat(service.search(consultationId, "token", request).status()).isEqualTo("STALE");
     }
 
     @Test
     void retrieval_failure_is_not_reported_as_no_match() {
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.TEMPORARILY_UNAVAILABLE, true,
                 List.of(), List.of("SEMANTIC_BRANCH_UNAVAILABLE", "KEYWORD_BRANCH_UNAVAILABLE"),
                 List.of()));
@@ -187,7 +196,7 @@ class ConsultationOfficialInformationServiceTest {
                 UUID.randomUUID(), UUID.randomUUID(), generationId, 1, null, 1.0, 0.03,
                 "㈜KB국민카드", "문서", 1, null, null, "제1조", "1", "page:1",
                 "https://example.invalid/official", "본문");
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(),
                 List.of(candidate)));
         when(corpus.readyChunks(generationId)).thenReturn(List.of());
@@ -198,12 +207,29 @@ class ConsultationOfficialInformationServiceTest {
 
     @Test
     void partial_retrieval_failure_is_visible_with_candidates() {
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, true, List.of(),
                 List.of("SEMANTIC_BRANCH_UNAVAILABLE"), List.of()));
         var result = service.search(consultationId, "token", request);
         assertThat(result.status()).isEqualTo("FOUND");
         assertThat(result.degraded()).isTrue();
-        assertThat(result.coverageGaps()).containsExactly("SEMANTIC_BRANCH_UNAVAILABLE");
+        assertThat(result.coverageGaps()).contains("SEMANTIC_BRANCH_UNAVAILABLE");
+    }
+
+    @Test
+    void reviewRevokedDuringRetrievalNeverPublishesCandidate() {
+        UUID doc = UUID.randomUUID();
+        UUID chunk = UUID.randomUUID();
+        var approved = new ReviewedSourceApplicabilityService.Match(UUID.randomUUID(),
+                "COMMON", null, "개인 신용카드", java.time.LocalDate.of(2025, 1, 1),
+                null, List.of(), List.of());
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of(chunk, approved),
+                java.util.Map.of());
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
+                UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(),
+                List.of(new OfficialEvidenceCandidate(UUID.randomUUID(), chunk, doc,
+                        generationId, 1, null, null, 0.03, "공식 기관", "문서", 1,
+                        null, null, "제1조", "1", "page:1", "https://example.invalid/doc", "내용"))));
+        assertThat(service.search(consultationId, "token", request).status()).isEqualTo("STALE");
     }
 }

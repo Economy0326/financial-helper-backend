@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
@@ -47,6 +48,7 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     @Autowired private SourceChunkIndexingRepository indexings;
     @Autowired private ActiveRetrievalGenerationPersistenceService active;
     @Autowired private OfficialSourceRetrievalService retrieval;
+    @Autowired private ReviewedSourceApplicabilityService applicability;
     @Autowired private GuestSessionTokenService tokens;
     @Autowired private GuestSessionRepository guests;
     @Autowired private ConsultationRepository consultations;
@@ -182,6 +184,171 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
                 .getConsultation().getId()).isEqualTo(consultation.getId());
         assertThat(retrieval.getPassages(consultation.getId(), response.searchId(),
                 List.of(response.candidates().getFirst().candidateId()))).hasSize(1);
+    }
+
+    @Test
+    void commonReviewAllowsInstitutionUnknownOnlyForReviewedSupport() {
+        OfficialSearchRequest unknown = request(null, "개인 신용카드", LocalDate.of(2026, 1, 2));
+        assertThat(applicability.eligible(unknown, ready())).isEmpty();
+        UUID review = reviewed("COMMON", null);
+        var matches = applicability.eligible(unknown, ready());
+        assertThat(matches).containsKey(chunk.getId());
+        assertThat(matches.get(chunk.getId()).reviewId()).isEqualTo(review);
+        assertThat(retrieval.searchReviewedCandidates(unknown, matches.keySet()).status())
+                .isEqualTo(RetrievalStatus.FOUND);
+        assertThat(retrieval.searchReviewedCandidates(unknown, java.util.Set.of()).candidates()).isEmpty();
+    }
+
+    @Test
+    void institutionReviewNeverLeaksToUnknownOrAnotherInstitution() {
+        reviewed("INSTITUTION_SPECIFIC", "㈜KB국민카드");
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+        assertThat(applicability.eligible(request("다른 카드사", "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+        assertThat(applicability.eligible(request("㈜KB국민카드", "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).containsKey(chunk.getId());
+    }
+
+    @Test
+    void reviewIsBoundToProductDateAndCurrentApproval() {
+        UUID review = reviewed("COMMON", null);
+        assertThat(applicability.eligible(request(null, "체크카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2027, 1, 2)), ready())).isEmpty();
+        jdbc.update("""
+                UPDATE source_applicability_review SET review_status = 'REVOKED',
+                    revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture',
+                    revocation_reason = 'fixture revocation' WHERE id = ?
+                """, review);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+    }
+
+    @Test
+    void revokedChunkCannotSatisfySupportOrQualifier() {
+        reviewed("COMMON", null);
+        chunk.revokeApproval(NOW.plusSeconds(4));
+        chunks.saveAndFlush(chunk);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+    }
+
+    @Test
+    void missingSupportAndUnreviewedConditionsFailClosed() {
+        UUID review = reviewed("COMMON", null);
+        jdbc.update("UPDATE source_applicability_review SET condition_required = TRUE WHERE id = ?", review);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+        jdbc.update("UPDATE source_applicability_review SET condition_required = FALSE, exception_required = TRUE WHERE id = ?", review);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+        jdbc.update("DELETE FROM source_applicability_chunk WHERE review_id = ?", review);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+    }
+
+    @Test
+    void reviewCannotBorrowAChunkFromAnotherDocument() {
+        UUID review = reviewed("COMMON", null);
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        UUID registryId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO source_registry (id, source_key, organization_name, official_domain,
+                    canonical_url, acquisition_type, enabled, created_at, updated_at)
+                VALUES (?, ?, '㈜KB국민카드', 'mapps.kbcard.com', ?, 'HTML', TRUE,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, registryId, "r05-" + suffix, "https://mapps.kbcard.com/r05/" + suffix);
+        SourceRegistry otherRegistry = registries.findById(registryId).orElseThrow();
+        String text = "다른 문서";
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        SourceDocument otherDocument = documents.saveAndFlush(new SourceDocument(otherRegistry, 1,
+                new SourceIngestionData.Parsed(otherRegistry.getCanonicalUrl(), "다른 문서", null,
+                        NOW, "text/html", null, null, SourceHashing.sha256(bytes),
+                        SourceHashing.sha256(text), bytes, text)));
+        SourceChunk otherChunk = chunks.saveAndFlush(new SourceChunk(otherDocument,
+                chunk.getChunkConfiguration(), new SourceChunkData.Definition(
+                chunk.getChunkConfiguration().getConfigVersion(), "{}", 0, text,
+                null, "제1조", "1", "page:1", 0, text.length(), "{}"), NOW));
+        assertThatThrownBy(() -> jdbc.update("""
+                INSERT INTO source_applicability_chunk
+                    (review_id, source_document_id, source_chunk_id, evidence_role)
+                VALUES (?, ?, ?, 'CONDITION')
+                """, review, chunk.getSourceDocument().getId(), otherChunk.getId()))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void conditionNotReadyInCurrentGenerationBlocksSupport() {
+        UUID review = reviewed("COMMON", null);
+        String body = chunk.getBody();
+        SourceChunk condition = new SourceChunk(chunk.getSourceDocument(),
+                chunk.getChunkConfiguration(), new SourceChunkData.Definition(
+                chunk.getChunkConfiguration().getConfigVersion(), "{}", 1, body,
+                null, "제2조", "1", "page:1#condition", 0, body.length(), "{}"), NOW);
+        condition.approve(NOW);
+        condition = chunks.saveAndFlush(condition);
+        jdbc.update("""
+                INSERT INTO source_applicability_chunk
+                    (review_id, source_document_id, source_chunk_id, evidence_role)
+                VALUES (?, ?, ?, 'CONDITION')
+                """, review, chunk.getSourceDocument().getId(), condition.getId());
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+    }
+
+    @Test
+    void reviewDoesNotTransferToAnotherScenarioOrDocumentVersion() {
+        reviewed("COMMON", null);
+        OfficialSearchRequest voice = new OfficialSearchRequest("공식 정보", "FINANCIAL_FRAUD",
+                null, "개인 신용카드", LocalDate.of(2026, 1, 2), List.of(), 10,
+                "VOICE_PHISHING_SUSPICIOUS_TRANSFER");
+        assertThat(applicability.eligible(voice, ready())).isEmpty();
+        SourceDocument document = chunk.getSourceDocument();
+        document.supersede(NOW.plusSeconds(4));
+        documents.saveAndFlush(document);
+        String body = chunk.getBody();
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        SourceDocument next = new SourceDocument(document.getSourceRegistry(), 2,
+                new SourceIngestionData.Parsed(document.getCanonicalUrl(), "새 판본", null,
+                        NOW.plusSeconds(5), "text/html", null, null,
+                        SourceHashing.sha256(bytes), SourceHashing.sha256(body), bytes, body));
+        next.setApplicabilityWindow(LocalDate.of(2025, 1, 1), LocalDate.of(2026, 12, 31));
+        next = documents.saveAndFlush(next);
+        SourceChunk nextChunk = new SourceChunk(next, chunk.getChunkConfiguration(),
+                new SourceChunkData.Definition(chunk.getChunkConfiguration().getConfigVersion(),
+                        "{}", 0, body, null, "제1조", "1", "page:1", 0, body.length(), "{}"), NOW);
+        nextChunk.approve(NOW);
+        nextChunk = chunks.saveAndFlush(nextChunk);
+        SourceChunkIndexing indexing = new SourceChunkIndexing(nextChunk, generation, NOW);
+        indexing.markProcessing(NOW.plusSeconds(1));
+        indexing.markReady(NOW.plusSeconds(2), "{}");
+        indexings.saveAndFlush(indexing);
+        assertThat(applicability.eligible(request(null, "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready())).isEmpty();
+    }
+
+    private List<RetrievalCorpusSnapshotService.EligibleChunk> ready() {
+        return new RetrievalCorpusSnapshotService(indexings).readyChunks(generation.getId());
+    }
+
+    private UUID reviewed(String scope, String institution) {
+        UUID id = UUID.randomUUID();
+        SourceDocument document = chunk.getSourceDocument();
+        jdbc.update("""
+                INSERT INTO source_applicability_review (id, source_document_id, reviewed_raw_sha256,
+                    scope_kind, scenario, product_type, institution_name, applicability_start_date,
+                    applicability_end_date, review_status, conditions_reviewed, exceptions_reviewed,
+                    reviewed_by, reviewed_at)
+                VALUES (?, ?, ?, ?, 'CARD_LOSS_UNAUTHORIZED_USE', '개인 신용카드', ?,
+                    DATE '2025-01-01', DATE '2026-12-31', 'APPROVED', TRUE, TRUE, 'fixture', CURRENT_TIMESTAMP)
+                """, id, document.getId(), document.getRawSha256(), scope, institution);
+        jdbc.update("""
+                INSERT INTO source_applicability_chunk (review_id, source_document_id, source_chunk_id, evidence_role)
+                VALUES (?, ?, ?, 'SUPPORT')
+                """, id, document.getId(), chunk.getId());
+        return id;
     }
 
     private static OfficialSearchRequest request(String institution, String product, LocalDate date) {

@@ -131,12 +131,24 @@ public class OfficialSourceRetrievalService {
         return searchInternal(request, false);
     }
 
+    /** Only the consultation information API uses the explicitly reviewed eligibility set. */
+    public OfficialSearchResponse searchReviewedCandidates(OfficialSearchRequest request,
+                                                            Set<UUID> reviewedChunkIds) {
+        if (reviewedChunkIds == null) throw new IllegalArgumentException("reviewed chunks required");
+        return searchInternal(request, false, reviewedChunkIds);
+    }
+
     private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext) {
+        return searchInternal(request, storeContext, null);
+    }
+
+    private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext,
+                                                  Set<UUID> reviewedChunkIds) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
         UUID searchId = UUID.randomUUID();
-        if (request.institution() == null) {
+        if (request.institution() == null && reviewedChunkIds == null) {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NEEDS_CLARIFICATION, false,
                     List.of("INSTITUTION"), List.of(), List.of());
@@ -171,7 +183,9 @@ public class OfficialSourceRetrievalService {
 
         List<RetrievalCorpusSnapshotService.EligibleChunk> scopedCorpus = corpusSnapshot
                 .readyChunks(generation.getId()).stream()
-                .filter(chunk -> matchesNonTemporalScope(chunk, request))
+                .filter(chunk -> reviewedChunkIds == null
+                        ? matchesNonTemporalScope(chunk, request)
+                        : reviewedChunkIds.contains(chunk.sourceChunkId()))
                 .toList();
         boolean temporalUnknown = request.incidentDate() != null
                 && scopedCorpus.stream().anyMatch(chunk ->

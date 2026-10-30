@@ -55,6 +55,7 @@ class ConsultationOfficialInformationApiIntegrationTest {
     @MockitoBean private OfficialSourceRetrievalService retrieval;
     @MockitoBean private ActiveRetrievalGenerationPersistenceService generations;
     @MockitoBean private RetrievalCorpusSnapshotService corpus;
+    @MockitoBean private ReviewedSourceApplicabilityService applicability;
     @MockitoBean private KureRuntimeHttpClient kure;
     @MockitoBean private KoreanLawOpenApiClient law;
     @MockitoBean private OpenAiStructuredClient openAi;
@@ -112,23 +113,82 @@ class ConsultationOfficialInformationApiIntegrationTest {
     }
 
     @Test
-    void missingInstitutionReturnsClarificationFromConfirmedSnapshot() throws Exception {
+    void missingInstitutionWithoutCommonReviewReturnsNoMatch() throws Exception {
         Fixture fixture = consultation("개인 신용카드 분실 2026-01-02");
+        readyGeneration();
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
+                UUID.randomUUID(), RetrievalStatus.NO_MATCH, false, List.of(),
+                List.of("NO_APPROVED_READY_CORPUS_FOR_SCOPE"), List.of()));
         mvc.perform(post(URL, fixture.id()).with(csrf()).cookie(fixture.cookie())
                         .contentType("application/json").content(body(fixture.revision())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("NEEDS_CLARIFICATION"))
+                .andExpect(jsonPath("$.status").value("NO_MATCH"))
                 .andExpect(jsonPath("$.missingFacts[0]").value("INSTITUTION"));
         assertThat(snapshots.findByConsultation_IdAndCaseInputRevisionAndFollowUpAnswerRevision(
                 fixture.id(), fixture.revision(), 0L)).isPresent();
-        verifyNoInteractions(retrieval);
+        verify(retrieval).searchReviewedCandidates(any(), any());
+    }
+
+    @Test
+    void approvedCommonCandidateIsFoundWithoutInstitutionButKeepsMissingFact() throws Exception {
+        Fixture fixture = consultation("개인 신용카드 분실 2026-01-02");
+        RetrievalGeneration generation = readyGeneration();
+        OfficialEvidenceCandidate candidate = candidate(generation.getId());
+        var match = new ReviewedSourceApplicabilityService.Match(UUID.randomUUID(), "COMMON",
+                null, "개인 신용카드", java.time.LocalDate.of(2025, 1, 1), null,
+                List.of("page:1#condition"), List.of("page:1#exception"));
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of(
+                candidate.sourceChunkId(), match));
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
+                UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(),
+                List.of(candidate)));
+        when(corpus.readyChunks(generation.getId())).thenReturn(List.of(
+                new RetrievalCorpusSnapshotService.EligibleChunk(candidate.sourceChunkId(),
+                        "공식 원문", candidate.sourceDocumentId(), 1,
+                        java.time.LocalDate.of(2025, 1, 1), null, null,
+                        "공식 기관", "공통 문서", null, "제1조", "1", "page:1",
+                        "https://example.invalid/official")));
+        mvc.perform(post(URL, fixture.id()).with(csrf()).cookie(fixture.cookie())
+                        .contentType("application/json").content(body(fixture.revision())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FOUND"))
+                .andExpect(jsonPath("$.missingFacts[0]").value("INSTITUTION"))
+                .andExpect(jsonPath("$.candidates[0].scopeKind").value("COMMON"))
+                .andExpect(jsonPath("$.candidates[0].conditionLocators[0]").value("page:1#condition"));
+    }
+
+    @Test
+    void commonCandidateDoesNotClaimInstitutionCorpusCoverage() throws Exception {
+        Fixture fixture = consultation(CARD_TEXT);
+        RetrievalGeneration generation = readyGeneration();
+        OfficialEvidenceCandidate candidate = candidate(generation.getId());
+        var match = new ReviewedSourceApplicabilityService.Match(UUID.randomUUID(), "COMMON",
+                null, "개인 신용카드", java.time.LocalDate.of(2025, 1, 1), null,
+                List.of(), List.of());
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of(
+                candidate.sourceChunkId(), match));
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
+                UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(),
+                List.of(candidate)));
+        when(corpus.readyChunks(generation.getId())).thenReturn(List.of(
+                new RetrievalCorpusSnapshotService.EligibleChunk(candidate.sourceChunkId(),
+                        "공식 원문", candidate.sourceDocumentId(), 1,
+                        java.time.LocalDate.of(2025, 1, 1), null, null,
+                        "공식 기관", "공통 문서", null, "제1조", "1", "page:1",
+                        "https://example.invalid/official")));
+        mvc.perform(post(URL, fixture.id()).with(csrf()).cookie(fixture.cookie())
+                        .contentType("application/json").content(body(fixture.revision())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FOUND"))
+                .andExpect(jsonPath("$.coverageGaps[0]").value("NO_APPROVED_INSTITUTION_CORPUS"))
+                .andExpect(jsonPath("$.candidates[0].scopeKind").value("COMMON"));
     }
 
     @Test
     void revisionChangedDuringRetrievalDoesNotPublishCandidates() throws Exception {
         Fixture fixture = consultation(CARD_TEXT);
         readyGeneration();
-        when(retrieval.searchCandidates(any())).thenAnswer(invocation -> {
+        when(retrieval.searchReviewedCandidates(any(), any())).thenAnswer(invocation -> {
             Consultation current = consultations.findById(fixture.id()).orElseThrow();
             current.updateSituation(CARD_TEXT + " 이후 정정", OffsetDateTime.now(ZoneOffset.UTC));
             consultations.saveAndFlush(current);
@@ -150,7 +210,7 @@ class ConsultationOfficialInformationApiIntegrationTest {
         when(after.getId()).thenReturn(UUID.randomUUID());
         when(after.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
         when(generations.current()).thenReturn(Optional.of(before), Optional.of(after));
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(), List.of()));
         mvc.perform(post(URL, fixture.id()).with(csrf()).cookie(fixture.cookie())
                         .contentType("application/json").content(body(fixture.revision())))
@@ -163,7 +223,7 @@ class ConsultationOfficialInformationApiIntegrationTest {
         Fixture fixture = consultation(CARD_TEXT);
         RetrievalGeneration generation = readyGeneration();
         OfficialEvidenceCandidate candidate = candidate(generation.getId());
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.FOUND, false, List.of(), List.of(),
                 List.of(candidate)));
         when(corpus.readyChunks(generation.getId())).thenReturn(List.of());
@@ -179,7 +239,7 @@ class ConsultationOfficialInformationApiIntegrationTest {
         Fixture fixture = consultation(CARD_TEXT);
         RetrievalGeneration generation = readyGeneration();
         OfficialEvidenceCandidate candidate = candidate(generation.getId());
-        when(retrieval.searchCandidates(any())).thenAnswer(invocation -> {
+        when(retrieval.searchReviewedCandidates(any(), any())).thenAnswer(invocation -> {
             OfficialSearchRequest search = invocation.getArgument(0);
             assertThat(search.institution()).isEqualTo("㈜KB국민카드");
             assertThat(search.productType()).isEqualTo("개인 신용카드");
@@ -192,6 +252,11 @@ class ConsultationOfficialInformationApiIntegrationTest {
                         java.time.LocalDate.of(2025, 1, 1), null, null,
                         "㈜KB국민카드", "공식 문서", null, "제1조", "1", "page:1",
                         "https://example.invalid/official")));
+        when(applicability.eligible(any(), any())).thenReturn(java.util.Map.of(
+                candidate.sourceChunkId(), new ReviewedSourceApplicabilityService.Match(
+                        UUID.randomUUID(), "INSTITUTION_SPECIFIC", "㈜KB국민카드",
+                        "개인 신용카드", java.time.LocalDate.of(2025, 1, 1), null,
+                        List.of(), List.of())));
         mvc.perform(post(URL, fixture.id()).with(csrf()).cookie(fixture.cookie())
                         .contentType("application/json").content(body(fixture.revision())))
                 .andExpect(status().isOk())
@@ -204,7 +269,7 @@ class ConsultationOfficialInformationApiIntegrationTest {
     void retrievalFailureIsNotReportedAsNoMatch() throws Exception {
         Fixture fixture = consultation(CARD_TEXT);
         readyGeneration();
-        when(retrieval.searchCandidates(any())).thenReturn(new OfficialSearchResponse(
+        when(retrieval.searchReviewedCandidates(any(), any())).thenReturn(new OfficialSearchResponse(
                 UUID.randomUUID(), RetrievalStatus.TEMPORARILY_UNAVAILABLE, true,
                 List.of(), List.of("SEMANTIC_BRANCH_UNAVAILABLE", "KEYWORD_BRANCH_UNAVAILABLE"),
                 List.of()));
