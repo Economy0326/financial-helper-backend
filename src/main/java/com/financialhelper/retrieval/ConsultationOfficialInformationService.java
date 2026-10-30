@@ -35,6 +35,7 @@ public class ConsultationOfficialInformationService {
     private final OfficialSourceRetrievalService retrievalService;
     private final ActiveRetrievalGenerationPersistenceService activeGeneration;
     private final RetrievalCorpusSnapshotService corpusSnapshot;
+    private final ReviewedSourceApplicabilityService applicability;
 
     public ConsultationOfficialInformationService(
             GuestSessionService guestSessionService,
@@ -42,7 +43,8 @@ public class ConsultationOfficialInformationService {
             ConfirmedCaseSnapshotService snapshotService,
             OfficialSourceRetrievalService retrievalService,
             ActiveRetrievalGenerationPersistenceService activeGeneration,
-            RetrievalCorpusSnapshotService corpusSnapshot
+            RetrievalCorpusSnapshotService corpusSnapshot,
+            ReviewedSourceApplicabilityService applicability
     ) {
         this.guestSessionService = guestSessionService;
         this.consultationRepository = consultationRepository;
@@ -50,6 +52,7 @@ public class ConsultationOfficialInformationService {
         this.retrievalService = retrievalService;
         this.activeGeneration = activeGeneration;
         this.corpusSnapshot = corpusSnapshot;
+        this.applicability = applicability;
     }
 
     public ConsultationOfficialInformationResponse search(
@@ -86,7 +89,7 @@ public class ConsultationOfficialInformationService {
             missing.add("PRODUCT_TYPE");
         if (date == null) missing.add(scenario == ConsultationScenario.UNAUTHORIZED_ACCOUNT_TRANSFER
                 ? "TRANSACTION_DATE" : "INCIDENT_DATE");
-        if (!missing.isEmpty()) {
+        if (missing.stream().anyMatch(value -> !"INSTITUTION".equals(value))) {
             return currentResult(consultationId, session, snapshot, scenario, scope,
                     "NEEDS_CLARIFICATION", missing, List.of());
         }
@@ -109,7 +112,10 @@ public class ConsultationOfficialInformationService {
                 ? "CARD" : "FINANCIAL_FRAUD", institution, searchProduct, date,
                 snapshot.facts(), 10, scenario.name());
         // No public search handle or unbound context exists while this call is in flight.
-        OfficialSearchResponse found = retrievalService.searchCandidates(searchRequest);
+        Map<UUID, ReviewedSourceApplicabilityService.Match> reviewed = applicability.eligible(
+                searchRequest, corpusSnapshot.readyChunks(before.getId()));
+        OfficialSearchResponse found = retrievalService.searchReviewedCandidates(
+                searchRequest, reviewed.keySet());
         Consultation current = owned(consultationId, session);
         RetrievalGeneration after = activeGeneration.current().orElse(null);
         if (!sameRevisions(current, snapshot) || after == null
@@ -122,9 +128,14 @@ public class ConsultationOfficialInformationService {
                 .readyChunks(after.getId()).stream()
                 .collect(Collectors.toMap(RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId,
                         Function.identity()));
+        Map<UUID, ReviewedSourceApplicabilityService.Match> currentReviews =
+                applicability.eligible(searchRequest, List.copyOf(eligible.values()));
         for (OfficialEvidenceCandidate candidate : found.candidates()) {
             RetrievalCorpusSnapshotService.EligibleChunk chunk = eligible.get(candidate.sourceChunkId());
             if (!after.getId().equals(candidate.retrievalGenerationId()) || chunk == null
+                    || !java.util.Objects.equals(reviewed.get(candidate.sourceChunkId()),
+                            currentReviews.get(candidate.sourceChunkId()))
+                    || !currentReviews.containsKey(candidate.sourceChunkId())
                     || !chunk.sourceDocumentId().equals(candidate.sourceDocumentId())
                     || chunk.documentVersion() != candidate.documentVersion()
                     || !java.util.Objects.equals(chunk.locator(), candidate.locator())
@@ -139,16 +150,35 @@ public class ConsultationOfficialInformationService {
                 || !before.getId().equals(finalGeneration.getId())) {
             return stale(consultationId, finalConsultation);
         }
+        Map<UUID, ReviewedSourceApplicabilityService.Match> finalReviews =
+                applicability.eligible(searchRequest, corpusSnapshot.readyChunks(finalGeneration.getId()));
+        if (found.candidates().stream().anyMatch(candidate ->
+                !java.util.Objects.equals(reviewed.get(candidate.sourceChunkId()),
+                        finalReviews.get(candidate.sourceChunkId()))
+                        || !finalReviews.containsKey(candidate.sourceChunkId()))) {
+            return stale(consultationId, finalConsultation);
+        }
         List<ConsultationOfficialInformationResponse.Candidate> candidates = found.candidates().stream()
-                .map(candidate -> new ConsultationOfficialInformationResponse.Candidate(
+                .map(candidate -> {
+                    var match = finalReviews.get(candidate.sourceChunkId());
+                    return new ConsultationOfficialInformationResponse.Candidate(
                         candidate.sourceDocumentId(), candidate.documentVersion(),
                         candidate.sourceChunkId(), candidate.retrievalGenerationId(),
                         candidate.organizationName(), candidate.title(), candidate.canonicalUrl(),
                         candidate.articleReference(), candidate.pageReference(), candidate.locator(),
-                        candidate.body()))
+                        candidate.body(), match.scopeKind(), match.reviewId(),
+                        match.institution(), match.product(), match.start(), match.end(),
+                        match.conditionLocators(), match.exceptionLocators());
+                })
                 .toList();
+        List<String> gaps = new ArrayList<>(found.coverageGaps());
+        if (institution == null) gaps.add("INSTITUTION_UNCONFIRMED");
+        else if (finalReviews.values().stream().noneMatch(match ->
+                "INSTITUTION_SPECIFIC".equals(match.scopeKind()))) {
+            gaps.add("NO_APPROVED_INSTITUTION_CORPUS");
+        }
         return result(consultationId, snapshot, scenario, scope, found.status().name(),
-                found.degraded(), found.missingFacts(), found.coverageGaps(),
+                found.degraded(), missing, gaps,
                 candidates.isEmpty() ? List.of() : List.of(CANDIDATE_LIMITATION), candidates);
     }
 

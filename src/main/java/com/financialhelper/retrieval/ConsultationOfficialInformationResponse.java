@@ -38,6 +38,14 @@ public record ConsultationOfficialInformationResponse(
             String articleReference,
             String pageReference,
             String locator,
-            String excerpt
+            String excerpt,
+            String scopeKind,
+            UUID applicabilityReviewId,
+            String applicableInstitution,
+            String applicableProduct,
+            LocalDate applicabilityStartDate,
+            LocalDate applicabilityEndDate,
+            List<String> conditionLocators,
+            List<String> exceptionLocators
     ) {}
 }
