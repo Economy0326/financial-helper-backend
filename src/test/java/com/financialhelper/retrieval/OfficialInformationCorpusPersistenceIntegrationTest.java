@@ -124,6 +124,60 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     }
 
     @Test
+    void parsedSyntheticHtmlVersionNeedsItsOwnReviewedChunkBeforeSearch() {
+        SourceDocument previous = chunk.getSourceDocument();
+        previous.supersede(NOW.plusSeconds(4));
+        documents.saveAndFlush(previous);
+        SourceRegistry registry = previous.getSourceRegistry();
+        String html = "<html><body><main><h1>합성 카드 정보</h1><p>"
+                + "접수와 조사 및 결과 확인은 각각 다른 단계입니다. ".repeat(8)
+                + "</p></main></body></html>";
+        byte[] raw = html.getBytes(StandardCharsets.UTF_8);
+        var parsed = new HtmlSourceDocumentParser().parse(SourceIngestionData.Snapshot.from(registry),
+                new SourceIngestionData.Fetched(registry.getCanonicalUrl(), "text/html", null, null,
+                        raw, NOW.plusSeconds(5)));
+        SourceDocument current = new SourceDocument(registry, 2, parsed);
+        current.setApplicabilityWindow(LocalDate.of(2025, 1, 1), LocalDate.of(2026, 12, 31));
+        current = documents.saveAndFlush(current);
+        assertThat(current.getRawSha256()).isEqualTo(SourceHashing.sha256(raw));
+        assertThat(current.getDocumentVersion()).isEqualTo(2);
+
+        String body = parsed.normalizedContent();
+        SourceChunk next = new SourceChunk(current, chunk.getChunkConfiguration(),
+                new SourceChunkData.Definition(chunk.getChunkConfiguration().getConfigVersion(),
+                        "{}", 0, body, null, null, null,
+                        "normalized-content:utf16:0-" + body.length(), 0, body.length(), "{}"), NOW);
+        next.approve(NOW);
+        next = chunks.saveAndFlush(next);
+        assertThat(next.getBody()).isEqualTo(current.getNormalizedContent());
+        SourceChunkIndexing indexing = new SourceChunkIndexing(next, generation, NOW);
+        indexing.markProcessing(NOW.plusSeconds(5));
+        indexing.markReady(NOW.plusSeconds(6), "{}");
+        indexings.saveAndFlush(indexing);
+
+        chunk = next;
+        when(kure.query(any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generation.getId(), List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(
+                next.getId(), 1, 0.9, generation.getId()))));
+        when(keyword.searchApproved(any(), anyInt())).thenReturn(List.of(next));
+        var request = request(null, "개인 신용카드", LocalDate.of(2026, 1, 2));
+        assertThat(applicability.eligible(request, ready())).doesNotContainKey(next.getId());
+        UUID review = reviewed("COMMON", null);
+        assertThat(applicability.eligible(request, ready())).containsKey(next.getId());
+        var result = retrieval.searchReviewedCandidates(request, java.util.Set.of(next.getId()));
+        assertThat(result.status()).isEqualTo(RetrievalStatus.FOUND);
+        assertThat(result.candidates()).extracting(OfficialEvidenceCandidate::sourceChunkId)
+                .containsExactly(next.getId());
+        jdbc.update("""
+                UPDATE source_applicability_review SET review_status = 'REVOKED',
+                    revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture',
+                    revocation_reason = 'synthetic revocation' WHERE id = ?
+                """, review);
+        assertThat(applicability.eligible(request, ready())).doesNotContainKey(next.getId());
+        verifyNoInteractions(law, openAi);
+    }
+
+    @Test
     void revokedChunkIsExcludedEvenWhenItsIndexingRemainsReady() {
         chunk.revokeApproval(NOW.plusSeconds(4));
         chunks.saveAndFlush(chunk);
