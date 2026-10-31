@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /** Test-only, read-only inspection of five URLs already declared by V10/V17. */
@@ -36,6 +37,30 @@ final class OfficialSourcePreflight {
         return source;
     }
 
+    /** Comparison is diagnostic only; no outcome grants SourceDocument or V38 approval. */
+    static String compare(Result previous, Result current) {
+        if (!Objects.equals(previous.sourceKey(), current.sourceKey())) {
+            throw new IllegalArgumentException("Cannot compare different source keys");
+        }
+        if (!"PASS".equals(previous.parser()) || !"PASS".equals(current.parser())
+                || !"PASS".equals(previous.locator()) || !"PASS".equals(current.locator())) {
+            return "UNVERIFIED_FETCH_PARSE_OR_LOCATOR";
+        }
+        if (!Objects.equals(previous.resolvedUrl(), current.resolvedUrl())) {
+            return "URL_CHANGED_REVIEW_REQUIRED";
+        }
+        if (!Objects.equals(previous.contentSha256(), current.contentSha256())) {
+            return "CONTENT_CHANGED_REVIEW_REQUIRED";
+        }
+        if (!Objects.equals(previous.title(), current.title())) {
+            return "TITLE_CHANGED_REVIEW_REQUIRED";
+        }
+        if (!Objects.equals(previous.rawSha256(), current.rawSha256())) {
+            return "RAW_CHANGED_CONTENT_SAME_REVIEW_REQUIRED";
+        }
+        return "SAME_OBSERVED_BYTES_NO_APPROVAL";
+    }
+
     static SourceContentFetcher officialFetcher() {
         var properties = new SourceIngestionProperties(false, Duration.ofSeconds(5),
                 Duration.ofSeconds(15), 2_000_000, 2, "financial-helper-source-preflight/1");
@@ -62,6 +87,12 @@ final class OfficialSourcePreflight {
         }
         try {
             // A local proxy tokenizer checks offsets only; it is not READY generation indexing.
+            var html = org.jsoup.Jsoup.parse(new String(fetched.originalContent(),
+                    java.nio.charset.StandardCharsets.UTF_8), fetched.resolvedUrl());
+            var main = html.selectFirst("main, article, [role=main], #content, #contents");
+            var heading = main == null ? null : main.selectFirst("h1, h2, h3");
+            String bodyHeading = heading == null ? null : heading.text().trim();
+            Integer mainImageCount = main == null ? null : main.select("img").size();
             var chunks = ExtractionGoldenSupport.chunks(parsed.normalizedContent(), 160, 240);
             boolean offsetsValid = chunks.stream().allMatch(chunk ->
                     chunk.body().equals(parsed.normalizedContent().substring(
@@ -73,14 +104,14 @@ final class OfficialSourcePreflight {
             return new Result(key, source.canonicalUrl(), fetched.resolvedUrl(), fetched.retrievedAt(),
                     "ACCESSIBLE", "PASS", offsetsValid ? "PASS" : "FAIL",
                     parsed.rawSha256(), parsed.contentSha256(), fetched.contentType(),
-                    parsed.title(), parsed.publishedAt(), parsed.normalizedContent().length(),
+                    parsed.title(), bodyHeading, mainImageCount, parsed.publishedAt(), parsed.normalizedContent().length(),
                     chunks.size(), chunks.stream().map(c -> new Locator(c.articleReference(),
                             c.pageReference(), c.locator())).toList(),
                     "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", markers, null);
         } catch (RuntimeException failure) {
             return new Result(key, source.canonicalUrl(), fetched.resolvedUrl(), fetched.retrievedAt(),
                     "ACCESSIBLE", "PASS", "FAIL", parsed.rawSha256(), parsed.contentSha256(),
-                    fetched.contentType(), parsed.title(), parsed.publishedAt(),
+                    fetched.contentType(), parsed.title(), null, null, parsed.publishedAt(),
                     parsed.normalizedContent().length(), null, List.of(), "NOT_REVIEWED",
                     "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", Map.of(), "CHUNK_VALIDATION_FAILED");
         }
@@ -89,7 +120,7 @@ final class OfficialSourcePreflight {
     private static Result failure(SourceIngestionData.Snapshot source, String status, String code) {
         return new Result(source.sourceKey(), source.canonicalUrl(), null, null,
                 status.equals("FETCH_FAILED") ? "UNAVAILABLE" : "ACCESSIBLE",
-                status, "NOT_VERIFIED", null, null, null, null, null, null, null,
+                status, "NOT_VERIFIED", null, null, null, null, null, null, null, null, null,
                 List.of(), "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", Map.of(), code);
     }
 
@@ -103,7 +134,8 @@ final class OfficialSourcePreflight {
     record Locator(String article, String page, String offset) {}
     record Result(String sourceKey, String declaredUrl, String resolvedUrl, OffsetDateTime fetchedAt,
             String access, String parser, String locator, String rawSha256, String contentSha256,
-            String contentType, String title, java.time.LocalDate publishedAt,
+            String contentType, String title, String bodyHeading, Integer mainImageCount,
+            java.time.LocalDate publishedAt,
             Integer extractedChars, Integer chunkCount, List<Locator> locators,
             String conditionExceptionReview, String versionAndApplicability,
             String v38Readiness, Map<String, Boolean> reviewMarkers, String failureCode) {}

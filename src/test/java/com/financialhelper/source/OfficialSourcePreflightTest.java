@@ -58,6 +58,8 @@ class OfficialSourcePreflightTest {
         assertThat(result.locator()).isEqualTo("PASS");
         assertThat(result.rawSha256()).hasSize(64);
         assertThat(result.chunkCount()).isPositive();
+        assertThat(result.bodyHeading()).isEqualTo("합성 제보 안내");
+        assertThat(result.mainImageCount()).isZero();
         assertThat(result.conditionExceptionReview()).isEqualTo("NOT_REVIEWED");
         assertThat(result.versionAndApplicability()).isEqualTo("UNVERIFIED");
         assertThat(result.reviewMarkers()).containsEntry("제보방법 안내", false);
@@ -75,14 +77,73 @@ class OfficialSourcePreflightTest {
         assertThat(result.rawSha256()).isNull();
     }
 
+    @Test
+    void rawOnlyChangeIsFlaggedWithoutTreatingItAsApprovedSameVersion() {
+        var first = OfficialSourcePreflight.inspect("police-reporting", source -> synthetic(source,
+                "<nav>조회 1</nav>"));
+        var second = OfficialSourcePreflight.inspect("police-reporting", source -> synthetic(source,
+                "<nav>조회 2</nav>"));
+
+        assertThat(first.rawSha256()).isNotEqualTo(second.rawSha256());
+        assertThat(first.contentSha256()).isEqualTo(second.contentSha256());
+        assertThat(OfficialSourcePreflight.compare(first, second))
+                .isEqualTo("RAW_CHANGED_CONTENT_SAME_REVIEW_REQUIRED");
+    }
+
+    @Test
+    void changedConditionCannotBeClassifiedAsDynamicOnly() {
+        var first = OfficialSourcePreflight.inspect("police-reporting", source -> synthetic(source,
+                "<p>조건 A</p>"));
+        var second = OfficialSourcePreflight.inspect("police-reporting", source -> synthetic(source,
+                "<p>조건 B</p>"));
+
+        assertThat(OfficialSourcePreflight.compare(first, second))
+                .isEqualTo("CONTENT_CHANGED_REVIEW_REQUIRED");
+    }
+
+    @Test
+    void imageChangeWithSameExtractedTextStillNeedsReview() {
+        var first = OfficialSourcePreflight.inspect("fsc-personal-info", source -> synthetic(source,
+                "<img src='card-1.png' alt='합성 카드뉴스'>"));
+        var second = OfficialSourcePreflight.inspect("fsc-personal-info", source -> synthetic(source,
+                "<img src='card-2.png' alt='합성 카드뉴스'>"));
+
+        assertThat(first.contentSha256()).isEqualTo(second.contentSha256());
+        assertThat(OfficialSourcePreflight.compare(first, second))
+                .isEqualTo("RAW_CHANGED_CONTENT_SAME_REVIEW_REQUIRED");
+    }
+
+    @Test
+    void failedFetchCannotBeComparedAsStableContent() {
+        var good = OfficialSourcePreflight.inspect("police-reporting", source -> synthetic(source, ""));
+        var failed = OfficialSourcePreflight.inspect("police-reporting", source -> {
+            throw new SourceIngestionException("SOURCE_REQUEST_FAILED", "offline");
+        });
+
+        assertThat(OfficialSourcePreflight.compare(good, failed))
+                .isEqualTo("UNVERIFIED_FETCH_PARSE_OR_LOCATOR");
+    }
+
+    private SourceIngestionData.Fetched synthetic(SourceIngestionData.Snapshot source, String variation) {
+        byte[] bytes = ("<html><body><main><h1>합성 제보 안내</h1>"
+                + "<p>제보를 위한 합성 본문입니다. ".repeat(12)
+                + variation + "</main></body></html>").getBytes(StandardCharsets.UTF_8);
+        return new SourceIngestionData.Fetched(source.canonicalUrl(), "text/html", null,
+                null, bytes, OffsetDateTime.parse("2026-10-31T00:00:00Z"));
+    }
+
     /** Explicit opt-in. Execute this one test with OFFICIAL_PREFLIGHT_LIVE=true; it never writes a fixture. */
     @Test
     @EnabledIfEnvironmentVariable(named = "OFFICIAL_PREFLIGHT_LIVE", matches = "true")
     void liveOfficialUrlsProduceReviewJsonOnlyWhenExplicitlyRequested() throws Exception {
         var mapper = JsonMapper.builder().build();
         for (String key : OfficialSourcePreflight.sourceKeys()) {
-            System.out.println(mapper.writeValueAsString(
-                    OfficialSourcePreflight.inspect(key, OfficialSourcePreflight.officialFetcher())));
+            var first = OfficialSourcePreflight.inspect(key, OfficialSourcePreflight.officialFetcher());
+            var second = OfficialSourcePreflight.inspect(key, OfficialSourcePreflight.officialFetcher());
+            System.out.println(mapper.writeValueAsString(first));
+            System.out.println(mapper.writeValueAsString(second));
+            System.out.println("PREFLIGHT_COMPARISON sourceKey=" + key + " result="
+                    + OfficialSourcePreflight.compare(first, second));
         }
     }
 
