@@ -41,6 +41,7 @@ class OfficialSourcePreflightTest {
         assertThat(result.failureCode()).isEqualTo("SOURCE_REQUEST_FAILED");
         assertThat(result.rawSha256()).isNull();
         assertThat(result.v38Readiness()).isEqualTo("ADDITIONAL_REVIEW_REQUIRED");
+        assertThat(result.reviewMarkers()).isEmpty();
     }
 
     @Test
@@ -59,6 +60,7 @@ class OfficialSourcePreflightTest {
         assertThat(result.chunkCount()).isPositive();
         assertThat(result.conditionExceptionReview()).isEqualTo("NOT_REVIEWED");
         assertThat(result.versionAndApplicability()).isEqualTo("UNVERIFIED");
+        assertThat(result.reviewMarkers()).containsEntry("제보방법 안내", false);
         assertThat(JsonMapper.builder().build().writeValueAsString(result)).contains("rawSha256");
     }
 

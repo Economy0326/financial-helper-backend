@@ -8,6 +8,12 @@ import java.util.UUID;
 
 /** Test-only, read-only inspection of five URLs already declared by V10/V17. */
 final class OfficialSourcePreflight {
+    private static final Map<String, List<String>> REVIEW_MARKERS = Map.of(
+            "police-reporting", List.of("제보방법 안내", "자료가 없어도 제보", "지급정지"),
+            "kb-card-compensation-process", List.of("사고조사", "처리결과", "단기카드대출", "대표자 이외의 대리인"),
+            "fsc-2026-alert", List.of("빗썸", "지급정지", "악성앱", "보상금 지급 절차"),
+            "fsc-personal-info", List.of("개인정보노출자 사고예방시스템", "금융회사 신고", "금전 피해"),
+            "kisa-118", List.of("118", "평일", "스미싱 조치방법"));
     private static final Map<String, SourceIngestionData.Snapshot> SOURCES = Map.of(
             "police-reporting", source("police-reporting", "경찰청", "counterscam112.go.kr",
                     "https://www.counterscam112.go.kr/board/CONTENT_000000000010.do"),
@@ -60,19 +66,23 @@ final class OfficialSourcePreflight {
             boolean offsetsValid = chunks.stream().allMatch(chunk ->
                     chunk.body().equals(parsed.normalizedContent().substring(
                             chunk.sourceStartOffset(), chunk.sourceEndOffset())));
+            Map<String, Boolean> markers = REVIEW_MARKERS.get(key).stream().collect(
+                    java.util.stream.Collectors.toMap(marker -> marker,
+                            marker -> parsed.normalizedContent().contains(marker),
+                            (left, right) -> left, java.util.LinkedHashMap::new));
             return new Result(key, source.canonicalUrl(), fetched.resolvedUrl(), fetched.retrievedAt(),
                     "ACCESSIBLE", "PASS", offsetsValid ? "PASS" : "FAIL",
                     parsed.rawSha256(), parsed.contentSha256(), fetched.contentType(),
                     parsed.title(), parsed.publishedAt(), parsed.normalizedContent().length(),
                     chunks.size(), chunks.stream().map(c -> new Locator(c.articleReference(),
                             c.pageReference(), c.locator())).toList(),
-                    "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", null);
+                    "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", markers, null);
         } catch (RuntimeException failure) {
             return new Result(key, source.canonicalUrl(), fetched.resolvedUrl(), fetched.retrievedAt(),
                     "ACCESSIBLE", "PASS", "FAIL", parsed.rawSha256(), parsed.contentSha256(),
                     fetched.contentType(), parsed.title(), parsed.publishedAt(),
                     parsed.normalizedContent().length(), null, List.of(), "NOT_REVIEWED",
-                    "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", "CHUNK_VALIDATION_FAILED");
+                    "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", Map.of(), "CHUNK_VALIDATION_FAILED");
         }
     }
 
@@ -80,7 +90,7 @@ final class OfficialSourcePreflight {
         return new Result(source.sourceKey(), source.canonicalUrl(), null, null,
                 status.equals("FETCH_FAILED") ? "UNAVAILABLE" : "ACCESSIBLE",
                 status, "NOT_VERIFIED", null, null, null, null, null, null, null,
-                List.of(), "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", code);
+                List.of(), "NOT_REVIEWED", "UNVERIFIED", "ADDITIONAL_REVIEW_REQUIRED", Map.of(), code);
     }
 
     private static SourceIngestionData.Snapshot source(String key, String organization,
@@ -96,5 +106,5 @@ final class OfficialSourcePreflight {
             String contentType, String title, java.time.LocalDate publishedAt,
             Integer extractedChars, Integer chunkCount, List<Locator> locators,
             String conditionExceptionReview, String versionAndApplicability,
-            String v38Readiness, String failureCode) {}
+            String v38Readiness, Map<String, Boolean> reviewMarkers, String failureCode) {}
 }
