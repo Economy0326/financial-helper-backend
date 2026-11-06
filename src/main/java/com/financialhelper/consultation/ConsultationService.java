@@ -265,6 +265,8 @@ public class ConsultationService {
 
         ensureInProgress(consultation);
 
+        if (consultation.isInformationIntake()) throw new InvalidConsultationStateException();
+
         // 현재 단계에서 Category 수정이 가능한가
         if (!CATEGORY_EDITABLE_STEPS.contains(
                 consultation.getCurrentStep()
@@ -301,6 +303,7 @@ public class ConsultationService {
             ConfirmSuggestedScenarioRequest request) {
         Consultation consultation = findOwnedConsultation(consultationId,
                 guestSessionService.requireValidSession(rawToken));
+        if (consultation.isInformationIntake()) throw new InvalidConsultationStateException();
         if (consultation.getCaseInputRevision() != request.expectedCaseInputRevision()) {
             throw new InvalidConsultationStateException();
         }
@@ -337,6 +340,8 @@ public class ConsultationService {
                         consultationId,
                         guestSession
                 );
+
+        if (consultation.isInformationIntake()) throw new InvalidConsultationStateException();
 
         boolean normalEdit = SITUATION_EDITABLE_STEPS.contains(
                 consultation.getCurrentStep())

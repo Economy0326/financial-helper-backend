@@ -1,0 +1,1 @@
+ALTER TABLE consultation ADD COLUMN information_intake BOOLEAN NOT NULL DEFAULT FALSE;

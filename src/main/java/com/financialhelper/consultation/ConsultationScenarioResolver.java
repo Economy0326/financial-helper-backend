@@ -8,6 +8,9 @@ public final class ConsultationScenarioResolver {
 
     public static ConsultationScenario resolve(Consultation consultation) {
         if (consultation == null) return ConsultationScenario.UNKNOWN;
+        if (consultation.isInformationIntake()) {
+            return consultation.getScenario() == null ? ConsultationScenario.UNKNOWN : consultation.getScenario();
+        }
         // Situation은 현재 사용자의 명시적 입력이다. category 선택으로 cache된
         // scenario 때문에 계좌이체 신고가 CARD 경로에 남아서는 안 된다.
         if (consultation.getSituationText() != null && !consultation.getSituationText().isBlank()) {
