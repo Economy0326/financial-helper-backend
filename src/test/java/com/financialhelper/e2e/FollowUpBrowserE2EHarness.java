@@ -129,6 +129,25 @@ public final class FollowUpBrowserE2EHarness {
         return value;
     }
 
+    /** Reuse the browser isolation guard before Spring can create a DataSource. */
+    public static void verifySpringEnvironment(org.springframework.core.env.Environment environment) {
+        try {
+            if (!Set.of(environment.getActiveProfiles()).equals(Set.of("browser-e2e"))) throw new IllegalStateException();
+            Guard current = guard(System.getenv());
+            verifyContainer(current);
+            String user = required(System.getenv(), "E2E_DB_USERNAME");
+            String password = required(System.getenv(), "E2E_DB_PASSWORD");
+            if (password.length() < 24 || !current.jdbcUrl().equals(environment.getProperty("spring.datasource.url"))
+                    || !user.equals(environment.getProperty("spring.datasource.username"))
+                    || !password.equals(environment.getProperty("spring.datasource.password"))) throw new IllegalStateException();
+            String raw = inspect("database-config", "inspect", "--format={{json .Config.Env}}", current.containerId());
+            List<?> values = JsonMapper.builder().build().readValue(raw, List.class);
+            if (!values.contains("POSTGRES_DB=" + current.databaseName()) || !values.contains("POSTGRES_USER=" + user)
+                    || !values.contains("POSTGRES_PASSWORD=" + password)) throw new IllegalStateException();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Browser E2E Spring database isolation could not be verified");
+        }
+    }
     static void verifyContainer(Guard guard) throws Exception {
         String id = inspect("container-id", "inspect", "--format={{.Id}}", guard.containerId());
         String name = inspect("container-name", "inspect", "--format={{.Name}}", guard.containerId());
@@ -225,13 +244,15 @@ public final class FollowUpBrowserE2EHarness {
             Guard guard) throws IOException {
         ProcedureVersionRepository versions = context.getBean(ProcedureVersionRepository.class);
         BufferedReader input = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        System.out.println("Commands: auth-browser | overlap-account | supersede <consultation-id> <question-id> | inspect <consultation-id> | exit");
+        System.out.println("Commands: auth-browser | seed-card | card-browser | overlap-account | supersede <consultation-id> <question-id> | inspect <consultation-id> | exit");
         String line;
         while ((line = input.readLine()) != null) {
             String[] parts = line.trim().split("\\s+");
             try {
                 switch (parts[0]) {
                     case "auth-browser" -> BrowserE2EAccountAuthFixture.verify(context, jdbc, guard);
+                    case "seed-card" -> BrowserE2ECardFixture.seed(context, jdbc, guard);
+                    case "card-browser" -> BrowserE2ECardFlow.run(context, jdbc, guard);
                     case "overlap-account" -> overlapAccount(versions, guard);
                     case "supersede" -> {
                         if (parts.length != 3) throw new IllegalArgumentException("Two IDs required");
@@ -255,7 +276,9 @@ public final class FollowUpBrowserE2EHarness {
                     default -> System.out.println("UNKNOWN_COMMAND");
                 }
             } catch (Exception exception) {
-                System.out.println("FIXTURE_COMMAND_REJECTED " + exception.getClass().getSimpleName());
+                String reason = exception.getMessage();
+                System.out.println("FIXTURE_COMMAND_REJECTED " + exception.getClass().getSimpleName()
+                        + (reason != null && reason.matches("E2E_[A-Z0-9_]+") ? " " + reason : ""));
             }
         }
     }

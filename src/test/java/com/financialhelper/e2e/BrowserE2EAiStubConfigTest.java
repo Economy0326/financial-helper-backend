@@ -28,4 +28,26 @@ class BrowserE2EAiStubConfigTest {
                     .isInstanceOf(IllegalStateException.class);
         }
     }
-}
+
+    @Test
+    void queryStubKeepsGenerationAndOnlyReturnsAllowedChunks() {
+        try (var context = new AnnotationConfigApplicationContext(BrowserE2EAiStubConfig.class)) {
+            var client = context.getBean(com.financialhelper.retrieval.KureRuntimeClient.class);
+            var generation = java.util.UUID.randomUUID();
+            var first = java.util.UUID.randomUUID();
+            var second = java.util.UUID.randomUUID();
+            var request = new com.financialhelper.retrieval.KureRuntimeClient.KureRuntimeQueryRequest(
+                    generation, "synthetic query", 1, java.util.Set.of(first, second));
+            var result = client.query(request);
+            assertThat(result.generationId()).isEqualTo(generation);
+            assertThat(result.results()).hasSize(1);
+            assertThat(result.results().getFirst().sourceChunkId()).isIn(first, second);
+            assertThat(result.results().getFirst().generationId()).isEqualTo(generation);
+            assertThat(result.results().getFirst().rank()).isEqualTo(1);
+            assertThat(client.query(request)).isEqualTo(result);
+            assertThatThrownBy(client::metadata).isInstanceOf(IllegalStateException.class);
+            var ai = context.getBean(OpenAiStructuredClient.class);
+            assertThatThrownBy(() -> ai.generateStructured("test", "{}", com.financialhelper.ai.information.InformationExplanationAiResult.class))
+                    .isInstanceOf(com.financialhelper.ai.AiProviderException.class);
+        }
+    }}

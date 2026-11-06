@@ -17,6 +17,10 @@ public class IsolatedDatabaseInitializer implements ApplicationContextInitialize
     }
 
     public static void verify(Environment env) {
+        if (java.util.Set.of(env.getActiveProfiles()).equals(java.util.Set.of("browser-e2e"))) {
+            com.financialhelper.e2e.FollowUpBrowserE2EHarness.verifySpringEnvironment(env);
+            return;
+        }
         try {
             String run = System.getenv("FH_TEST_RUN_ID");
             String id = System.getenv("FH_TEST_CONTAINER_ID");

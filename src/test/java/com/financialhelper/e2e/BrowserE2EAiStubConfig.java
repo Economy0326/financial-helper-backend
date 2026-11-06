@@ -1,6 +1,9 @@
 package com.financialhelper.e2e;
 
 import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.ai.AiProviderException;
+import com.financialhelper.ai.information.InformationExplanationAiResult;
+import com.financialhelper.retrieval.KureRuntimeClient;
 import com.financialhelper.ai.summary.ConsultationSummaryAiResult;
 import com.financialhelper.ai.understanding.CaseUnderstandingAiResult;
 
@@ -19,6 +22,9 @@ public class BrowserE2EAiStubConfig {
         return new OpenAiStructuredClient(null, null, null) {
             @Override
             public <T> T generateStructured(String instructions, String input, Class<T> responseType) {
+                if (responseType == InformationExplanationAiResult.class) {
+                    throw new AiProviderException("synthetic browser E2E outage");
+                }
                 if (input == null || !input.contains("E2E_SYNTHETIC_")) {
                     throw new IllegalStateException("Only synthetic browser E2E input is accepted");
                 }
@@ -40,6 +46,25 @@ public class BrowserE2EAiStubConfig {
                     return responseType.cast(result);
                 }
                 throw new IllegalStateException("Unexpected AI output type in browser E2E harness");
+            }
+        };
+    }
+
+    /** Deterministic query-only external boundary; never contacts a KURE runtime. */
+    @Bean
+    @Primary
+    KureRuntimeClient browserE2eKureStub() {
+        return new KureRuntimeClient() {
+            @Override public KureRuntimeMetadata metadata() { throw new IllegalStateException("E2E_KURE_METADATA_UNSUPPORTED"); }
+            @Override public KureRuntimeBuildResult build(KureRuntimeBuildRequest request) { throw new IllegalStateException("E2E_KURE_BUILD_UNSUPPORTED"); }
+            @Override public KureRuntimeReadiness readiness(java.util.UUID id) { throw new IllegalStateException("E2E_KURE_READINESS_UNSUPPORTED"); }
+            @Override public KureRuntimeQueryResult query(KureRuntimeQueryRequest request) {
+                var ids = request.allowedDocumentIds().stream().sorted().limit(request.topK()).toList();
+                var hits = new java.util.ArrayList<KureRuntimeQueryResult.Hit>();
+                for (int i = 0; i < ids.size(); i++) {
+                    hits.add(new KureRuntimeQueryResult.Hit(ids.get(i), i + 1, 1.0, request.generationId()));
+                }
+                return new KureRuntimeQueryResult(request.generationId(), hits);
             }
         };
     }
