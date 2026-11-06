@@ -1,6 +1,8 @@
 package com.financialhelper.retrieval;
 
 import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.ai.information.InformationExplanationService;
+import com.financialhelper.ai.information.InformationReportService;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationCategory;
 import com.financialhelper.consultation.ConsultationRepository;
@@ -56,10 +58,12 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     @Autowired private GuestSessionRepository guests;
     @Autowired private ConsultationRepository consultations;
     @Autowired private PersistentSearchContextRepository contexts;
+    @Autowired private InformationReportService informationReports;
     @MockitoBean private KureRuntimeHttpClient kure;
     @MockitoBean private SourceKeywordSearchService keyword;
     @MockitoBean private KoreanLawOpenApiClient law;
     @MockitoBean private OpenAiStructuredClient openAi;
+    @MockitoBean private InformationExplanationService informationExplanation;
 
     private SourceChunk chunk;
     private RetrievalGeneration generation;
@@ -254,6 +258,38 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         assertThat(retrieval.searchReviewedCandidates(unknown, matches.keySet()).status())
                 .isEqualTo(RetrievalStatus.FOUND);
         assertThat(retrieval.searchReviewedCandidates(unknown, java.util.Set.of()).candidates()).isEmpty();
+    }
+
+    @Test
+    void informationReportUsesReviewedCorpusAndRevocationMakesItStale() {
+        UUID review = reviewed("COMMON", null);
+        String raw = tokens.generateRawToken();
+        GuestSession guest = guests.saveAndFlush(new GuestSession(
+                tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        Consultation consultation = new Consultation(guest, NOW);
+        consultation.updateCategory(ConsultationCategory.CARD,
+                ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
+        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
+        consultation = consultations.saveAndFlush(consultation);
+        when(informationExplanation.select(any())).thenAnswer(call ->
+                ((com.financialhelper.ai.information.InformationEvidenceSnapshot) call.getArgument(0)).evidence());
+
+        var created = informationReports.prepare(consultation.getId(), raw,
+                consultation.getCaseInputRevision());
+        assertThat(created.status()).isEqualTo("READY_CANDIDATES");
+        assertThat(created.selectedEvidence()).hasSize(1);
+        assertThat(informationReports.get(consultation.getId(), raw).status())
+                .isEqualTo("READY_CANDIDATES");
+
+        jdbc.update("""
+                UPDATE source_applicability_review SET review_status = 'REVOKED',
+                    revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture',
+                    revocation_reason = 'fixture revocation' WHERE id = ?
+                """, review);
+        var stale = informationReports.get(consultation.getId(), raw);
+        assertThat(stale.status()).isEqualTo("STALE");
+        assertThat(stale.selectedEvidence()).isEmpty();
+        verifyNoInteractions(law, openAi);
     }
 
     @Test

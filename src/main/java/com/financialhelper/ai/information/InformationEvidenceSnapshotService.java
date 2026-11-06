@@ -1,6 +1,7 @@
 package com.financialhelper.ai.information;
 
 import com.financialhelper.consultation.ConsultationRepository;
+import com.financialhelper.consultation.ConsultationNotFoundException;
 import com.financialhelper.consultation.ConsultationScenario;
 import com.financialhelper.consultation.ConsultationScenarioResolver;
 import com.financialhelper.guest.GuestSessionService;
@@ -22,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.time.LocalDate;
 
@@ -67,9 +69,12 @@ public class InformationEvidenceSnapshotService {
             throw new IllegalStateException("information scope differs from confirmed facts");
         }
         if (found.candidates().isEmpty() || !"FOUND".equals(found.status())) {
-            assertCurrent(consultationId, rawToken, found, null);
+            UUID generation = activeGeneration.current()
+                    .filter(item -> item.getStatus() == RetrievalGenerationStatus.READY)
+                    .map(item -> item.getId()).orElse(null);
+            assertCurrent(consultationId, rawToken, found, generation);
             return new InformationEvidenceSnapshot(consultationId, found.caseInputRevision(),
-                    found.followUpAnswerRevision(), found.scenario(), null, minimizedFacts(confirmed),
+                    found.followUpAnswerRevision(), found.scenario(), generation, minimizedFacts(confirmed),
                     found.missingFacts(), found.coverageGaps(), List.of(),
                     "NO_APPROVED_EVIDENCE", "NOT_ESTABLISHED", "NOT_DETERMINED");
         }
@@ -145,7 +150,7 @@ public class InformationEvidenceSnapshotService {
             ConsultationOfficialInformationResponse found, UUID generationId) {
         var session = sessions.requireValidSession(rawToken);
         var consultation = consultations.findByIdAndGuestSession_Id(id, session.getId())
-                .orElseThrow(() -> new IllegalStateException("consultation is unavailable"));
+                .orElseThrow(ConsultationNotFoundException::new);
         if (consultation.getCaseInputRevision() != found.caseInputRevision()
                 || consultation.getFollowUpAnswerRevision() != found.followUpAnswerRevision()) {
             throw new IllegalStateException("confirmed facts changed during capture");
@@ -179,11 +184,15 @@ public class InformationEvidenceSnapshotService {
     }
 
     private static List<ConfirmedCaseSnapshotData.Fact> minimizedFacts(ConfirmedCaseSnapshotData snapshot) {
-        // The raw situationText may contain account numbers or authentication data.
-        return snapshot.facts().stream().filter(fact -> !"situationText".equals(fact.key()))
+        // Store only the scope fields required to explain the search boundary.
+        Set<String> scopeKeys = Set.of("category", "scenario", "institution", "productType",
+                "incidentDate", "transactionDate");
+        return snapshot.facts().stream().filter(fact -> scopeKeys.contains(fact.key()))
                 .filter(fact -> "USER_ANSWERED".equals(fact.source())
                         || "USER_SELECTED".equals(fact.source())
                         || "SYSTEM_RESOLVED_FROM_EXPLICIT_INPUT".equals(fact.source()))
+                .map(fact -> new ConfirmedCaseSnapshotData.Fact(fact.type(), fact.key(),
+                        fact.value(), null, fact.source(), null))
                 .toList();
     }
 

@@ -136,6 +136,7 @@ public class SecurityConfig {
                             HttpMethod.POST,
                             "/api/v1/consultations/*/understanding",
                             "/api/v1/consultations/*/official-information/search",
+                            "/api/v1/consultations/*/information-report/prepare",
                             "/api/v1/consultations/*/follow-up/prepare",
                             "/api/v1/consultations/*/procedure-follow-up/prepare",
                             "/api/v1/consultations/*/financial-action-plan",
@@ -204,7 +205,8 @@ public class SecurityConfig {
 
                     .requestMatchers(
                             HttpMethod.GET,
-                            "/api/v1/consultations/*/report"
+                            "/api/v1/consultations/*/report",
+                            "/api/v1/consultations/*/information-report"
                     )
                     .permitAll()
 

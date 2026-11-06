@@ -11,14 +11,19 @@ import com.financialhelper.guest.GuestSessionTokenService;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshot;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotData;
 import com.financialhelper.retrieval.ConfirmedCaseSnapshotRepository;
+import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.law.KoreanLawOpenApiClient;
+import com.financialhelper.retrieval.KureRuntimeHttpClient;
 
 import jakarta.servlet.http.Cookie;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +37,7 @@ import java.util.List;
 import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 @SpringBootTest
@@ -39,6 +45,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 @ActiveProfiles("test")
 @Transactional
 class FinancialActionPlanApiIntegrationTest {
+    @MockitoBean private OpenAiStructuredClient openAi;
+    @MockitoBean private KoreanLawOpenApiClient law;
+    @MockitoBean private KureRuntimeHttpClient kure;
+
+    @AfterEach
+    void noExternalClients() { verifyNoInteractions(openAi, law, kure); }
     @Autowired private MockMvc mockMvc;
     @Autowired private GuestSessionTokenService tokenService;
     @Autowired private GuestSessionRepository guestSessionRepository;
