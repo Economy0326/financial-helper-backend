@@ -336,6 +336,48 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         verifyNoInteractions(law, openAi);
     }
 
+    @Test
+    void syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload() throws Exception {
+        // Replace this test's synthetic source identity before review; no bank document is promoted to COMMON.
+        UUID chunkId = chunk.getId();
+        UUID documentId = chunk.getSourceDocument().getId();
+        UUID registryId = chunk.getSourceDocument().getSourceRegistry().getId();
+        String syntheticUrl = "https://synthetic.invalid/" + UUID.randomUUID();
+        jdbc.update("INSERT INTO official_source_domain (domain, organization_name, enabled) VALUES ('synthetic.invalid', '합성 기관', TRUE)");
+        jdbc.update("UPDATE source_registry SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ? WHERE id = ?", syntheticUrl, registryId);
+        jdbc.update("UPDATE source_document SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ?, resolved_url = ? WHERE id = ?", syntheticUrl, syntheticUrl, documentId);
+        entityManager.clear();
+        chunk = chunks.findById(chunkId).orElseThrow();
+        UUID review = reviewed("COMMON", null);
+        String raw = tokens.generateRawToken();
+        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        Consultation consultation = new Consultation(guest, NOW);
+        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
+        consultation.updateSituation("개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
+        consultation = consultations.saveAndFlush(consultation);
+        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
+        when(informationExplanation.select(any())).thenAnswer(call -> realSelector.select(call.getArgument(0)));
+        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
+                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(
+                        chunk.getId(), chunk.getBody(), List.of(), List.of()))));
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        String url = "/api/v1/consultations/" + consultation.getId() + "/information-report";
+        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision() + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
+                .andExpect(jsonPath("$.selectedEvidence[0].scopeKind").value("COMMON"))
+                .andExpect(jsonPath("$.snapshot.missingFacts[0]").value("INSTITUTION"))
+                .andExpect(jsonPath("$.snapshot.coverageGaps[0]").value("INSTITUTION_UNCONFIRMED"));
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        jdbc.update("UPDATE source_applicability_review SET review_status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture', revocation_reason = 'fixture' WHERE id = ?", review);
+        entityManager.clear();
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("STALE"))
+                .andExpect(jsonPath("$.selectedEvidence").isEmpty());
+        verifyNoInteractions(law);
+    }
+
     @ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"FACT", "DOCUMENT", "REVIEW", "GENERATION"})
     void httpReportDetectsActualDatabaseChanges(String change) throws Exception {
