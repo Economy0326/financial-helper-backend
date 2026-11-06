@@ -47,10 +47,23 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'com.microsoft.playwright:playwright:1.64.0'
 
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+// Test-only HTTP server for the isolated browser E2E harness. Never uses bootRun's local profile.
+tasks.register('browserE2eServer', JavaExec) {
+	group = 'verification'
+	description = 'Runs the isolated follow-up browser E2E backend'
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'com.financialhelper.e2e.FollowUpBrowserE2EHarness'
+	standardInput = System.in
+	environment 'SPRING_PROFILES_ACTIVE', 'browser-e2e'
+	environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+	dependsOn tasks.named('testClasses')
 }
