@@ -1,3 +1,4 @@
+param([switch]$IntakeOnly)
 $ErrorActionPreference = 'Stop'
 $backendDir = $PSScriptRoot
 $frontendDir = 'C:\Users\economy\Desktop\dev\financial-helper-frontend'
@@ -59,11 +60,16 @@ try {
     Write-Output "E2E container=$containerId name=$containerName label=$runId port=$port db=$databaseName user=$databaseUser tmpfs=verified"
     Push-Location $backendDir
     try {
-        $output = @('auth-browser', 'seed-card', 'card-browser', 'exit') | & .\gradlew.bat browserE2eServer --offline --no-daemon 2>&1
+        $commands = if ($IntakeOnly) { @('seed-card', 'intake-edges', 'exit') } else { @('auth-browser', 'seed-card', 'emergency-smoke', 'intake-edges', 'card-browser', 'exit') }
+        $output = $commands | & .\gradlew.bat browserE2eServer --offline --no-daemon 2>&1
         $code = $LASTEXITCODE
     } finally { Pop-Location }
-    $output | Where-Object { $_ -match 'E2E_STAGE_|AUTH_BROWSER_VERIFIED|BROWSER_E2E_READY|SYNTHETIC_CARD_FIXTURE_READY|CARD_BROWSER_HTTP_VERIFIED|FIXTURE_COMMAND_REJECTED|BUILD SUCCESSFUL|BUILD FAILED' } | ForEach-Object { Write-Output $_ }
-    if ($code -ne 0 -or -not ($output -match 'AUTH_BROWSER_VERIFIED') -or -not ($output -match 'SYNTHETIC_CARD_FIXTURE_READY') -or -not ($output -match '^CARD_BROWSER_HTTP_VERIFIED$') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Browser E2E failed or incomplete (Gradle exit $code)" }
+    $output | Where-Object { $_ -match 'E2E_STAGE_|AUTH_BROWSER_VERIFIED|BROWSER_E2E_READY|SYNTHETIC_CARD_FIXTURE_READY|CARD_BROWSER_HTTP_VERIFIED|FIXTURE_COMMAND_REJECTED|CSRF rejected request|BUILD SUCCESSFUL|BUILD FAILED' } | ForEach-Object { Write-Output $_ }
+    if ($IntakeOnly) {
+        if ($code -ne 0 -or -not ($output -match 'E2E_STAGE_CROSS_OWNER_VERIFIED') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Intake E2E failed or incomplete (Gradle exit $code)" }
+        return
+    }
+    if ($code -ne 0 -or -not ($output -match 'AUTH_BROWSER_VERIFIED') -or -not ($output -match 'E2E_STAGE_EMERGENCY_SMOKE_VERIFIED') -or -not ($output -match 'E2E_STAGE_INTAKE_EDGES_VERIFIED') -or -not ($output -match 'E2E_STAGE_CROSS_OWNER_VERIFIED') -or -not ($output -match 'E2E_STAGE_NETWORK_ERROR_VERIFIED') -or -not ($output -match 'E2E_STAGE_QUALIFIER_UI_VERIFIED') -or -not ($output -match 'E2E_STAGE_STALE_VERIFIED') -or -not ($output -match 'E2E_STAGE_EXPLICIT_CATEGORY_VERIFIED') -or -not ($output -match 'SYNTHETIC_CARD_FIXTURE_READY') -or -not ($output -match '^CARD_BROWSER_HTTP_VERIFIED$') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Browser E2E failed or incomplete (Gradle exit $code)" }
 } finally {
     if ($frontend -and -not $frontend.HasExited) { Stop-Process -Id $frontend.Id -ErrorAction SilentlyContinue }
     if ($containerId -and $containerId -match '^[a-f0-9]{64}$') {

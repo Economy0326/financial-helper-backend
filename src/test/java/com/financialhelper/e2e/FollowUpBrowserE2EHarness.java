@@ -252,6 +252,8 @@ public final class FollowUpBrowserE2EHarness {
                 switch (parts[0]) {
                     case "auth-browser" -> BrowserE2EAccountAuthFixture.verify(context, jdbc, guard);
                     case "seed-card" -> BrowserE2ECardFixture.seed(context, jdbc, guard);
+                    case "emergency-smoke" -> BrowserE2EEmergencySmoke.run(context, jdbc, guard);
+                    case "intake-edges" -> BrowserE2EIntakeEdges.run(context, jdbc, guard);
                     case "card-browser" -> BrowserE2ECardFlow.run(context, jdbc, guard);
                     case "overlap-account" -> overlapAccount(versions, guard);
                     case "supersede" -> {

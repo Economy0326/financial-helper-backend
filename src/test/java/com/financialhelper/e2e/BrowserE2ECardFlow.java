@@ -105,8 +105,24 @@ final class BrowserE2ECardFlow {
             var consultationId = java.util.UUID.fromString(prepared.get("consultationId").asText());
             Integer reports = jdbc.queryForObject("select count(*) from information_report where consultation_id = ?", Integer.class, consultationId);
             if (reports == null || reports < 1) throw new IllegalStateException("E2E_REPORT_NOT_PERSISTED");
+            Integer legacyReports = jdbc.queryForObject("select count(*) from consultation_report where consultation_id = ?", Integer.class, consultationId);
+            if (legacyReports == null || legacyReports != 0) throw new IllegalStateException("E2E_HISTORY_FIXTURE_HAS_ACTION_REPORT");
+            var history = bc.request().get("http://localhost:8080/api/v1/account/consultations?size=50");
+            if (history.status() != 200) throw new IllegalStateException("E2E_HISTORY_HTTP_FAILED");
+            var historyBody = JsonMapper.builder().build().readTree(history.body());
+            boolean listed = false;
+            for (var item : historyBody.get("content")) {
+                if (consultationId.toString().equals(item.get("consultationId").asText())) listed = true;
+            }
+            System.out.println("E2E_STAGE_INFO_ONLY_HISTORY_LISTED_" + listed);
             page.getByText("상세 출처와 조건 보기").first().click();
             if (!page.getByText("합성 카드 문서").first().isVisible() || !page.getByText("출처 신원: 확인되지 않음").first().isVisible()) throw new IllegalStateException("E2E_REPORT_SOURCE_MISSING");
+            var details = page.locator("details").first();
+            if (!details.getByText("E2E_SYNTHETIC_ 카드 분실 관련 합성 정보입니다.").first().isVisible()
+                    || !details.getByText("E2E_SYNTHETIC_ 카드 유형을 확인해야 합니다.").first().isVisible()
+                    || !details.getByText("E2E_SYNTHETIC_ 예외는 별도 확인이 필요합니다.").first().isVisible()
+                    || !page.getByText("공통 정보").first().isVisible()) throw new IllegalStateException("E2E_REPORT_QUALIFIER_UI_MISSING");
+            System.out.println("E2E_STAGE_QUALIFIER_UI_VERIFIED");
             page.setViewportSize(390, 844);
             Object overflow = page.evaluate("() => document.documentElement.scrollWidth > window.innerWidth");
             if (Boolean.TRUE.equals(overflow)) throw new IllegalStateException("E2E_MOBILE_OVERFLOW");
