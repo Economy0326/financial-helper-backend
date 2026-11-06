@@ -71,8 +71,9 @@ public interface ConsultationRepository
     @Query("""
             select consultation from Consultation consultation
             where consultation.account.id = :accountId
-              and exists (select report.id from ConsultationReport report where report.consultation.id = consultation.id)
-            order by consultation.updatedAt desc
+              and (exists (select report.id from ConsultationReport report where report.consultation.id = consultation.id)
+                or exists (select information.id from InformationReport information where information.consultation.id = consultation.id))
+            order by consultation.updatedAt desc, consultation.id desc
             """)
     Page<Consultation> findHistoryByAccountId(
             @Param("accountId") UUID accountId, Pageable pageable);

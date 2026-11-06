@@ -3,6 +3,8 @@ package com.financialhelper.ai.report;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 public interface ConsultationReportRepository
@@ -16,6 +18,8 @@ public interface ConsultationReportRepository
     );
 
     Optional<ConsultationReport> findFirstByConsultation_IdOrderByGeneratedAtDesc(UUID consultationId);
+
+    List<ConsultationReport> findByConsultation_IdInOrderByGeneratedAtDescIdDesc(Collection<UUID> consultationIds);
 
     Optional<ConsultationReport> findByConsultation_IdAndConsultation_Account_Id(
             UUID consultationId, UUID accountId);

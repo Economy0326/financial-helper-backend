@@ -1,6 +1,7 @@
 package com.financialhelper.account;
 
 import com.financialhelper.ai.report.ConsultationReport;
+import com.financialhelper.ai.information.InformationReport;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationCategory;
 import com.financialhelper.consultation.ConsultationStatus;
@@ -15,11 +16,18 @@ public record AccountConsultationHistoryItem(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         UUID reportId,
-        OffsetDateTime reportGeneratedAt
+        OffsetDateTime reportGeneratedAt,
+        boolean actionReportAvailable,
+        boolean informationReportAvailable,
+        UUID informationReportId,
+        OffsetDateTime informationReportGeneratedAt
 ) {
-    public static AccountConsultationHistoryItem from(Consultation consultation, ConsultationReport report) {
+    public static AccountConsultationHistoryItem from(Consultation consultation, ConsultationReport report,
+            InformationReport informationReport) {
         return new AccountConsultationHistoryItem(consultation.getId(), consultation.getCategory(), consultation.getStatus(),
                 consultation.getCreatedAt(), consultation.getUpdatedAt(), report == null ? null : report.getId(),
-                report == null ? null : report.getGeneratedAt());
+                report == null ? null : report.getGeneratedAt(), report != null, informationReport != null,
+                informationReport == null ? null : informationReport.getId(),
+                informationReport == null ? null : informationReport.getGeneratedAt());
     }
 }
