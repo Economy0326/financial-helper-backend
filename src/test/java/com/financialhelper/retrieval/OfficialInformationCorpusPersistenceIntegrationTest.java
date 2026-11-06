@@ -3,6 +3,11 @@ package com.financialhelper.retrieval;
 import com.financialhelper.ai.OpenAiStructuredClient;
 import com.financialhelper.ai.information.InformationExplanationService;
 import com.financialhelper.ai.information.InformationReportService;
+import com.financialhelper.ai.information.InformationExplanationAiResult;
+import com.financialhelper.ai.information.InformationExplanationValidator;
+import com.financialhelper.guest.GuestSessionCookie;
+import jakarta.servlet.http.Cookie;
+import jakarta.persistence.EntityManager;
 import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationCategory;
 import com.financialhelper.consultation.ConsultationRepository;
@@ -18,6 +23,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.json.JsonMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -36,9 +44,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** Real source, chunk, index and active-generation repositories; no remote clients. */
 @SpringBootTest
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Transactional
 class OfficialInformationCorpusPersistenceIntegrationTest {
@@ -59,6 +71,9 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     @Autowired private ConsultationRepository consultations;
     @Autowired private PersistentSearchContextRepository contexts;
     @Autowired private InformationReportService informationReports;
+    @Autowired private MockMvc mvc;
+    @Autowired private EntityManager entityManager;
+    @Autowired private JsonMapper jsonMapper;
     @MockitoBean private KureRuntimeHttpClient kure;
     @MockitoBean private SourceKeywordSearchService keyword;
     @MockitoBean private KoreanLawOpenApiClient law;
@@ -290,6 +305,85 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         assertThat(stale.status()).isEqualTo("STALE");
         assertThat(stale.selectedEvidence()).isEmpty();
         verifyNoInteractions(law, openAi);
+    }
+
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"FACT", "DOCUMENT", "REVIEW", "GENERATION"})
+    void httpReportDetectsActualDatabaseChanges(String change) throws Exception {
+        UUID review = reviewed("INSTITUTION_SPECIFIC", "㈜KB국민카드");
+        var config = chunk.getChunkConfiguration();
+        var document = chunk.getSourceDocument();
+        var condition = new SourceChunk(document, config, new SourceChunkData.Definition(
+                config.getConfigVersion(), "{}", 1, "신용카드", null, "제2조", "1", "page:2", 0, 4, "{}"), NOW);
+        var exception = new SourceChunk(document, config, new SourceChunkData.Definition(
+                config.getConfigVersion(), "{}", 2, "분실", null, "제3조", "1", "page:3", 5, 7, "{}"), NOW);
+        condition.approve(NOW); exception.approve(NOW);
+        condition = chunks.saveAndFlush(condition); exception = chunks.saveAndFlush(exception);
+        for (var related : List.of(condition, exception)) {
+            var indexing = indexings.saveAndFlush(new SourceChunkIndexing(related, generation, NOW));
+            indexing.markProcessing(NOW.plusSeconds(1)); indexing.markReady(NOW.plusSeconds(2), "{}");
+            indexings.saveAndFlush(indexing);
+        }
+        jdbc.update("INSERT INTO source_applicability_chunk (review_id, source_document_id, source_chunk_id, evidence_role) VALUES (?, ?, ?, 'CONDITION')", review, document.getId(), condition.getId());
+        jdbc.update("INSERT INTO source_applicability_chunk (review_id, source_document_id, source_chunk_id, evidence_role) VALUES (?, ?, ?, 'EXCEPTION')", review, document.getId(), exception.getId());
+        String raw = tokens.generateRawToken();
+        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        Consultation consultation = new Consultation(guest, NOW);
+        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
+        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
+        consultation = consultations.saveAndFlush(consultation);
+        UUID consultationId = consultation.getId();
+        long revision = consultation.getCaseInputRevision();
+        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
+        when(informationExplanation.select(any())).thenAnswer(invocation -> realSelector.select(invocation.getArgument(0)));
+        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
+                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(
+                        chunk.getId(), chunk.getBody(), List.of(condition.getId()), List.of(exception.getId())))));
+        Cookie cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        String url = "/api/v1/consultations/" + consultationId + "/information-report";
+        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":" + revision + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
+                .andExpect(jsonPath("$.selectedEvidence[0].scopeKind").value("INSTITUTION_SPECIFIC"))
+                .andExpect(jsonPath("$.explanations[0].conditions[0].locator").value("page:2"))
+                .andExpect(jsonPath("$.explanations[0].exceptions[0].locator").value("page:3"));
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        jdbc.update("UPDATE information_report SET explanations_json = NULL WHERE consultation_id = ?", consultationId);
+        entityManager.clear();
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.explanations[0].mode").value("LEGACY_EXTRACTIVE"));
+        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":" + revision + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, consultationId)).isEqualTo(2);
+        entityManager.flush();
+        switch (change) {
+            case "FACT" -> jdbc.update("UPDATE consultation SET case_input_revision = case_input_revision + 1 WHERE id = ?", consultationId);
+            case "DOCUMENT" -> jdbc.update("UPDATE source_document SET document_version = document_version + 1 WHERE id = ?", chunk.getSourceDocument().getId());
+            case "REVIEW" -> jdbc.update("UPDATE source_applicability_review SET review_status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture', revocation_reason = 'fixture' WHERE id = ?", review);
+            case "GENERATION" -> {
+                var replacement = generations.saveAndFlush(new RetrievalGeneration(
+                        new RetrievalGenerationData.Definition("replacement-" + UUID.randomUUID(),
+                                "representation-v1", "model", "revision-1", "tokenizer", "revision-1",
+                                "{}", "{}", "{}"), NOW));
+                replacement.markProcessing(NOW.plusSeconds(1));
+                var replacementIndex = indexings.saveAndFlush(new SourceChunkIndexing(chunk, replacement, NOW));
+                replacementIndex.markProcessing(NOW.plusSeconds(1));
+                replacementIndex.markReady(NOW.plusSeconds(2), "{}");
+                indexings.saveAndFlush(replacementIndex);
+                replacement.markReady(1, NOW.plusSeconds(2));
+                generations.saveAndFlush(replacement);
+                active.activate(replacement.getId());
+            }
+            default -> throw new IllegalArgumentException(change);
+        }
+        entityManager.clear();
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("STALE"))
+                .andExpect(jsonPath("$.selectedEvidence").isEmpty())
+                .andExpect(jsonPath("$.explanations").isEmpty());
+        verifyNoInteractions(law);
     }
 
     @Test
