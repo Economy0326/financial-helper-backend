@@ -337,6 +337,40 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     }
 
     @Test
+    void naturalIntakeCanReachReviewedSyntheticInformationReport() throws Exception {
+        UUID chunkId = chunk.getId(), documentId = chunk.getSourceDocument().getId();
+        UUID registryId = chunk.getSourceDocument().getSourceRegistry().getId();
+        String syntheticUrl = "https://synthetic.invalid/" + UUID.randomUUID();
+        jdbc.update("INSERT INTO official_source_domain (domain, organization_name, enabled) VALUES ('synthetic.invalid', '합성 기관', TRUE)");
+        jdbc.update("UPDATE source_registry SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ? WHERE id = ?", syntheticUrl, registryId);
+        jdbc.update("UPDATE source_document SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ?, resolved_url = ? WHERE id = ?", syntheticUrl, syntheticUrl, documentId);
+        entityManager.clear(); chunk = chunks.findById(chunkId).orElseThrow();
+        reviewed("COMMON", null);
+        String raw = tokens.generateRawToken();
+        var guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        var consultation = consultations.saveAndFlush(new Consultation(guest, NOW));
+        String base = "/api/v1/consultations/" + consultation.getId();
+        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        mvc.perform(put(base + "/information-intake").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"situationText\":\"개인 신용카드 분실 2026-01-02\",\"expectedCaseInputRevision\":0}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SCENARIO_CONFIRMATION_REQUIRED"));
+        mvc.perform(post(base + "/information-intake/confirm").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"scenario\":\"CARD_LOSS_UNAUTHORIZED_USE\",\"expectedCaseInputRevision\":1}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.caseInputRevision").value(2));
+        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
+        when(informationExplanation.select(any())).thenAnswer(call -> realSelector.select(call.getArgument(0)));
+        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
+                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(chunk.getId(), chunk.getBody(), List.of(), List.of()))));
+        mvc.perform(post(base + "/information-report/prepare").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":2}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
+                .andExpect(jsonPath("$.evidenceProvenance." + chunk.getId()).value("UNKNOWN"));
+        mvc.perform(get(base + "/information-report").cookie(cookie))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        verifyNoInteractions(law);
+    }
+
+    @Test
     void syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload() throws Exception {
         // Replace this test's synthetic source identity before review; no bank document is promoted to COMMON.
         UUID chunkId = chunk.getId();

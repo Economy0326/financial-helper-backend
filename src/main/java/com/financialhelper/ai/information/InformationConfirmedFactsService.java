@@ -47,7 +47,7 @@ public class InformationConfirmedFactsService {
                 consultation.getCategory().name(), null, "USER_SELECTED", null));
         if (scenario == ConsultationScenario.UNKNOWN) missing.add("SCENARIO");
         else facts.add(new ConfirmedCaseSnapshotData.Fact("SCENARIO", "scenario",
-                scenario.name(), null, "SYSTEM_RESOLVED_FROM_EXPLICIT_INPUT", null));
+                scenario.name(), null, consultation.isInformationIntake() ? "USER_SELECTED" : "SYSTEM_RESOLVED_FROM_EXPLICIT_INPUT", null));
         if (consultation.getSituationText() == null || consultation.getSituationText().isBlank()) {
             missing.add("SITUATION");
         } else {
