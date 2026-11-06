@@ -30,6 +30,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -53,6 +57,7 @@ class InformationReportApiIntegrationTest {
     @Autowired GuestSessionRepository guests;
     @Autowired ConsultationRepository consultations;
     @Autowired InformationReportRepository reports;
+    @Autowired JdbcTemplate jdbc;
     @MockitoBean ConsultationOfficialInformationService search;
     @MockitoBean InformationEvidenceSnapshotService snapshots;
     @MockitoBean InformationExplanationService explanation;
@@ -132,6 +137,60 @@ class InformationReportApiIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("STALE"))
                 .andExpect(jsonPath("$.selectedEvidence").isEmpty())
                 .andExpect(jsonPath("$.explanations").isEmpty());
+    }
+
+    @Test
+    void concurrentRequestsCommitDistinctOrderedReports() throws Exception {
+        Fixture owner = fixture();
+        stubReady(owner);
+        CountDownLatch reached = new CountDownLatch(2);
+        when(explanation.select(any())).thenAnswer(call -> {
+            reached.countDown();
+            if (!reached.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("request barrier timed out");
+            return ((InformationEvidenceSnapshot) call.getArgument(0)).evidence();
+        });
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var one = executor.submit(() -> mvc.perform(post(URL + "/prepare", owner.id()).with(csrf())
+                    .cookie(owner.cookie()).contentType("application/json").content(body(owner.revision())))
+                    .andExpect(status().isOk()).andReturn());
+            var two = executor.submit(() -> mvc.perform(post(URL + "/prepare", owner.id()).with(csrf())
+                    .cookie(owner.cookie()).contentType("application/json").content(body(owner.revision())))
+                    .andExpect(status().isOk()).andReturn());
+            one.get(30, TimeUnit.SECONDS); two.get(30, TimeUnit.SECONDS);
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, owner.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(DISTINCT generated_at) FROM information_report WHERE consultation_id = ?", Integer.class, owner.id())).isEqualTo(2);
+        var latest = reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(owner.id()).orElseThrow();
+        assertThat(latest.getCaseInputRevision()).isEqualTo(owner.revision());
+        mvc.perform(get(URL, owner.id()).cookie(owner.cookie()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        jdbc.update("UPDATE information_report SET generated_at = TIMESTAMPTZ '2026-01-01 00:00:00+00' WHERE consultation_id = ?", owner.id());
+        UUID expected = jdbc.queryForObject("SELECT id FROM information_report WHERE consultation_id = ? ORDER BY generated_at DESC, id DESC LIMIT 1", UUID.class, owner.id());
+        assertThat(reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(owner.id()).orElseThrow().getId()).isEqualTo(expected);
+    }
+
+    @Test
+    void insertFailureRollsBackOnlyNewReport() throws Exception {
+        Fixture owner = fixture();
+        stubReady(owner);
+        mvc.perform(post(URL + "/prepare", owner.id()).with(csrf()).cookie(owner.cookie())
+                .contentType("application/json").content(body(owner.revision()))).andExpect(status().isOk());
+        jdbc.execute("CREATE FUNCTION test_report_insert_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic insert failure'; END $$");
+        jdbc.execute("CREATE TRIGGER test_report_insert_failure BEFORE INSERT ON information_report FOR EACH ROW EXECUTE FUNCTION test_report_insert_failure()");
+        try {
+            mvc.perform(post(URL + "/prepare", owner.id()).with(csrf()).cookie(owner.cookie())
+                            .contentType("application/json").content(body(owner.revision())))
+                    .andExpect(status().is5xxServerError());
+        } finally {
+            jdbc.execute("DROP TRIGGER test_report_insert_failure ON information_report");
+            jdbc.execute("DROP FUNCTION test_report_insert_failure()");
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, owner.id())).isEqualTo(1);
+        mvc.perform(get(URL, owner.id()).cookie(owner.cookie()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        mvc.perform(post(URL + "/prepare", owner.id()).with(csrf()).cookie(owner.cookie())
+                .contentType("application/json").content(body(owner.revision()))).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, owner.id())).isEqualTo(2);
     }
 
     private void stubReady(Fixture fixture) {

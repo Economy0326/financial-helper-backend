@@ -10,6 +10,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -44,11 +45,17 @@ public class InformationReportPersistenceService {
         if (!expected.equals(current) || !current.evidence().containsAll(selected)) {
             throw new IllegalStateException("information evidence changed before save");
         }
+        // The consultation row lock serializes writers. PostgreSQL stores timestamps at microsecond precision.
+        OffsetDateTime generatedAt = OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
+        var previous = reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(id);
+        if (previous.isPresent() && !generatedAt.isAfter(previous.get().getGeneratedAt())) {
+            generatedAt = previous.get().getGeneratedAt().plus(1, ChronoUnit.MICROS);
+        }
         try {
             return reports.saveAndFlush(new InformationReport(consultation, current,
                     mapper.writeValueAsString(candidates), mapper.writeValueAsString(current),
                     mapper.writeValueAsString(selected), mapper.writeValueAsString(explanations),
-                    OffsetDateTime.now(ZoneOffset.UTC)));
+                    generatedAt));
         } catch (JacksonException exception) {
             throw new IllegalStateException("information report could not be serialized");
         }
@@ -60,6 +67,6 @@ public class InformationReportPersistenceService {
         if (consultations.findByIdAndGuestSession_Id(id, session.getId()).isEmpty()) {
             throw new ConsultationNotFoundException();
         }
-        return reports.findFirstByConsultation_IdOrderByGeneratedAtDesc(id);
+        return reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(id);
     }
 }

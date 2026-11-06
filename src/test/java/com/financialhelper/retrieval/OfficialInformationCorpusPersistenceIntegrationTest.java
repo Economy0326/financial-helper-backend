@@ -307,6 +307,35 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         verifyNoInteractions(law, openAi);
     }
 
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void committedHttpReportBecomesStaleAfterSeparatelyCommittedFactChange() throws Exception {
+        reviewed("COMMON", null);
+        String raw = tokens.generateRawToken();
+        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        Consultation consultation = new Consultation(guest, NOW);
+        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
+        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
+        consultation = consultations.saveAndFlush(consultation);
+        UUID consultationId = consultation.getId();
+        when(informationExplanation.select(any())).thenAnswer(call ->
+                ((com.financialhelper.ai.information.InformationEvidenceSnapshot) call.getArgument(0)).evidence());
+        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        String url = "/api/v1/consultations/" + consultationId + "/information-report";
+        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision() + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, consultationId)).isEqualTo(1);
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+        jdbc.update("UPDATE consultation SET case_input_revision = case_input_revision + 1 WHERE id = ?", consultationId);
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("STALE"))
+                .andExpect(jsonPath("$.selectedEvidence").isEmpty())
+                .andExpect(jsonPath("$.explanations").isEmpty());
+        verifyNoInteractions(law, openAi);
+    }
+
     @ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"FACT", "DOCUMENT", "REVIEW", "GENERATION"})
     void httpReportDetectsActualDatabaseChanges(String change) throws Exception {

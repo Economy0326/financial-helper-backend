@@ -16,7 +16,7 @@ public class IsolatedDatabaseInitializer implements ApplicationContextInitialize
         context.addBeanFactoryPostProcessor(factory -> verify(context.getEnvironment()));
     }
 
-    static void verify(Environment env) {
+    public static void verify(Environment env) {
         try {
             String run = System.getenv("FH_TEST_RUN_ID");
             String id = System.getenv("FH_TEST_CONTAINER_ID");

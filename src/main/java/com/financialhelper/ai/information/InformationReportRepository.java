@@ -6,4 +6,5 @@ import java.util.UUID;
 
 public interface InformationReportRepository extends JpaRepository<InformationReport, UUID> {
     Optional<InformationReport> findFirstByConsultation_IdOrderByGeneratedAtDesc(UUID consultationId);
+    Optional<InformationReport> findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(UUID consultationId);
 }
