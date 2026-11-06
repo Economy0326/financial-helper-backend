@@ -10,6 +10,20 @@ $containerId = $null
 $frontend = $null
 $tempOut = [System.IO.Path]::GetTempFileName()
 $tempErr = [System.IO.Path]::GetTempFileName()
+function Get-E2EContainerIdentity([string]$id) {
+    $name = & docker inspect --format '{{.Name}}' $id 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $name) { throw 'Container name inspection failed' }
+    $labelsJson = & docker inspect --format '{{json .Config.Labels}}' $id 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $labelsJson) { throw 'Container label inspection failed' }
+    try { $labels = $labelsJson | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'Container label JSON is invalid' }
+    if ($null -eq $labels) { throw 'Container labels are missing' }
+    $labelProperty = $labels.PSObject.Properties['financial-helper.e2e.run']
+    if ($null -eq $labelProperty -or [string]::IsNullOrWhiteSpace($labelProperty.Value)) {
+        throw 'E2E container label is missing'
+    }
+    return @{ Name = ([string]$name).Trim(); Label = [string]$labelProperty.Value }
+}
 try {
     if (-not (Test-Path -LiteralPath (Join-Path $frontendDir 'node_modules\next\dist\bin\next'))) { throw 'Frontend Next.js dependencies unavailable' }
     foreach ($port in @(3000, 8080)) {
@@ -23,11 +37,11 @@ try {
     $env:POSTGRES_PASSWORD = [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')
     $containerId = (& docker run -d --pull=never --name $containerName --label "financial-helper.e2e.run=$runId" --tmpfs '/var/lib/postgresql/data:rw,nosuid,size=256m' -p "127.0.0.1:${port}:5432" -e "POSTGRES_DB=$databaseName" -e "POSTGRES_USER=$databaseUser" -e POSTGRES_PASSWORD postgres:16-alpine).Trim()
     if ($LASTEXITCODE -ne 0 -or $containerId -notmatch '^[a-f0-9]{64}$') { throw 'Container creation failed' }
-    $name = (& docker inspect --format '{{.Name}}' $containerId).Trim()
-    $label = (& docker inspect --format '{{index .Config.Labels "financial-helper.e2e.run"}}' $containerId).Trim()
+    $identity = Get-E2EContainerIdentity $containerId
     $mapped = (& docker port $containerId 5432/tcp).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Container port inspection failed' }
     $mount = & docker exec $containerId cat /proc/mounts
-    if ($name -ne "/$containerName" -or $label -ne $runId -or $mapped -ne "127.0.0.1:$port" -or -not ($mount -match '^\S+ /var/lib/postgresql/data tmpfs ')) { throw 'Container isolation verification failed' }
+    if ($LASTEXITCODE -ne 0 -or $identity.Name -ne "/$containerName" -or $identity.Label -ne $runId -or $mapped -ne "127.0.0.1:$port" -or -not ($mount -match '^\S+ /var/lib/postgresql/data tmpfs ')) { throw 'Container isolation verification failed' }
     $ready = $false
     for ($i = 0; $i -lt 60; $i++) {
         & docker exec $containerId pg_isready -U $databaseUser -d $databaseName *> $null
@@ -76,12 +90,18 @@ try {
     if ($code -ne 0 -or -not ($output -match 'AUTH_BROWSER_VERIFIED') -or -not ($output -match 'E2E_STAGE_EMERGENCY_SMOKE_VERIFIED') -or -not ($output -match 'E2E_STAGE_INTAKE_EDGES_VERIFIED') -or -not ($output -match 'E2E_STAGE_CROSS_OWNER_VERIFIED') -or -not ($output -match 'E2E_STAGE_NETWORK_ERROR_VERIFIED') -or -not ($output -match 'E2E_STAGE_QUALIFIER_UI_VERIFIED') -or -not ($output -match 'E2E_STAGE_STALE_VERIFIED') -or -not ($output -match 'E2E_STAGE_EXPLICIT_CATEGORY_VERIFIED') -or -not ($output -match 'E2E_STAGE_ACTION_REPORT_RELOADED') -or -not ($output -match 'SYNTHETIC_CARD_FIXTURE_READY') -or -not ($output -match '^CARD_BROWSER_HTTP_VERIFIED$') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Browser E2E failed or incomplete (Gradle exit $code)" }
 } finally {
     if ($frontend -and -not $frontend.HasExited) { Stop-Process -Id $frontend.Id -ErrorAction SilentlyContinue }
+    $cleanupFailure = $null
     if ($containerId -and $containerId -match '^[a-f0-9]{64}$') {
-        $name = (& docker inspect --format '{{.Name}}' $containerId 2>$null).Trim()
-        $label = (& docker inspect --format '{{index .Config.Labels "financial-helper.e2e.run"}}' $containerId 2>$null).Trim()
-        if ($name -eq "/$containerName" -and $label -eq $runId) { & docker rm -f $containerId | Out-Null; Write-Output "E2E_CONTAINER_REMOVED $containerId" }
-        else { Write-Warning "Container identity mismatch; not removed: $containerId" }
+        try {
+            $identity = Get-E2EContainerIdentity $containerId
+            if ($identity.Name -eq "/$containerName" -and $identity.Label -eq $runId) {
+                & docker rm -f $containerId | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw 'E2E container removal failed' }
+                Write-Output "E2E_CONTAINER_REMOVED $containerId"
+            } else { throw 'Container identity mismatch; not removed' }
+        } catch { $cleanupFailure = "E2E container cleanup failed; inspect ID $containerId before removal" }
     }
     Remove-Item -LiteralPath $tempOut, $tempErr -ErrorAction SilentlyContinue
     Remove-Item Env:POSTGRES_PASSWORD, Env:E2E_DB_PASSWORD -ErrorAction SilentlyContinue
+    if ($cleanupFailure) { throw $cleanupFailure }
 }
