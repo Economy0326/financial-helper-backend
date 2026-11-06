@@ -255,6 +255,8 @@ public final class FollowUpBrowserE2EHarness {
                     case "emergency-smoke" -> BrowserE2EEmergencySmoke.run(context, jdbc, guard);
                     case "intake-edges" -> BrowserE2EIntakeEdges.run(context, jdbc, guard);
                     case "card-browser" -> BrowserE2ECardFlow.run(context, jdbc, guard);
+                    case "seed-action" -> BrowserE2EActionFixture.seed(context, jdbc, guard);
+                    case "action-smoke" -> BrowserE2EActionSmoke.run(context, jdbc, guard);
                     case "overlap-account" -> overlapAccount(versions, guard);
                     case "supersede" -> {
                         if (parts.length != 3) throw new IllegalArgumentException("Two IDs required");
