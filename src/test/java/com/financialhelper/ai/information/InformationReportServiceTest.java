@@ -21,10 +21,11 @@ class InformationReportServiceTest {
     private final InformationConfirmedFactsService confirmed = mock(InformationConfirmedFactsService.class);
     private final InformationEvidenceSnapshotService snapshots = mock(InformationEvidenceSnapshotService.class);
     private final InformationExplanationService ai = mock(InformationExplanationService.class);
+    private final InformationExplanationComposer composer = new InformationExplanationComposer(ai);
     private final InformationReportPersistenceService persistence = mock(InformationReportPersistenceService.class);
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final InformationReportService service = new InformationReportService(
-            search, confirmed, snapshots, ai, persistence, mapper);
+            search, confirmed, snapshots, composer, persistence, mapper);
     private final UUID id = UUID.randomUUID();
 
     @Test
@@ -46,7 +47,7 @@ class InformationReportServiceTest {
     }
 
     @Test
-    void aiFailureDoesNotPersistAReport() {
+    void aiFailureFallsBackToReviewedExtractiveEvidence() {
         var facts = facts();
         var found = response("FOUND");
         var snapshot = new InformationEvidenceSnapshot(id, 2, 3, "CARD_LOSS_UNAUTHORIZED_USE",
@@ -56,9 +57,12 @@ class InformationReportServiceTest {
         when(search.searchUsingConfirmed(any(), any(), any(), any())).thenReturn(found);
         when(snapshots.assemble(id, "session", found, facts)).thenReturn(snapshot);
         when(ai.select(snapshot)).thenThrow(new com.financialhelper.ai.AiProviderException("synthetic outage"));
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.prepare(id, "session", 2))
-                .isInstanceOf(com.financialhelper.ai.AiProviderException.class);
-        verifyNoInteractions(persistence);
+        var saved = mock(InformationReport.class);
+        when(persistence.save(any(), any(), any(), any(), any(), any(), any())).thenReturn(saved);
+        var result = service.prepare(id, "session", 2);
+        assertThat(result.selectedEvidence()).containsExactly(snapshot.evidence().getFirst());
+        assertThat(result.explanations().getFirst().mode()).isEqualTo("EXTRACTIVE_FALLBACK");
+        assertThat(result.explanations().getFirst().easyText()).contains("원문 근거");
     }
 
     @Test
@@ -112,6 +116,28 @@ class InformationReportServiceTest {
         assertThat(result.status()).isEqualTo("STALE");
         assertThat(result.snapshot()).isNull();
         assertThat(result.selectedEvidence()).isEmpty();
+    }
+
+    @Test
+    void alteredStoredExplanationIsNeverReexposed() throws Exception {
+        var row = mock(InformationReport.class);
+        var evidence = evidence();
+        var old = new InformationEvidenceSnapshot(id, 2, 3, "CARD_LOSS_UNAUTHORIZED_USE",
+                UUID.randomUUID(), List.of(), List.of(), List.of(), List.of(evidence),
+                "CURRENT_READY_SOURCE_AND_HASH", "V38_SCOPE_REVIEWED", "NOT_DETERMINED");
+        var facts = facts();
+        when(persistence.latest(id, "session")).thenReturn(Optional.of(row));
+        when(row.getSnapshotJson()).thenReturn(mapper.writeValueAsString(old));
+        when(row.getCandidatesJson()).thenReturn(mapper.writeValueAsString(response("FOUND")));
+        when(row.getSelectedEvidenceJson()).thenReturn(mapper.writeValueAsString(List.of(evidence)));
+        when(row.getExplanationsJson()).thenReturn(mapper.writeValueAsString(List.of(
+                new InformationExplanation(evidence.supportChunkId(), "AI_SELECTED_TEMPLATE",
+                        "근거에 없는 보상 확정", List.of(), List.of()))));
+        when(confirmed.current(id, "session")).thenReturn(facts);
+        when(snapshots.assemble(any(), any(), any(), any())).thenReturn(old);
+        var result = service.get(id, "session");
+        assertThat(result.status()).isEqualTo("STALE");
+        assertThat(result.explanations()).isEmpty();
     }
 
     private ConsultationOfficialInformationResponse response(String status) {

@@ -94,10 +94,13 @@ class InformationReportApiIntegrationTest {
         stubReady(owner);
         mvc.perform(post(URL + "/prepare", owner.id()).with(csrf()).cookie(owner.cookie())
                         .contentType("application/json").content(body(owner.revision())))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
+                .andExpect(jsonPath("$.explanations[0].mode").value("AI_SELECTED_TEMPLATE"));
         assertThat(reports.findFirstByConsultation_IdOrderByGeneratedAtDesc(owner.id())).isPresent();
         mvc.perform(get(URL, owner.id()).cookie(owner.cookie()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
+                .andExpect(jsonPath("$.explanations[0].easyText").value(
+                        "공식 자료에서 확인한 내용(공통 정보): 원문 근거 이 자료가 내 상황에 적용되는지는 아직 확인되지 않았습니다."));
     }
 
     private void stubReady(Fixture fixture) {

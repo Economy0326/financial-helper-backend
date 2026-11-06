@@ -35,7 +35,8 @@ public class InformationReportPersistenceService {
     public InformationReport save(UUID id, String token, InformationEvidenceSnapshot expected,
             com.financialhelper.retrieval.ConsultationOfficialInformationResponse candidates,
             com.financialhelper.retrieval.ConfirmedCaseSnapshotData confirmed,
-            List<InformationEvidenceSnapshot.Evidence> selected) {
+            List<InformationEvidenceSnapshot.Evidence> selected,
+            List<InformationExplanation> explanations) {
         var session = sessions.requireValidSession(token);
         var consultation = consultations.findForUpdateByIdAndGuestSession_Id(id, session.getId())
                 .orElseThrow(ConsultationNotFoundException::new);
@@ -46,7 +47,7 @@ public class InformationReportPersistenceService {
         try {
             return reports.saveAndFlush(new InformationReport(consultation, current,
                     mapper.writeValueAsString(candidates), mapper.writeValueAsString(current),
-                    mapper.writeValueAsString(selected),
+                    mapper.writeValueAsString(selected), mapper.writeValueAsString(explanations),
                     OffsetDateTime.now(ZoneOffset.UTC)));
         } catch (JacksonException exception) {
             throw new IllegalStateException("information report could not be serialized");

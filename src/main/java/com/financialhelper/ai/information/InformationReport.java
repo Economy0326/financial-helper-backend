@@ -25,12 +25,14 @@ public class InformationReport {
     @Column(name = "candidates_json", nullable = false, columnDefinition = "TEXT") private String candidatesJson;
     @Column(name = "snapshot_json", nullable = false, columnDefinition = "TEXT") private String snapshotJson;
     @Column(name = "selected_evidence_json", nullable = false, columnDefinition = "TEXT") private String selectedEvidenceJson;
+    @Column(name = "explanations_json", columnDefinition = "TEXT") private String explanationsJson;
     @Column(name = "generated_at", nullable = false) private OffsetDateTime generatedAt;
 
     protected InformationReport() {}
 
     public InformationReport(Consultation consultation, InformationEvidenceSnapshot snapshot,
-            String candidatesJson, String snapshotJson, String selectedEvidenceJson, OffsetDateTime generatedAt) {
+            String candidatesJson, String snapshotJson, String selectedEvidenceJson,
+            String explanationsJson, OffsetDateTime generatedAt) {
         this.id = UUID.randomUUID();
         this.consultation = consultation;
         this.caseInputRevision = snapshot.caseInputRevision();
@@ -39,6 +41,7 @@ public class InformationReport {
         this.candidatesJson = candidatesJson;
         this.snapshotJson = snapshotJson;
         this.selectedEvidenceJson = selectedEvidenceJson;
+        this.explanationsJson = explanationsJson;
         this.generatedAt = generatedAt;
     }
 
@@ -50,5 +53,6 @@ public class InformationReport {
     public String getCandidatesJson() { return candidatesJson; }
     public String getSnapshotJson() { return snapshotJson; }
     public String getSelectedEvidenceJson() { return selectedEvidenceJson; }
+    public String getExplanationsJson() { return explanationsJson; }
     public OffsetDateTime getGeneratedAt() { return generatedAt; }
 }

@@ -18,13 +18,13 @@ public class InformationReportService {
     private final ConsultationOfficialInformationService search;
     private final InformationConfirmedFactsService confirmed;
     private final InformationEvidenceSnapshotService snapshots;
-    private final InformationExplanationService explanation;
+    private final InformationExplanationComposer explanation;
     private final InformationReportPersistenceService persistence;
     private final JsonMapper mapper;
 
     public InformationReportService(ConsultationOfficialInformationService search,
             InformationConfirmedFactsService confirmed, InformationEvidenceSnapshotService snapshots,
-            InformationExplanationService explanation, InformationReportPersistenceService persistence,
+            InformationExplanationComposer explanation, InformationReportPersistenceService persistence,
             JsonMapper mapper) {
         this.search = search;
         this.confirmed = confirmed;
@@ -46,12 +46,13 @@ public class InformationReportService {
         InformationEvidenceSnapshot snapshot = snapshots.assemble(id, token, found, currentFacts);
         if (snapshot.evidence().isEmpty()) {
             return new InformationReportResponse(id, "INSUFFICIENT_EVIDENCE", "NO_APPROVED_EVIDENCE",
-                    null, snapshot, List.of());
+                    null, snapshot, List.of(), List.of());
         }
-        List<InformationEvidenceSnapshot.Evidence> selected = explanation.select(snapshot);
+        var result = explanation.compose(snapshot);
         // Revalidation and the insert occur in one short DB transaction, after search and AI finish.
-        InformationReport saved = persistence.save(id, token, snapshot, found, currentFacts, selected);
-        return response(saved, snapshot, selected);
+        InformationReport saved = persistence.save(id, token, snapshot, found, currentFacts,
+                result.selected(), result.explanations());
+        return response(saved, snapshot, result.selected(), result.explanations());
     }
 
     public InformationReportResponse get(UUID id, String token) {
@@ -65,26 +66,40 @@ public class InformationReportService {
             var candidates = mapper.readValue(row.getCandidatesJson(), ConsultationOfficialInformationResponse.class);
             var selected = Arrays.asList(mapper.readValue(row.getSelectedEvidenceJson(),
                     InformationEvidenceSnapshot.Evidence[].class));
+            if (selected.isEmpty()) return unavailable(id, "STALE", "EVIDENCE_CHANGED");
+            List<InformationExplanation> explanations;
+            if (row.getExplanationsJson() == null) {
+                // Reports created before V40 remain readable, with a verified extractive presentation.
+                explanations = explanation.render(selected, "LEGACY_EXTRACTIVE");
+            } else {
+                explanations = Arrays.asList(mapper.readValue(row.getExplanationsJson(),
+                        InformationExplanation[].class));
+                if (explanations.size() != selected.size() || explanations.isEmpty()
+                        || !explanations.equals(explanation.render(selected, explanations.getFirst().mode()))) {
+                    return unavailable(id, "STALE", "EVIDENCE_CHANGED");
+                }
+            }
             var currentFacts = confirmed.current(id, token);
             var current = snapshots.assemble(id, token, candidates, currentFacts);
             if (!old.equals(current) || !current.evidence().containsAll(selected)) {
                 return unavailable(id, "STALE", "EVIDENCE_CHANGED");
             }
-            return response(row, old, selected);
+            return response(row, old, selected, explanations);
         } catch (JacksonException | IllegalStateException exception) {
             return unavailable(id, "STALE", "EVIDENCE_CHANGED");
         }
     }
 
     private static InformationReportResponse response(InformationReport row,
-            InformationEvidenceSnapshot snapshot, List<InformationEvidenceSnapshot.Evidence> selected) {
+            InformationEvidenceSnapshot snapshot, List<InformationEvidenceSnapshot.Evidence> selected,
+            List<InformationExplanation> explanations) {
         String status = snapshot.evidence().isEmpty() ? "INSUFFICIENT_EVIDENCE" : "READY_CANDIDATES";
         return new InformationReportResponse(snapshot.consultationId(), status,
                 snapshot.evidence().isEmpty() ? "NO_APPROVED_EVIDENCE" : "DOCUMENT_CANDIDATE_ONLY",
-                row.getGeneratedAt(), snapshot, selected);
+                row.getGeneratedAt(), snapshot, selected, explanations);
     }
 
     private static InformationReportResponse unavailable(UUID id, String status, String reason) {
-        return new InformationReportResponse(id, status, reason, null, null, List.of());
+        return new InformationReportResponse(id, status, reason, null, null, List.of(), List.of());
     }
 }
