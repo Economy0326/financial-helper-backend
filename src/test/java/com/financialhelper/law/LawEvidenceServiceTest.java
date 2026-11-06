@@ -70,6 +70,23 @@ class LawEvidenceServiceTest {
     }
 
     @Test
+    void accountLawUsesIncidentDateVersionAndKeepsArticleLocator() {
+        var earlier = version("전자금융거래법", "ACCOUNT_FIXTURE", "OLD",
+                LocalDate.of(2024, 1, 1), LocalDate.of(2024, 2, 1), false);
+        var later = version("전자금융거래법", "ACCOUNT_FIXTURE", "NEW",
+                LocalDate.of(2026, 1, 1), LocalDate.of(2026, 2, 1), true);
+        when(client.searchLaw("전자금융거래법")).thenReturn(List.of(later, earlier));
+        when(client.getLawText(earlier, "제10조")).thenReturn(document(earlier, "제10조"));
+
+        var evidence = service.lookup(new LawEvidenceRequest("전자금융거래법", "제10조",
+                LocalDate.of(2025, 1, 1)));
+
+        assertThat(evidence.mst()).isEqualTo("OLD");
+        assertThat(evidence.articleLocator()).isEqualTo("제10조");
+        assertThat(evidence.validationStatus()).isEqualTo("VALIDATED_PENDING_REVIEW");
+    }
+
+    @Test
     void followsSameLawIdentifierAcrossAnOfficialLawNameChange() {
         KoreanLawOpenApiClient.LawVersion formerName = version(
                 "전기통신금융사기 피해 방지 및 피해금 환급에 관한 특별법", "011359", "283199",

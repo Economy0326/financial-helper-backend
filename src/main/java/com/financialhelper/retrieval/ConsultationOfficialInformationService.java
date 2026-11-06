@@ -67,6 +67,27 @@ public class ConsultationOfficialInformationService {
         // capture() may reconcile question attribution and write a revisioned snapshot.
         // It completes its own short transaction before any remote retrieval begins.
         ConfirmedCaseSnapshotData snapshot = snapshotService.capture(consultationId);
+        return searchWithSnapshot(consultationId, session, request, consultation, snapshot);
+    }
+
+    /** Information reports supply a separately captured explicit-fact view. */
+    public ConsultationOfficialInformationResponse searchUsingConfirmed(
+            UUID consultationId, String rawToken, ConsultationOfficialInformationRequest request,
+            ConfirmedCaseSnapshotData confirmed) {
+        GuestSession session = guestSessionService.requireValidSession(rawToken);
+        Consultation consultation = owned(consultationId, session);
+        if (!revisionsMatch(consultation, request)) return stale(consultationId, consultation);
+        if (confirmed == null || !consultationId.equals(confirmed.consultationId())
+                || confirmed.caseInputRevision() != consultation.getCaseInputRevision()
+                || confirmed.followUpAnswerRevision() != consultation.getFollowUpAnswerRevision()) {
+            return stale(consultationId, consultation);
+        }
+        return searchWithSnapshot(consultationId, session, request, consultation, confirmed);
+    }
+
+    private ConsultationOfficialInformationResponse searchWithSnapshot(
+            UUID consultationId, GuestSession session, ConsultationOfficialInformationRequest request,
+            Consultation consultation, ConfirmedCaseSnapshotData snapshot) {
         if (snapshot.caseInputRevision() != request.expectedCaseInputRevision()) {
             return stale(consultationId, owned(consultationId, session));
         }

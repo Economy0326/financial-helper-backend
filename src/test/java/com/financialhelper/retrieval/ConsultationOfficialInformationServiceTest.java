@@ -100,6 +100,18 @@ class ConsultationOfficialInformationServiceTest {
     }
 
     @Test
+    void informationSearchUsesSuppliedExplicitFactsWithoutActionSnapshotCapture() {
+        var explicit = new ConfirmedCaseSnapshotData(null, consultationId, 2L, 3L,
+                List.of(new ConfirmedCaseSnapshotData.Fact("SITUATION", "situationText",
+                        "KB국민카드 개인 신용카드 분실 2026-01-02", null, "USER_STATED", null)),
+                List.of(), null);
+        var result = service.searchUsingConfirmed(consultationId, "token", request, explicit);
+        assertThat(result.status()).isEqualTo("NO_MATCH");
+        verify(snapshots, never()).capture(any());
+        verify(snapshots, never()).findCurrent(any(), anyLong(), anyLong());
+    }
+
+    @Test
     void rejects_unowned_consultation_before_snapshot_or_retrieval() {
         when(consultations.findByIdAndGuestSession_Id(consultationId, guestId))
                 .thenReturn(Optional.empty());
