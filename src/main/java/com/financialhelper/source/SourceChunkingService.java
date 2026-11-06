@@ -296,7 +296,12 @@ public class SourceChunkingService {
         );
 
         if (segmentTokens > properties.maxTokens()) {
-            return splitOversizedLine(segmentStart, segmentEnd, content);
+            segments.addAll(splitOversizedLine(segmentStart, segmentEnd, content));
+            // Keep the final piece pending so subsequent lines follow the normal path.
+            Segment tail = segments.removeLast();
+            segmentStart = tail.startOffset();
+            segmentEnd = tail.endOffset();
+            segmentTokens = tail.tokenCount();
         }
 
         for (int index = 1; index < unitLines.size(); index++) {

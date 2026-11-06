@@ -125,6 +125,44 @@ class KoreanLawOpenApiHttpClientTest {
         assertThat(lastServiceQuery).contains("JO=000609");
     }
 
+    @Test
+    void accountAndVoiceSyntheticArticlesRetainConditionAndExceptionText() {
+        server.removeContext("/DRF/lawService.do");
+        server.createContext("/DRF/lawService.do", exchange -> {
+            lastServiceQuery = exchange.getRequestURI().getRawQuery();
+            respond(exchange, """
+                    {"법령":{"기본정보":{"법령명_한글":"전자금융거래법","법령ID":"ACCOUNT_FIXTURE","공포일자":"20260101","시행일자":"20260201"},
+                    "조문":{"조문단위":{"조문번호":"9","조문내용":"제9조(합성 표제)",
+                    "항":{"항내용":"① 합성 무단 거래 조건. 다만, 합성 예외가 적용되는 경우는 제외한다.",
+                    "호":{"호내용":"1. 합성 접근매체 조건"}}}}}}
+                    """);
+        });
+        var account = new KoreanLawOpenApiClient.LawVersion("전자금융거래법", "ACCOUNT_FIXTURE", "ACCOUNT_MST",
+                java.time.LocalDate.of(2026, 1, 1), java.time.LocalDate.of(2026, 2, 1), true,
+                "https://www.law.go.kr/DRF/lawService.do?MST=ACCOUNT_MST");
+        var accountArticle = client.getLawText(account, "제9조");
+        assertThat(accountArticle.articleText()).contains("합성 무단 거래 조건", "다만, 합성 예외", "합성 접근매체 조건");
+        assertThat(lastServiceQuery).contains("MST=ACCOUNT_MST", "efYd=20260201", "JO=000900");
+
+        server.removeContext("/DRF/lawService.do");
+        server.createContext("/DRF/lawService.do", exchange -> {
+            lastServiceQuery = exchange.getRequestURI().getRawQuery();
+            respond(exchange, """
+                    {"법령":{"기본정보":{"법령명_한글":"전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법","법령ID":"VOICE_FIXTURE","공포일자":"20260929","시행일자":"20261002"},
+                    "조문":{"조문단위":{"조문번호":"4","조문내용":"제4조(합성 지급정지 표제)",
+                    "항":{"항내용":"① 합성 지급정지 조건. 다만, 합성 통지 예외는 별도로 확인한다.",
+                    "호":{"호내용":"1. 합성 피해구제 신청 조건"}}}}}}
+                    """);
+        });
+        var voice = new KoreanLawOpenApiClient.LawVersion(
+                "전기통신금융사기 피해 방지 및 피해자산 환급에 관한 특별법", "VOICE_FIXTURE", "VOICE_MST",
+                java.time.LocalDate.of(2026, 9, 29), java.time.LocalDate.of(2026, 10, 2), true,
+                "https://www.law.go.kr/DRF/lawService.do?MST=VOICE_MST");
+        var voiceArticle = client.getLawText(voice, "제4조");
+        assertThat(voiceArticle.articleText()).contains("합성 지급정지 조건", "다만, 합성 통지 예외", "합성 피해구제 신청 조건");
+        assertThat(lastServiceQuery).contains("MST=VOICE_MST", "efYd=20261002", "JO=000400");
+    }
+
     private KoreanLawOpenApiProperties properties(boolean enabled, String oc) {
         return new KoreanLawOpenApiProperties(
                 enabled,

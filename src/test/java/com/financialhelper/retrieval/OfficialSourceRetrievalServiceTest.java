@@ -55,6 +55,16 @@ class OfficialSourceRetrievalServiceTest {
     }
 
     @Test
+    void candidate_only_search_does_not_issue_a_reusable_unbound_context() {
+        OfficialSearchResponse response = service.searchCandidates(new OfficialSearchRequest(
+                "공식 정보", "CARD", null, "신용카드", null, List.of(), 10));
+
+        assertThat(response.status()).isEqualTo(RetrievalStatus.NEEDS_CLARIFICATION);
+        assertThatThrownBy(() -> service.getPassages(response.searchId(), List.of(UUID.randomUUID())))
+                .isInstanceOf(UnknownRetrievalCandidateException.class);
+    }
+
+    @Test
     void arbitrary_candidate_ids_are_rejected() {
         UUID searchId = UUID.randomUUID();
         assertThatThrownBy(() -> service.getPassages(searchId, List.of(UUID.randomUUID())))

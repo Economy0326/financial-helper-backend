@@ -4,8 +4,12 @@ import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionCookie;
 import com.financialhelper.guest.GuestSessionRepository;
 import com.financialhelper.guest.GuestSessionTokenService;
+import com.financialhelper.ai.OpenAiStructuredClient;
+import com.financialhelper.law.KoreanLawOpenApiClient;
+import com.financialhelper.retrieval.KureRuntimeHttpClient;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,6 +17,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -21,6 +26,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -32,6 +38,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class EmergencyApiIntegrationTest {
+
+    @MockitoBean private OpenAiStructuredClient openAi;
+    @MockitoBean private KoreanLawOpenApiClient law;
+    @MockitoBean private KureRuntimeHttpClient kure;
+
+    @AfterEach
+    void noExternalClients() {
+        verifyNoInteractions(openAi, law, kure);
+    }
 
     @Autowired
     private MockMvc mockMvc;

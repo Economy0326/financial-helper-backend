@@ -61,6 +61,9 @@ public class Consultation {
     @Column(name = "situation_text")
     private String situationText;
 
+    @Column(name = "information_intake", nullable = false)
+    private boolean informationIntake;
+
     @Enumerated(EnumType.STRING)
     @Column(
             name = "status",
@@ -260,6 +263,30 @@ public class Consultation {
     public void assignScenario(ConsultationScenario scenario, OffsetDateTime updatedAt) {
         if (scenario != null && this.scenario != scenario) this.scenario = scenario;
         this.updatedAt = updatedAt;
+    }
+
+    public boolean isInformationIntake() { return informationIntake; }
+
+    /** Natural-language intake keeps classification tentative until the user confirms it. */
+    public void updateInformationIntake(String text, OffsetDateTime at) {
+        if (!informationIntake || !Objects.equals(situationText, text)) {
+            situationText = text;
+            informationIntake = true;
+            category = null;
+            scenario = null;
+            markCaseInputChanged();
+            currentStep = ConsultationStep.CATEGORY;
+        }
+        updatedAt = at;
+    }
+
+    public void confirmInformationIntake(ConsultationCategory selectedCategory,
+            ConsultationScenario selectedScenario, OffsetDateTime at) {
+        category = selectedCategory;
+        scenario = selectedScenario;
+        markCaseInputChanged();
+        currentStep = ConsultationStep.FOLLOW_UP;
+        updatedAt = at;
     }
 
     public void updateSituation(

@@ -143,15 +143,28 @@ public class HwpSourceDocumentParser implements SourceDocumentParser {
         return (header[FILE_HEADER_COMPRESSION_OFFSET] & 0x01) != 0;
     }
 
-    private List<DocumentEntry> sections(DirectoryEntry bodyText) {
+    private List<DocumentEntry> sections(DirectoryEntry bodyText) throws IOException {
         List<DocumentEntry> sections = new ArrayList<>();
-        bodyText.getEntries().forEachRemaining(entry -> {
-            if (entry instanceof DocumentEntry document
-                    && SECTION_NAME.matcher(entry.getName()).matches()) {
+        var entries = bodyText.getEntries();
+        while (entries.hasNext()) {
+            Entry entry = entries.next();
+            if (entry.getName().startsWith("Section")) {
+                if (!(entry instanceof DocumentEntry document)
+                        || !SECTION_NAME.matcher(entry.getName()).matches()) {
+                    throw new IOException("invalid HWP Section entry");
+                }
                 sections.add(document);
             }
-        });
-        sections.sort(Comparator.comparing(Entry::getName));
+        }
+        // Overflow is handled by extractText's fail-closed RuntimeException boundary.
+        sections.sort(Comparator.comparingInt(entry ->
+                Integer.parseInt(entry.getName().substring("Section".length()))));
+        for (int index = 0; index < sections.size(); index++) {
+            // Reject gaps, duplicate numeric aliases (Section01), and non-canonical names.
+            if (!sections.get(index).getName().equals("Section" + index)) {
+                throw new IOException("HWP Section sequence is not contiguous and canonical");
+            }
+        }
         return sections;
     }
 

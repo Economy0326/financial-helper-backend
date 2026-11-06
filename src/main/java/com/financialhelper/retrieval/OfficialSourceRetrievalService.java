@@ -123,15 +123,36 @@ public class OfficialSourceRetrievalService {
     }
 
     public OfficialSearchResponse search(OfficialSearchRequest request) {
+        return searchInternal(request, true);
+    }
+
+    /** 상담 API에서 사용한다. 현재성 검증 전에는 검색 handle을 저장하지 않는다. */
+    public OfficialSearchResponse searchCandidates(OfficialSearchRequest request) {
+        return searchInternal(request, false);
+    }
+
+    /** Only the consultation information API uses the explicitly reviewed eligibility set. */
+    public OfficialSearchResponse searchReviewedCandidates(OfficialSearchRequest request,
+                                                            Set<UUID> reviewedChunkIds) {
+        if (reviewedChunkIds == null) throw new IllegalArgumentException("reviewed chunks required");
+        return searchInternal(request, false, reviewedChunkIds);
+    }
+
+    private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext) {
+        return searchInternal(request, storeContext, null);
+    }
+
+    private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext,
+                                                  Set<UUID> reviewedChunkIds) {
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
         UUID searchId = UUID.randomUUID();
-        if (request.institution() == null) {
+        if (request.institution() == null && reviewedChunkIds == null) {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NEEDS_CLARIFICATION, false,
                     List.of("INSTITUTION"), List.of(), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -140,7 +161,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("NO_ACTIVE_READY_GENERATION"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -148,7 +169,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -156,13 +177,15 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("UNSUPPORTED_SCENARIO"), List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
         List<RetrievalCorpusSnapshotService.EligibleChunk> scopedCorpus = corpusSnapshot
                 .readyChunks(generation.getId()).stream()
-                .filter(chunk -> matchesNonTemporalScope(chunk, request))
+                .filter(chunk -> reviewedChunkIds == null
+                        ? matchesNonTemporalScope(chunk, request)
+                        : reviewedChunkIds.contains(chunk.sourceChunkId()))
                 .toList();
         boolean temporalUnknown = request.incidentDate() != null
                 && scopedCorpus.stream().anyMatch(chunk ->
@@ -177,7 +200,7 @@ public class OfficialSourceRetrievalService {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     gaps, List.of());
-            remember(searchId, response, Map.of(), null, 0L, 0L);
+            if (storeContext) remember(searchId, response, Map.of(), null, 0L, 0L);
             return response;
         }
 
@@ -285,7 +308,7 @@ public class OfficialSourceRetrievalService {
         }
         OfficialSearchResponse response = new OfficialSearchResponse(
                 searchId, status, degraded, List.of(), gaps, candidates);
-        remember(searchId, response, candidateById, null, 0L, 0L);
+        if (storeContext) remember(searchId, response, candidateById, null, 0L, 0L);
         return response;
     }
 
