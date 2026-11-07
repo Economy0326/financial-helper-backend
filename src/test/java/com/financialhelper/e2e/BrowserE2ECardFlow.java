@@ -31,15 +31,19 @@ final class BrowserE2ECardFlow {
                     .setHttpOnly(true).setSecure(false).setSameSite(SameSiteAttribute.LAX)));
             Page page = bc.newPage();
             page.setDefaultTimeout(20000);
+            page.setViewportSize(390, 844);
             System.out.println("E2E_STAGE_HOME");
             page.navigate("http://localhost:3000/");
+            BrowserE2EAccountHistorySmoke.noHorizontalOverflow(page, "HOME");
             page.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("금융 피해 상담하기")).click();
             System.out.println("E2E_STAGE_INTAKE_FORM");
+            BrowserE2EAccountHistorySmoke.noHorizontalOverflow(page, "INTAKE");
             page.locator("#situation").fill("E2E_SYNTHETIC_ 개인 신용카드를 분실했어요.");
             Response update = page.waitForResponse(r -> r.url().endsWith("/information-intake") && r.request().method().equals("PUT"),
                     () -> page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("입력 내용 확인")).click());
             if (update.status() != 200 || !"SCENARIO_CONFIRMATION_REQUIRED".equals(JsonMapper.builder().build().readTree(update.body()).get("status").asText())) throw new IllegalStateException("E2E_INTAKE_UPDATE_FAILED");
             System.out.println("E2E_STAGE_INTAKE_UPDATED");
+            BrowserE2EAccountHistorySmoke.noHorizontalOverflow(page, "SCENARIO_CONFIRMATION");
             Response confirm = page.waitForResponse(r -> r.url().endsWith("/information-intake/confirm") && r.request().method().equals("POST"),
                     () -> page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("맞아요, 계속하기")).click());
             if (confirm.status() != 200 || !"READY".equals(JsonMapper.builder().build().readTree(confirm.body()).get("status").asText())) throw new IllegalStateException("E2E_INTAKE_CONFIRM_FAILED");
@@ -114,7 +118,9 @@ final class BrowserE2ECardFlow {
             for (var item : historyBody.get("content")) {
                 if (consultationId.toString().equals(item.get("consultationId").asText())) listed = true;
             }
-            System.out.println("E2E_STAGE_INFO_ONLY_HISTORY_LISTED_" + listed);
+            if (!listed) throw new IllegalStateException("E2E_INFORMATION_ONLY_HISTORY_NOT_LISTED");
+            System.out.println("E2E_STAGE_INFO_ONLY_HISTORY_LISTED_true");
+            BrowserE2EAccountHistorySmoke.informationOnly(page, consultationId, false);
             page.getByText("상세 출처와 조건 보기").first().click();
             if (!page.getByText("합성 카드 문서").first().isVisible() || !page.getByText("출처 신원: 확인되지 않음").first().isVisible()) throw new IllegalStateException("E2E_REPORT_SOURCE_MISSING");
             var details = page.locator("details").first();
@@ -151,6 +157,7 @@ final class BrowserE2ECardFlow {
                     || page.getByText("합성 카드 문서").count() != 0) throw new IllegalStateException("E2E_STALE_UI_FAILED");
             System.out.println("CARD_BROWSER_HTTP_VERIFIED");
             System.out.println("E2E_STAGE_STALE_VERIFIED");
+            BrowserE2EAccountHistorySmoke.informationOnly(page, consultationId, true);
         }
     }
 }
