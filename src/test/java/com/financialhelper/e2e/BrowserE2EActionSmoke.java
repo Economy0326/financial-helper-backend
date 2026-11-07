@@ -7,6 +7,8 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.UUID;
 
 /** Legacy ACTION path through real Chrome, Next.js, Spring HTTP and disposable PostgreSQL. */
 final class BrowserE2EActionSmoke {
@@ -94,6 +96,21 @@ final class BrowserE2EActionSmoke {
             page.getByText("분실·도난 신고").first().waitFor();
             page.getByText("합성 카드 자료의 조건을 확인합니다.").first().waitFor();
             System.out.println("E2E_STAGE_ACTION_REPORT_RELOADED");
+            String query = java.net.URI.create(page.url()).getQuery();
+            if (query == null || !query.startsWith("consultationId=")) throw new IllegalStateException("E2E_ACTION_CONSULTATION_ID_MISSING");
+            UUID consultationId = UUID.fromString(query.substring("consultationId=".length()));
+            BrowserE2EAccountHistorySmoke.actionOnly(page, consultationId);
+
+            Long revision = jdbc.queryForObject("select case_input_revision from consultation where id = ?", Long.class, consultationId);
+            String csrf = bc.request().get("http://localhost:8080/api/v1/session").headers().get("x-xsrf-token");
+            if (revision == null || csrf == null) throw new IllegalStateException("E2E_BOTH_PREPARE_INPUT_MISSING");
+            var information = bc.request().post("http://localhost:8080/api/v1/consultations/" + consultationId + "/information-report/prepare",
+                    RequestOptions.create().setHeader("X-XSRF-TOKEN", csrf)
+                            .setData(Map.of("expectedCaseInputRevision", revision)));
+            var informationBody = tools.jackson.databind.json.JsonMapper.builder().build().readTree(information.body());
+            if (information.status() != 200 || !"READY_CANDIDATES".equals(informationBody.get("status").asText()))
+                throw new IllegalStateException("E2E_BOTH_INFORMATION_PREPARE_FAILED_" + information.status() + "_" + informationBody.path("status").asText());
+            BrowserE2EAccountHistorySmoke.both(page, consultationId);
         }
     }
 }
