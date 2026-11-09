@@ -65,6 +65,14 @@ public class Consultation {
     private boolean informationIntake;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "information_topic_hint", length = 64)
+    private FinancialTopic informationTopicHint;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "confirmed_information_topic", length = 64)
+    private FinancialTopic confirmedInformationTopic;
+
+    @Enumerated(EnumType.STRING)
     @Column(
             name = "status",
             nullable = false,
@@ -267,11 +275,22 @@ public class Consultation {
 
     public boolean isInformationIntake() { return informationIntake; }
 
+    public FinancialTopic getInformationTopicHint() { return informationTopicHint; }
+
+    public FinancialTopic getConfirmedInformationTopic() { return confirmedInformationTopic; }
+
     /** Natural-language intake keeps classification tentative until the user confirms it. */
     public void updateInformationIntake(String text, OffsetDateTime at) {
-        if (!informationIntake || !Objects.equals(situationText, text)) {
+        updateInformationIntake(text, null, at);
+    }
+
+    public void updateInformationIntake(String text, FinancialTopic selectedTopic, OffsetDateTime at) {
+        if (!informationIntake || !Objects.equals(situationText, text)
+                || informationTopicHint != selectedTopic) {
             situationText = text;
             informationIntake = true;
+            informationTopicHint = selectedTopic;
+            confirmedInformationTopic = null;
             category = null;
             scenario = null;
             markCaseInputChanged();
@@ -286,6 +305,13 @@ public class Consultation {
         scenario = selectedScenario;
         markCaseInputChanged();
         currentStep = ConsultationStep.FOLLOW_UP;
+        updatedAt = at;
+    }
+
+    public void confirmInformationTopic(FinancialTopic topic, OffsetDateTime at) {
+        confirmedInformationTopic = topic;
+        markCaseInputChanged();
+        currentStep = ConsultationStep.CATEGORY;
         updatedAt = at;
     }
 

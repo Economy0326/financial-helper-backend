@@ -139,6 +139,7 @@ public class SecurityConfig {
                             "/api/v1/consultations/*/official-information/search",
                             "/api/v1/consultations/*/information-report/prepare",
                             "/api/v1/consultations/*/information-intake/confirm",
+                            "/api/v1/consultations/*/information-intake/confirm-topic",
                             "/api/v1/consultations/*/follow-up/prepare",
                             "/api/v1/consultations/*/procedure-follow-up/prepare",
                             "/api/v1/consultations/*/financial-action-plan",
