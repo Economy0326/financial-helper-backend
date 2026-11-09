@@ -12,6 +12,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PdfSourceDocumentParserTest {
 
@@ -46,5 +47,18 @@ class PdfSourceDocumentParserTest {
         assertThat(parsed.normalizedContent()).contains("Official card loss compensation evidence");
         assertThat(parsed.rawSha256()).isEqualTo(SourceHashing.sha256(pdf));
         assertThat(parsed.originalContent()).isEqualTo(pdf);
+
+        // Some official download endpoints serve PDF bytes as octet-stream.
+        var octetStream = new PdfSourceDocumentParser().parse(source,
+                new SourceIngestionData.Fetched(source.canonicalUrl(),
+                        "application/octet-stream", null, null, pdf, OffsetDateTime.now()));
+        assertThat(octetStream.contentSha256()).isEqualTo(parsed.contentSha256());
+        assertThatThrownBy(() -> new PdfSourceDocumentParser().parse(source,
+                new SourceIngestionData.Fetched(source.canonicalUrl(),
+                        "application/octet-stream", null, null,
+                        "<html>not a PDF</html>".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        OffsetDateTime.now())))
+                .isInstanceOf(SourceIngestionException.class)
+                .hasMessageContaining("Official source did not return PDF");
     }
 }

@@ -36,8 +36,14 @@ public class PdfSourceDocumentParser implements SourceDocumentParser {
         }
 
         String contentType = fetched.contentType();
-        if (contentType != null
-                && !contentType.toLowerCase().contains("pdf")) {
+        boolean pdfContentType = contentType != null
+                && contentType.toLowerCase().contains("pdf");
+        boolean verifiedOctetStream = contentType != null
+                && contentType.toLowerCase().startsWith("application/octet-stream")
+                && fetched.originalContent().length >= 5
+                && new String(fetched.originalContent(), 0, 5,
+                        java.nio.charset.StandardCharsets.US_ASCII).equals("%PDF-");
+        if (contentType != null && !pdfContentType && !verifiedOctetStream) {
             throw new SourceIngestionException(
                     "SOURCE_CONTENT_TYPE_UNSUPPORTED",
                     "Official source did not return PDF"

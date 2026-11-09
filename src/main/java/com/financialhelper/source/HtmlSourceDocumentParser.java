@@ -86,14 +86,9 @@ public class HtmlSourceDocumentParser implements SourceDocumentParser {
         return new SourceIngestionData.Parsed(
                 fetched.resolvedUrl(),
 
-                extractTitle(
-                        document,
-                        source.sourceKey()
-                ),
+                extractTitle(document, source),
 
-                extractPublishedAt(
-                        document
-                ),
+                extractPublishedAt(document, source),
 
                 fetched.retrievedAt(),
 
@@ -154,10 +149,14 @@ public class HtmlSourceDocumentParser implements SourceDocumentParser {
         }
     }
 
-    private String extractTitle(
-            Document document,
-            String sourceKey
-    ) {
+    private String extractTitle(Document document, SourceIngestionData.Snapshot source) {
+
+        if ("fsc.go.kr".equalsIgnoreCase(source.officialDomain())) {
+            Element subject = document.selectFirst(".board-view-wrap > .header > .subject");
+            if (subject != null && !subject.text().isBlank()) {
+                return subject.text().trim();
+            }
+        }
 
         Element ogTitle =
                 document.selectFirst(
@@ -198,12 +197,18 @@ public class HtmlSourceDocumentParser implements SourceDocumentParser {
                     .trim();
         }
 
-        return sourceKey;
+        return source.sourceKey();
     }
 
-    private LocalDate extractPublishedAt(
-            Document document
-    ) {
+    private LocalDate extractPublishedAt(Document document, SourceIngestionData.Snapshot source) {
+
+        if ("fsc.go.kr".equalsIgnoreCase(source.officialDomain())) {
+            Element date = document.selectFirst(".board-view-wrap > .header > .day > span:first-child");
+            if (date != null) {
+                LocalDate publishedAt = parseDatePrefix(date.text());
+                if (publishedAt != null) return publishedAt;
+            }
+        }
 
         List<String> selectors =
                 List.of(

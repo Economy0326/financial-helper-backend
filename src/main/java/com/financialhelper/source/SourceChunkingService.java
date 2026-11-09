@@ -28,6 +28,10 @@ public class SourceChunkingService {
             "\\[PAGE\\s+(\\d+)\\]"
     );
 
+    private static final Pattern NUMBERED_QUESTION_HEADING = Pattern.compile(
+            "^[0-9]{1,2}\\.\\s+[^\\r\\n]+[?？]$"
+    );
+
     private static final Pattern SECTION_HEADING = Pattern.compile(
             "^(?:제\\s*[0-9]+\\s*(?:장|절|관|편)|부칙|별표)(?:\\s|$).*"
     );
@@ -188,18 +192,33 @@ public class SourceChunkingService {
         List<StructuralUnit> units = new ArrayList<>();
         String parentSection = null;
         String articleReference = null;
+        boolean questionUnit = false;
         int unitStart = -1;
         int unitEnd = -1;
 
         for (Line line : lines) {
             boolean section = SECTION_HEADING.matcher(line.text()).matches();
             boolean article = ARTICLE_HEADING.matcher(line.text()).matches();
+            boolean question = NUMBERED_QUESTION_HEADING.matcher(line.text()).matches();
+
+            // FAQ answers must not share a chunk with a different question. This also
+            // lets review exclude one question without exposing it through a neighbor.
+            if (question) {
+                if (unitStart >= 0) {
+                    units.add(new StructuralUnit(unitStart, unitEnd, parentSection, articleReference));
+                }
+                unitStart = line.startOffset();
+                unitEnd = line.endOffset();
+                articleReference = null;
+                questionUnit = true;
+                continue;
+            }
 
             if (section) {
                 // heading만 있는 chunk를 만들지 않으면서 parent locator를 유지하도록
                 // section heading을 뒤따르는 article과 함께 둔다.
                 // retrieval hit.
-                if (unitStart >= 0 && articleReference != null) {
+                if (unitStart >= 0 && (articleReference != null || questionUnit)) {
                     units.add(
                             new StructuralUnit(
                                     unitStart,
@@ -214,12 +233,13 @@ public class SourceChunkingService {
                 unitEnd = line.endOffset();
                 parentSection = line.text();
                 articleReference = null;
+                questionUnit = false;
 
                 continue;
             }
 
             if (article) {
-                if (unitStart >= 0 && articleReference != null) {
+                if (unitStart >= 0 && (articleReference != null || questionUnit)) {
                     units.add(
                             new StructuralUnit(
                                     unitStart,
@@ -234,6 +254,7 @@ public class SourceChunkingService {
                 }
                 unitEnd = line.endOffset();
                 articleReference = normalizedArticleReference(line.text());
+                questionUnit = false;
 
                 continue;
             }
