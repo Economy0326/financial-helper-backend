@@ -449,6 +449,7 @@ public class AnalysisWorker {
             AnalysisData.Snapshot snapshot,
             AnalysisEvidenceSnapshotData evidenceSnapshot
     ) {
+        com.financialhelper.ai.AiUserInputPrivacy.requireSafe(snapshot.confirmedSummary());
 
         try {
 

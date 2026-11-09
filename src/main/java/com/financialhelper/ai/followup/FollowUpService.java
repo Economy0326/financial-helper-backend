@@ -173,6 +173,7 @@ public class FollowUpService {
                                 consultationId,
                                 rawToken
                         );
+        com.financialhelper.ai.AiUserInputPrivacy.requireSafe(understanding.result());
 
         // Missing Info가 없을 때
         // 질문을 억지로 만들지 않고, 바로 완료 상태로 저장

@@ -38,6 +38,7 @@ public class InformationIntakeService {
                 || (!consultation.isInformationIntake() && (consultation.getCategory() != null
                 || consultation.getCurrentStep() != ConsultationStep.CATEGORY))) throw new InvalidConsultationStateException();
         if (text.length() > properties.limits().maxSituationCharacters()) throw new InputLimitException("situation");
+        ConsultationInputPrivacy.requireSafe(text);
         consultation.updateInformationIntake(text.trim(), OffsetDateTime.now(ZoneOffset.UTC));
         return state(consultation);
     }

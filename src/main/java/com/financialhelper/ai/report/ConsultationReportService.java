@@ -263,6 +263,8 @@ public class ConsultationReportService {
     private String buildModelInput(
             ConsultationReportData.Snapshot snapshot
     ) {
+        com.financialhelper.ai.AiUserInputPrivacy.requireSafe(snapshot.summary());
+        com.financialhelper.ai.AiUserInputPrivacy.requireSafe(snapshot.analysis());
 
         try {
 

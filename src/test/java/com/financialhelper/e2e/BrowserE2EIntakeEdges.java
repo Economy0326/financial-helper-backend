@@ -28,7 +28,9 @@ final class BrowserE2EIntakeEdges {
             }
             Page page = a.newPage(); page.setDefaultTimeout(20000);
             page.navigate("http://localhost:3000/");
-            page.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("금융 피해 상담하기")).click();
+            Locator entry = page.locator("a[href='/consultation/entry']");
+            if (entry.count() != 1) throw new IllegalStateException("E2E_HOME_CTA_NOT_UNIQUE");
+            entry.click();
             Response ambiguous = submit(page, "E2E_SYNTHETIC_ 카드를 분실하고 보이스피싱으로 송금했어요.");
             var ambiguousBody = JsonMapper.builder().build().readTree(ambiguous.body());
             if (ambiguous.status() != 200 || !"NEEDS_CLARIFICATION".equals(ambiguousBody.get("status").asText()) || ambiguousBody.get("scenarioCandidates").size() < 2 || page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("맞아요, 계속하기")).count() != 0) throw new IllegalStateException("E2E_AMBIGUOUS_FAILED");
@@ -65,7 +67,9 @@ final class BrowserE2EIntakeEdges {
             if (retry.status() != 200) throw new IllegalStateException("E2E_CONFLICT_RETRY_FAILED");
             System.out.println("E2E_STAGE_INTAKE_EDGES_VERIFIED");
             Page other = b.newPage(); other.setDefaultTimeout(20000); other.navigate("http://localhost:3000/");
-            other.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("금융 피해 상담하기")).click();
+            Locator otherEntry = other.locator("a[href='/consultation/entry']");
+            if (otherEntry.count() != 1) throw new IllegalStateException("E2E_HOME_CTA_NOT_UNIQUE");
+            otherEntry.click();
             other.locator("#situation").waitFor();
             Response ownB = submit(other, "E2E_SYNTHETIC_ 개인 신용카드를 분실했어요.");
             if (ownB.status() != 200) throw new IllegalStateException("E2E_CSRF_B_OWN_REQUEST_FAILED");

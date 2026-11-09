@@ -30,6 +30,7 @@ class InformationIntakeApiIntegrationTest {
     @Autowired GuestSessionRepository guests;
     @Autowired GuestSessionTokenService tokens;
     @Autowired ConsultationRepository consultations;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     @MockitoBean OpenAiStructuredClient openAi;
     @MockitoBean KureRuntimeHttpClient kure;
     @MockitoBean KoreanLawOpenApiClient law;
@@ -48,6 +49,30 @@ class InformationIntakeApiIntegrationTest {
         mvc.perform(put(url).cookie(cookie).with(csrf()).contentType("application/json")
                         .content("{\"situationText\":\"카드를 잃어버렸어요\",\"expectedCaseInputRevision\":0}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SCENARIO_CONFIRMATION_REQUIRED"));
+        verifyNoInteractions(openAi, kure, law);
+    }
+
+    @Test void sensitiveIntakeIsRejectedWithoutChangingPersistedSituationOrRevision() throws Exception {
+        var now = OffsetDateTime.now(ZoneOffset.UTC);
+        String raw = tokens.generateRawToken();
+        var guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), now, now.plusHours(1)));
+        var consultation = consultations.saveAndFlush(new Consultation(guest, now));
+        String url = "/api/v1/consultations/" + consultation.getId() + "/information-intake";
+        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        mvc.perform(put(url).cookie(cookie).with(csrf()).contentType("application/json")
+                .content("{\"situationText\":\"카드를 잃어버렸어요\",\"expectedCaseInputRevision\":0}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.caseInputRevision").value(1));
+        var response = mvc.perform(put(url).cookie(cookie).with(csrf()).contentType("application/json")
+                .content("{\"situationText\":\"카드를 잃어버렸고 인증번호는 123456입니다\",\"expectedCaseInputRevision\":1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("CONSULTATION_SENSITIVE_INPUT"))
+                .andReturn().getResponse();
+        org.assertj.core.api.Assertions.assertThat(response.getContentAsString()).doesNotContain("123456");
+        entityManager.flush();
+        entityManager.clear();
+        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.caseInputRevision").value(1))
+                .andExpect(jsonPath("$.situationText").value("카드를 잃어버렸어요"));
         verifyNoInteractions(openAi, kure, law);
     }
 

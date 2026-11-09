@@ -35,7 +35,9 @@ final class BrowserE2ECardFlow {
             System.out.println("E2E_STAGE_HOME");
             page.navigate("http://localhost:3000/");
             BrowserE2EAccountHistorySmoke.noHorizontalOverflow(page, "HOME");
-            page.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("금융 피해 상담하기")).click();
+            Locator entry = page.locator("a[href='/consultation/entry']");
+            if (entry.count() != 1) throw new IllegalStateException("E2E_HOME_CTA_NOT_UNIQUE");
+            entry.click();
             System.out.println("E2E_STAGE_INTAKE_FORM");
             BrowserE2EAccountHistorySmoke.noHorizontalOverflow(page, "INTAKE");
             page.locator("#situation").fill("E2E_SYNTHETIC_ 개인 신용카드를 분실했어요.");
