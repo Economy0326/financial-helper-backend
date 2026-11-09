@@ -1,3 +1,4 @@
+param([switch]$FullSuite)
 $ErrorActionPreference = 'Stop'
 $run = [guid]::NewGuid().ToString('N')
 $name = 'fh-isolated-' + $run
@@ -13,7 +14,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Local postgres:16-alpine image is unavailable; no pull was attempted' }
     $id = (docker run -d --rm --pull never --name $name --label "financial-helper.test-run=$run" `
         --tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,size=256m' -p '127.0.0.1::5432' `
-        -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD postgres:16-alpine).Trim()
+        -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD postgres:16-alpine -c max_connections=300).Trim()
     if ($LASTEXITCODE -ne 0 -or $id -notmatch '^[a-f0-9]{64}$') { throw 'Container creation failed' }
     $container = (docker inspect $id | ConvertFrom-Json)[0]
     $binding = $container.NetworkSettings.Ports.'5432/tcp'
@@ -38,10 +39,19 @@ try {
     if (-not $ready) { throw 'Temporary PostgreSQL did not become ready' }
     Push-Location (Join-Path $PSScriptRoot '../..')
     try {
-        & .\gradlew.bat test --no-daemon --rerun-tasks `
-            --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest.syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload' `
-            --tests 'com.financialhelper.retrieval.GoldenCoverageEvaluationTest'
-        $result = $LASTEXITCODE
+        if ($FullSuite) {
+            & .\gradlew.bat test --no-daemon
+            $result = $LASTEXITCODE
+            if ($result -eq 0) {
+                & .\gradlew.bat build --no-daemon
+                $result = $LASTEXITCODE
+            }
+        } else {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest.syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload' `
+                --tests 'com.financialhelper.retrieval.GoldenCoverageEvaluationTest'
+            $result = $LASTEXITCODE
+        }
     } finally { Pop-Location }
 } finally {
     if ($id -and $id -match '^[a-f0-9]{64}$') {

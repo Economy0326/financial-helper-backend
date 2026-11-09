@@ -361,6 +361,7 @@ public class ConsultationService {
                 > accountProperties.limits().maxSituationCharacters()) {
             throw new InputLimitException("situation");
         }
+        ConsultationInputPrivacy.requireSafe(request.situationText());
 
         // "체크카드" 같은 직접적인 사용자 진술은 추론한 값이 아니다.
         // 이 값은 추론 후보나 missing 값이 아니다. 신용카드 follow-up이

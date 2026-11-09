@@ -130,6 +130,11 @@ public class ConsultationSummaryService {
                         consultationId,
                         rawToken
                 );
+        com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(snapshot.situationText());
+        snapshot.followUpAnswers().forEach(answer -> {
+            com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(answer.answerValue());
+            com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(answer.answerLabel());
+        });
 
         Optional<ConsultationSummaryData.Document>
                 existing =

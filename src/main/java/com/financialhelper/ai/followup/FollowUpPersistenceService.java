@@ -389,7 +389,6 @@ public class FollowUpPersistenceService {
             String answerValue,
             boolean deferCompletion
     ) {
-
         Consultation consultation =
                 findOwnedConsultation(
                         consultationId,
@@ -441,6 +440,8 @@ public class FollowUpPersistenceService {
         if (hasUnansweredPreviousQuestion) {
             throw new InvalidConsultationStateException();
         }
+
+        com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(answerValue);
 
         FollowUpStateResponse.Option selected =
                 findSelectedOption(

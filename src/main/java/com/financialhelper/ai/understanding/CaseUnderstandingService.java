@@ -97,6 +97,7 @@ public class CaseUnderstandingService {
                         consultationId,
                         rawToken
                 );
+        com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(snapshot.situationText());
 
         Optional<CaseUnderstandingData.Document>
                 existing =

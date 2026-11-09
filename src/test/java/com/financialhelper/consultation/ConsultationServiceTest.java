@@ -164,6 +164,24 @@ class ConsultationServiceTest {
     }
 
     @Test
+    void rejectedActionInputKeepsSituationStepAndRevision() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        Consultation consultation = new Consultation(guestSession, now);
+        consultation.updateCategory(ConsultationCategory.CARD, now);
+        long revision = consultation.getCaseInputRevision();
+        when(guestSessionService.requireValidSession(rawToken)).thenReturn(guestSession);
+        when(consultationRepository.findByIdAndGuestSession_Id(consultationId, guestSessionId))
+                .thenReturn(Optional.of(consultation));
+
+        assertThatThrownBy(() -> consultationService.updateSituation(consultationId, rawToken,
+                new UpdateConsultationSituationRequest("카드 분실, 인증번호는 123456입니다")))
+                .isInstanceOf(UnsafeConsultationInputException.class);
+        assertThat(consultation.getSituationText()).isNull();
+        assertThat(consultation.getCaseInputRevision()).isEqualTo(revision);
+        assertThat(consultation.getCurrentStep()).isEqualTo(ConsultationStep.SITUATION);
+    }
+
+    @Test
     void keepsSelectedScenarioAndReturnsSupportedMismatchSuggestion() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         Consultation consultation = new Consultation(guestSession, now);
