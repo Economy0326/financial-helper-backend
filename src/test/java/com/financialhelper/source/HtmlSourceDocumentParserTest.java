@@ -312,6 +312,33 @@ class HtmlSourceDocumentParserTest {
                 );
     }
 
+    @Test
+    void extractsFscBoardSubjectAndDateWithoutUsingGenericSiteTitle() {
+        String html = """
+                <html><head><title>주요정책문답 - 금융위원회</title></head><body>
+                <main><div class="board-view-wrap">
+                  <div class="header"><div class="subject">예금보호한도 상향 관련 주요 QA</div>
+                    <div class="day"><span>2025-07-22</span><span>조회수 : 42</span></div>
+                  </div>
+                  <div class="contents">1. 보호대상은 무엇인가요?<br>
+                    보호대상 상품과 예외를 함께 확인해야 합니다.
+                    이 안내는 상품별 적용 여부를 확정하지 않습니다.
+                    원문과 실제 상품 정보를 대조해야 합니다.
+                    기관별 보호 방식과 적용 시점을 확인한 뒤 조건을 설명합니다.
+                    문서의 게시일과 수집 시각은 구별하여 기록합니다.</div>
+                </div></main></body></html>
+                """;
+        var source = new SourceIngestionData.Snapshot(UUID.randomUUID(), "fsc-deposit",
+                "금융위원회", "fsc.go.kr", "https://www.fsc.go.kr/po020201/84975",
+                SourceAcquisitionType.HTML, null);
+
+        var parsed = parser.parse(source, fetched(source, html));
+
+        assertThat(parsed.title()).isEqualTo("예금보호한도 상향 관련 주요 QA");
+        assertThat(parsed.publishedAt()).isEqualTo(LocalDate.of(2025, 7, 22));
+        assertThat(parsed.normalizedContent()).contains("보호대상 상품과 예외");
+    }
+
     private SourceIngestionData.Fetched fetched(
             SourceIngestionData.Snapshot snapshot,
             String html
