@@ -277,7 +277,8 @@ public class OfficialSourceRetrievalService {
         if (keywordFailed) {
             gaps.add("KEYWORD_BRANCH_UNAVAILABLE");
         }
-        if (semanticFailed && keywordFailed) {
+        // An empty surviving branch cannot prove absence while the other branch failed.
+        if (fused.isEmpty() && (semanticFailed || keywordFailed)) {
             status = RetrievalStatus.TEMPORARILY_UNAVAILABLE;
         } else if (fused.isEmpty()) {
             status = RetrievalStatus.NO_MATCH;

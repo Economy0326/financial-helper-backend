@@ -17,6 +17,94 @@ import static org.mockito.Mockito.when;
 class SourceChunkingServiceTest {
 
     @Test
+    void wrappedPdfQuestionsKeepNotesExamplesAndPageLocatorsTogether() {
+        String content = """
+                [PAGE 1]
+                2. 어떤 상품이 보호되나요?
+                보호상품으로 운용되는 경우에 한합니다.
+                6. 이자 산정은 어떻게 하나요?
+                * 기관별 산정 기준을 확인합니다.
+                7. 보호사고가 발생하면 어떻게 되나요?
+                [PAGE 2]
+                예금보험공사가 안내합니다.
+                8. 여러 계좌를 보유한 경우,
+                한도는 어떻게 적용되나요?
+                계좌별 금액을 합산합니다.
+                9. 서로 다른 기관에 보유한 경우,
+                한도는 어떻게 적용되나요?
+                기관별로 확인합니다.
+                10. 별도 한도 대상은
+                어떻게 적용되나요?
+                별도 조건을 확인합니다.
+                * 사고보험금 각주를 확인합니다.
+                예시: 조건에 따라 다릅니다.
+                """;
+        List<SourceChunkData.Definition> definitions = definitionsFor(content, 500, 600);
+
+        assertThat(definitions).hasSize(7);
+        for (int question : List.of(2, 6, 7, 8, 9, 10)) {
+            String marker = question + ". ";
+            assertThat(definitions.stream().filter(d -> d.body().contains(marker)).count())
+                    .isEqualTo(1);
+        }
+        assertThat(definitions.stream().filter(d -> d.body().contains("8. 여러")).findFirst().orElseThrow()
+                .body()).doesNotContain("7. 보호", "9. 서로");
+        assertThat(definitions.stream().filter(d -> d.body().contains("10. 별도")).findFirst().orElseThrow()
+                .body()).contains("별도 조건", "사고보험금 각주", "예시:")
+                .doesNotContain("9. 서로");
+        assertThat(definitions.stream().filter(d -> d.body().contains("7. 보호")).findFirst().orElseThrow()
+                .pageReference()).isEqualTo("p.1-2");
+        assertThat(definitions.stream().filter(d -> d.body().contains("10. 별도")).findFirst().orElseThrow()
+                .parentSection()).contains("10. 별도 한도 대상은 어떻게 적용되나요?");
+        assertThat(definitions).allSatisfy(d -> {
+            assertThat(d.body()).isEqualTo(content.substring(d.sourceStartOffset(), d.sourceEndOffset()));
+            assertThat(d.locator()).isEqualTo("normalized-content:utf16:" + d.sourceStartOffset()
+                    + "-" + d.sourceEndOffset());
+        });
+    }
+
+    @Test
+    void wrappedQuestionAcrossPageMarkerAndOrdinaryNumberedListStayDistinct() {
+        String content = """
+                1. 신청 절차
+                2. 준비 서류
+                본문 설명입니다.
+                [PAGE 1]
+                8. 여러 계좌를 보유한 경우,
+                [PAGE 2]
+                한도는 어떻게 적용되나요?
+                조건과 예외를 확인합니다.
+                9. 다음 질문은 무엇인가요?
+                다음 답변입니다.
+                """;
+        List<SourceChunkData.Definition> definitions = definitionsFor(content, 500, 600);
+
+        assertThat(definitions).hasSize(3);
+        assertThat(definitions.get(0).body()).contains("1. 신청 절차", "2. 준비 서류")
+                .doesNotContain("8. 여러");
+        assertThat(definitions.get(1).body()).contains("8. 여러", "[PAGE 2]", "조건과 예외")
+                .doesNotContain("9. 다음");
+        assertThat(definitions.get(1).pageReference()).isEqualTo("p.1-2");
+        assertThat(definitions.get(2).body()).contains("9. 다음 질문");
+    }
+
+    private List<SourceChunkData.Definition> definitionsFor(String content, int target, int max) {
+        SourceChunkPersistenceService persistence = mock(SourceChunkPersistenceService.class);
+        SourceDocument document = mock(SourceDocument.class);
+        when(document.getId()).thenReturn(UUID.randomUUID());
+        when(document.getNormalizedContent()).thenReturn(content);
+        List<SourceChunkData.Definition> definitions = new ArrayList<>();
+        doAnswer(call -> {
+            definitions.add(call.getArgument(1));
+            return mock(SourceChunk.class);
+        }).when(persistence).saveIfAbsent(any(), any());
+        new SourceChunkingService(persistence, new CountingTokenizer(),
+                new SourceChunkingProperties(target, max, 0, "structure-first-v2",
+                        "test-tokenizer", "test-revision"), JsonMapper.builder().build()).chunk(document);
+        return definitions;
+    }
+
+    @Test
     void numberedFaqQuestionsKeepTheirOwnNotesAndExcludedQuestionSeparate() {
         SourceChunkPersistenceService persistence = mock(SourceChunkPersistenceService.class);
         SourceDocument document = mock(SourceDocument.class);

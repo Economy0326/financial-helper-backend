@@ -58,15 +58,18 @@ public class PdfSourceDocumentParser implements SourceDocumentParser {
             );
         }
 
+        String rawSha256 = SourceHashing.sha256(fetched.originalContent());
+        var verifiedMetadata = VerifiedPdfMetadata.forFetched(source, fetched, rawSha256);
         return new SourceIngestionData.Parsed(
                 fetched.resolvedUrl(),
-                extractTitle(source, fetched.originalContent()),
-                null,
+                verifiedMetadata.map(VerifiedPdfMetadata::title)
+                        .orElseGet(() -> extractTitle(source, fetched.originalContent())),
+                verifiedMetadata.map(VerifiedPdfMetadata::publishedAt).orElse(null),
                 fetched.retrievedAt(),
                 fetched.contentType(),
                 fetched.httpEtag(),
                 fetched.httpLastModified(),
-                SourceHashing.sha256(fetched.originalContent()),
+                rawSha256,
                 SourceHashing.sha256(normalizedContent),
                 fetched.originalContent(),
                 normalizedContent

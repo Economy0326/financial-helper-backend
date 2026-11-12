@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: ${FH_DEMO_DB_URL}
+    username: ${FH_DEMO_DB_USERNAME}
+    password: ${FH_DEMO_DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+server:
+  address: 127.0.0.1
+app:
+  guest-session:
+    cookie:
+      secure: false
+  cors:
+    allowed-origin: http://localhost:3000
+  ai:
+    enabled: false
+  law-open-api:
+    enabled: false
+  card-corpus:
+    run-on-startup: false
+  breadth-corpus:
+    run-on-startup: false

@@ -32,6 +32,10 @@ public class SourceChunkingService {
             "^[0-9]{1,2}\\.\\s+[^\\r\\n]+[?？]$"
     );
 
+    private static final Pattern NUMBERED_QUESTION_START = Pattern.compile(
+            "^[0-9]{1,2}\\.\\s+\\S.*"
+    );
+
     private static final Pattern SECTION_HEADING = Pattern.compile(
             "^(?:제\\s*[0-9]+\\s*(?:장|절|관|편)|부칙|별표)(?:\\s|$).*"
     );
@@ -196,19 +200,21 @@ public class SourceChunkingService {
         int unitStart = -1;
         int unitEnd = -1;
 
-        for (Line line : lines) {
+        for (int index = 0; index < lines.size(); index++) {
+            Line line = lines.get(index);
             boolean section = SECTION_HEADING.matcher(line.text()).matches();
             boolean article = ARTICLE_HEADING.matcher(line.text()).matches();
-            boolean question = NUMBERED_QUESTION_HEADING.matcher(line.text()).matches();
+            String questionHeading = questionHeading(lines, index);
 
             // FAQ answers must not share a chunk with a different question. This also
             // lets review exclude one question without exposing it through a neighbor.
-            if (question) {
+            if (questionHeading != null) {
                 if (unitStart >= 0) {
                     units.add(new StructuralUnit(unitStart, unitEnd, parentSection, articleReference));
                 }
                 unitStart = line.startOffset();
                 unitEnd = line.endOffset();
+                parentSection = questionHeading;
                 articleReference = null;
                 questionUnit = true;
                 continue;
@@ -277,6 +283,32 @@ public class SourceChunkingService {
         }
 
         return units;
+    }
+
+    private String questionHeading(List<Line> lines, int index) {
+        String first = lines.get(index).text();
+        if (NUMBERED_QUESTION_HEADING.matcher(first).matches()) {
+            return first;
+        }
+        if (!NUMBERED_QUESTION_START.matcher(first).matches()) {
+            return null;
+        }
+        int continuation = index + 1;
+        // A PDF page marker can fall between the two visual lines of a heading.
+        if (continuation < lines.size()
+                && PAGE_MARKER.matcher(lines.get(continuation).text()).matches()) {
+            continuation++;
+        }
+        if (continuation >= lines.size()) {
+            return null;
+        }
+        String second = lines.get(continuation).text();
+        if (NUMBERED_QUESTION_START.matcher(second).matches()
+                || second.startsWith("□") || second.startsWith("※")
+                || !second.matches("^[^\\r\\n]+[?？]$")) {
+            return null;
+        }
+        return first + " " + second;
     }
 
     /**

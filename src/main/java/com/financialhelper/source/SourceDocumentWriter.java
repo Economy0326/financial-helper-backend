@@ -91,6 +91,10 @@ public class SourceDocumentWriter {
                         .equals(
                                 parsed.contentSha256()
                         )
+                        // PDF raw bytes are the reviewed V38 identity. Equal extracted
+                        // text must not keep an approval alive across a new PDF binary.
+                        && (snapshot.acquisitionType() != SourceAcquisitionType.PDF
+                        || activeDocument.getRawSha256().equals(parsed.rawSha256()))
         ) {
 
             // 실제 내용은 동일하므로 새 version을 만들지 않고

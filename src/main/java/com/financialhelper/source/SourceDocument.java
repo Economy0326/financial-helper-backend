@@ -169,6 +169,10 @@ public class SourceDocument {
     )
     private String normalizedContent;
 
+    /** Attribution verified against the exact FSC attachment identity, not PDF metadata. */
+    @Column(name = "metadata_source_url", columnDefinition = "TEXT")
+    private String metadataSourceUrl;
+
     @Column(name = "superseded_at")
     private OffsetDateTime supersededAt;
 
@@ -241,6 +245,16 @@ public class SourceDocument {
 
         this.normalizedContent =
                 parsed.normalizedContent();
+
+        if (sourceRegistry.getAcquisitionType() == SourceAcquisitionType.PDF
+                && VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(sourceRegistry.getCanonicalUrl())
+                && VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(parsed.resolvedUrl())
+                && VerifiedPdfMetadata.DEPOSIT_RAW_SHA256.equals(parsed.rawSha256())
+                && "금융위원회".equals(sourceRegistry.getOrganizationName())
+                && "예금보호한도 상향 관련 주요 QA".equals(parsed.title())
+                && LocalDate.of(2025, 7, 22).equals(parsed.publishedAt())) {
+            this.metadataSourceUrl = VerifiedPdfMetadata.DEPOSIT_POST_URL;
+        }
 
         this.createdAt =
                 parsed.retrievedAt();
@@ -328,6 +342,10 @@ public class SourceDocument {
 
     public String getNormalizedContent() {
         return normalizedContent;
+    }
+
+    public String getMetadataSourceUrl() {
+        return metadataSourceUrl;
     }
 
     public byte[] getOriginalContent() {

@@ -276,6 +276,63 @@ class SourceDocumentWriterIntegrationTest {
                 );
     }
 
+    @Test
+    void changedPdfRawBytesCreateNewVersionWithoutInheritingSyntheticReview() {
+        jdbcTemplate.update("UPDATE source_registry SET acquisition_type = 'PDF' WHERE id = ?",
+                fixtureSourceId);
+        SourceRegistry source = sourceRegistryRepository
+                .findBySourceKeyAndEnabledTrue(fixtureSourceKey).orElseThrow();
+        var snapshot = SourceIngestionData.Snapshot.from(source);
+        OffsetDateTime firstTime = OffsetDateTime.of(2026, 9, 11, 0, 0, 0, 0, ZoneOffset.UTC);
+        var first = pdfParsed(source, "synthetic-pdf-raw-v1", "동일한 추출 본문", firstTime);
+        sourceDocumentWriter.saveIfCurrent(snapshot, first);
+        SourceDocument original = sourceDocumentRepository
+                .findBySourceRegistry_IdAndStatus(fixtureSourceId, SourceDocumentStatus.ACTIVE)
+                .orElseThrow();
+        UUID reviewId = UUID.randomUUID();
+        try {
+            jdbcTemplate.update("""
+                    INSERT INTO source_applicability_review (
+                      id, source_document_id, reviewed_raw_sha256, scope_kind, scenario,
+                      applicability_start_date, review_status, condition_required,
+                      exception_required, conditions_reviewed, exceptions_reviewed,
+                      reviewed_by, reviewed_at)
+                    VALUES (?, ?, ?, 'COMMON', 'SYNTHETIC_TEST', ?, 'APPROVED',
+                      FALSE, FALSE, TRUE, TRUE, 'isolated-test', CURRENT_TIMESTAMP)
+                    """, reviewId, original.getId(), first.rawSha256(),
+                    java.time.LocalDate.of(2025, 9, 1));
+
+            var repeated = sourceDocumentWriter.saveIfCurrent(snapshot,
+                    pdfParsed(source, "synthetic-pdf-raw-v1", "동일한 추출 본문",
+                            firstTime.plusHours(1)));
+            assertThat(repeated.outcome()).isEqualTo(SourceIngestionResult.Outcome.UNCHANGED);
+            assertThat(repeated.documentVersion()).isEqualTo(1);
+
+            var changed = sourceDocumentWriter.saveIfCurrent(snapshot,
+                    pdfParsed(source, "synthetic-pdf-raw-v2", "동일한 추출 본문",
+                            firstTime.plusHours(2)));
+            assertThat(changed.outcome()).isEqualTo(SourceIngestionResult.Outcome.UPDATED);
+            assertThat(changed.documentVersion()).isEqualTo(2);
+            List<SourceDocument> versions = sourceDocumentRepository
+                    .findAllBySourceRegistry_IdOrderByDocumentVersionAsc(fixtureSourceId);
+            assertThat(versions).hasSize(2);
+            assertThat(versions.get(0).getStatus()).isEqualTo(SourceDocumentStatus.SUPERSEDED);
+            assertThat(versions.get(1).getStatus()).isEqualTo(SourceDocumentStatus.ACTIVE);
+            assertThat(versions.get(1).getContentSha256()).isEqualTo(versions.get(0).getContentSha256());
+            assertThat(versions.get(1).getRawSha256()).isNotEqualTo(versions.get(0).getRawSha256());
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM source_applicability_review WHERE source_document_id = ?",
+                    Integer.class, versions.get(1).getId())).isZero();
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT count(*) FROM source_applicability_review r
+                    JOIN source_document d ON d.id = r.source_document_id
+                    WHERE r.id = ? AND d.status = 'ACTIVE' AND d.raw_sha256 = r.reviewed_raw_sha256
+                    """, Integer.class, reviewId)).isZero();
+        } finally {
+            jdbcTemplate.update("DELETE FROM source_applicability_review WHERE id = ?", reviewId);
+        }
+    }
+
     // fetch 도중 content selector가 변경되면 오래된 Snapshot을 저장하지 않는지 확인
     @Test
     void changedContentSelectorRejectsStaleSnapshot() {
@@ -399,6 +456,14 @@ class SourceDocumentWriterIntegrationTest {
                 rawBytes,
                 normalized
         );
+    }
+
+    private SourceIngestionData.Parsed pdfParsed(SourceRegistry source, String raw,
+                                                   String normalized, OffsetDateTime retrievedAt) {
+        byte[] bytes = raw.getBytes(StandardCharsets.UTF_8);
+        return new SourceIngestionData.Parsed(source.getCanonicalUrl(), source.getSourceKey(),
+                null, retrievedAt, "application/pdf", null, null,
+                SourceHashing.sha256(bytes), SourceHashing.sha256(normalized), bytes, normalized);
     }
 
 }

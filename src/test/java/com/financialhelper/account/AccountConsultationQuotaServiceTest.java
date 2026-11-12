@@ -2,6 +2,9 @@ package com.financialhelper.account;
 
 import com.financialhelper.consultation.Consultation;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.mock.env.MockEnvironment;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -12,6 +15,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -93,6 +97,37 @@ class AccountConsultationQuotaServiceTest {
     void default_account_limits_use_five_new_consultations() {
         assertThat(AccountProperties.Limits.defaults().newConsultationLimit())
                 .isEqualTo(5);
+    }
+
+    @Test
+    void ordinary_profile_never_reads_local_demo_override() {
+        AccountConsultationStartRepository starts = mock(AccountConsultationStartRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        Account account = mock(Account.class);
+        when(starts.countSince(any(), any())).thenReturn(5L);
+        when(starts.findOldestSince(any(), any())).thenReturn(Optional.of(NOW.minusDays(2)));
+        var service = new AccountConsultationQuotaService(starts, properties(), jdbc,
+                new MockEnvironment().withProperty("FH_DEMO_STORAGE_MODE", "persistent"));
+        assertThat(service.status(account, NOW).limit()).isEqualTo(5);
+        verifyNoInteractions(jdbc);
+    }
+
+    @Test
+    void persistent_demo_profile_uses_only_the_account_scoped_override() {
+        AccountConsultationStartRepository starts = mock(AccountConsultationStartRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        Account account = mock(Account.class);
+        var accountId = java.util.UUID.randomUUID();
+        when(account.getId()).thenReturn(accountId);
+        when(starts.countSince(any(), any())).thenReturn(5L);
+        doReturn(20).when(jdbc).query(any(String.class), any(ResultSetExtractor.class),
+                org.mockito.ArgumentMatchers.eq(accountId), org.mockito.ArgumentMatchers.eq(NOW));
+        var environment = new MockEnvironment().withProperty("FH_DEMO_STORAGE_MODE", "persistent");
+        environment.setActiveProfiles("official-local-demo");
+        var service = new AccountConsultationQuotaService(starts, properties(), jdbc, environment);
+        assertThat(service.status(account, NOW)).extracting(
+                AccountConsultationQuotaService.QuotaStatus::used,
+                AccountConsultationQuotaService.QuotaStatus::limit).containsExactly(5, 20);
     }
 
     private static AccountProperties properties() {

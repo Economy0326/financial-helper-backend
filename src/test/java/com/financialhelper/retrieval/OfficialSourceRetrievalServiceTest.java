@@ -111,6 +111,32 @@ class OfficialSourceRetrievalServiceTest {
     }
 
     @Test
+    void failed_semantic_branch_and_empty_keyword_branch_is_unavailable_not_no_match() {
+        UUID generationId = UUID.randomUUID();
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        UUID chunkId = UUID.randomUUID();
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(
+                new RetrievalCorpusSnapshotService.EligibleChunk(
+                        chunkId, "예금 보호", UUID.randomUUID(), 1,
+                        LocalDate.of(2025, 9, 1), null, "{}", "금융위원회",
+                        "예금보호 Q&A", "예금", null, "p.2", "locator", "https://www.fsc.go.kr")));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new KureRuntimeException("generation artifact unavailable"));
+        when(keywordSearch.searchApproved(anyString(), anyInt())).thenReturn(List.of());
+
+        OfficialSearchResponse response = service.searchReviewedCandidates(new OfficialSearchRequest(
+                "예금 보호 한도", "DEPOSITS_ACCOUNTS", null, null, null, List.of(), 10, null),
+                java.util.Set.of(chunkId));
+
+        assertThat(response.status()).isEqualTo(RetrievalStatus.TEMPORARILY_UNAVAILABLE);
+        assertThat(response.candidates()).isEmpty();
+        assertThat(response.coverageGaps()).containsExactly("SEMANTIC_BRANCH_UNAVAILABLE");
+    }
+
+    @Test
     void incident_date_excludes_future_and_unknown_applicability_without_guessing() {
         UUID generationId = UUID.randomUUID();
         RetrievalGeneration generation = mock(RetrievalGeneration.class);

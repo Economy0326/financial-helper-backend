@@ -15,6 +15,7 @@ import com.financialhelper.ai.understanding.CaseUnderstandingAiResult;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.time.LocalDate;
@@ -107,6 +108,7 @@ public class BrowserE2EAiStubConfig {
     }    /** Deterministic query-only external boundary; never contacts a KURE runtime. */
     @Bean
     @Primary
+    @ConditionalOnProperty(name = "app.retrieval.kure.enabled", havingValue = "false", matchIfMissing = true)
     KureRuntimeClient browserE2eKureStub() {
         return new KureRuntimeClient() {
             @Override public KureRuntimeMetadata metadata() { throw new IllegalStateException("E2E_KURE_METADATA_UNSUPPORTED"); }

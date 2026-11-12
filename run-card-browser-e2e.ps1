@@ -1,4 +1,4 @@
-param([switch]$IntakeOnly, [switch]$ActionOnly, [switch]$HistoryOnly)
+param([switch]$IntakeOnly, [switch]$ActionOnly, [switch]$HistoryOnly, [switch]$DepositOnly)
 $ErrorActionPreference = 'Stop'
 $backendDir = $PSScriptRoot
 $frontendDir = 'C:\Users\economy\Desktop\dev\financial-helper-frontend'
@@ -8,6 +8,10 @@ $databaseName = 'financial_helper_e2e_' + $runId
 $databaseUser = 'e2e_' + $runId
 $containerId = $null
 $frontend = $null
+$kure = $null
+$kureIndex = $null
+$kureOut = $null
+$kureErr = $null
 $tempOut = [System.IO.Path]::GetTempFileName()
 $tempErr = [System.IO.Path]::GetTempFileName()
 function Get-E2EContainerIdentity([string]$id) {
@@ -25,6 +29,32 @@ function Get-E2EContainerIdentity([string]$id) {
     return @{ Name = ([string]$name).Trim(); Label = [string]$labelProperty.Value }
 }
 try {
+    if ($DepositOnly) {
+        if ($IntakeOnly -or $ActionOnly -or $HistoryOnly) { throw 'DepositOnly cannot be combined with other selectors' }
+        $pdfPath = $env:DEPOSIT_E2E_PDF_PATH
+        if (-not $pdfPath -or -not (Test-Path -LiteralPath $pdfPath -PathType Leaf)) { throw 'Verified official PDF path required for deposit E2E' }
+        $pdfPath = (Resolve-Path -LiteralPath $pdfPath).Path
+        if ((Get-FileHash -LiteralPath $pdfPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1b9df7cae3c3563f08e26194abb1c9735cd81dbe08dd79c9d7198066bcd4e989') { throw 'Deposit PDF raw hash mismatch' }
+        $kurePortProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        try { $kurePortProbe.Start(); $kurePort = ([System.Net.IPEndPoint]$kurePortProbe.LocalEndpoint).Port } finally { $kurePortProbe.Stop() }
+        $kureIndex = Join-Path ([System.IO.Path]::GetTempPath()) ('fh-deposit-e2e-index-' + $runId)
+        if (Test-Path -LiteralPath $kureIndex) { throw 'Deposit E2E index path already exists' }
+        New-Item -ItemType Directory -Path $kureIndex | Out-Null
+        $kureOut = [System.IO.Path]::GetTempFileName()
+        $kureErr = [System.IO.Path]::GetTempFileName()
+        $kure = Start-Process -FilePath (Get-Command python.exe).Source -ArgumentList @('retrieval_runtime/runtime.py', '--host', '127.0.0.1', '--port', "$kurePort", '--index-root', $kureIndex) -WorkingDirectory $backendDir -WindowStyle Hidden -RedirectStandardOutput $kureOut -RedirectStandardError $kureErr -PassThru
+        $runtimeReady = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            if ($kure.HasExited) { throw 'Local KURE runtime exited before readiness' }
+            try { if ((Invoke-WebRequest -Uri "http://127.0.0.1:$kurePort/v1/runtime" -TimeoutSec 2).StatusCode -eq 200) { $runtimeReady = $true; break } } catch {}
+            Start-Sleep -Seconds 1
+        }
+        if (-not $runtimeReady) { throw 'Local KURE runtime was not ready' }
+        $env:KURE_RUNTIME_ENABLED = 'true'
+        $env:KURE_RUNTIME_ENDPOINT = "http://127.0.0.1:$kurePort"
+        $env:DEPOSIT_E2E_VERIFIED_PDF = $pdfPath
+        Write-Output "DEPOSIT_KURE_RUNTIME_READY port=$kurePort revision=3431f86d399d666083890dbb882aced6708873bc"
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $frontendDir 'node_modules\next\dist\bin\next'))) { throw 'Frontend Next.js dependencies unavailable' }
     foreach ($port in @(3000, 8080)) {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
@@ -74,11 +104,15 @@ try {
     Write-Output "E2E container=$containerId name=$containerName label=$runId port=$port db=$databaseName user=$databaseUser tmpfs=verified"
     Push-Location $backendDir
     try {
-        $commands = if ($HistoryOnly) { @('seed-card', 'seed-action', 'action-smoke', 'card-browser', 'exit') } elseif ($ActionOnly) { @('seed-card', 'seed-action', 'action-smoke', 'exit') } elseif ($IntakeOnly) { @('seed-card', 'intake-edges', 'exit') } else { @('auth-browser', 'seed-card', 'emergency-smoke', 'intake-edges', 'seed-action', 'action-smoke', 'card-browser', 'exit') }
+        $commands = if ($DepositOnly) { @('seed-deposit', 'deposit-browser', 'exit') } elseif ($HistoryOnly) { @('seed-card', 'seed-action', 'action-smoke', 'card-browser', 'exit') } elseif ($ActionOnly) { @('seed-card', 'seed-action', 'action-smoke', 'exit') } elseif ($IntakeOnly) { @('seed-card', 'intake-edges', 'exit') } else { @('auth-browser', 'seed-card', 'emergency-smoke', 'intake-edges', 'seed-action', 'action-smoke', 'card-browser', 'exit') }
         $output = $commands | & .\gradlew.bat browserE2eServer --offline --no-daemon 2>&1
         $code = $LASTEXITCODE
     } finally { Pop-Location }
-    $output | Where-Object { $_ -match 'E2E_STAGE_|AUTH_BROWSER_VERIFIED|BROWSER_E2E_READY|SYNTHETIC_CARD_FIXTURE_READY|CARD_BROWSER_HTTP_VERIFIED|FIXTURE_COMMAND_REJECTED|CSRF rejected request|BUILD SUCCESSFUL|BUILD FAILED' } | ForEach-Object { Write-Output $_ }
+    $output | Where-Object { $_ -match 'E2E_STAGE_|DEPOSIT_|AUTH_BROWSER_VERIFIED|BROWSER_E2E_READY|SYNTHETIC_CARD_FIXTURE_READY|CARD_BROWSER_HTTP_VERIFIED|FIXTURE_COMMAND_REJECTED|CSRF rejected request|BUILD SUCCESSFUL|BUILD FAILED' } | ForEach-Object { Write-Output $_ }
+    if ($DepositOnly) {
+        if ($code -ne 0 -or -not ($output -match 'DEPOSIT_BROWSER_COMPLETE') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Deposit browser E2E failed or incomplete (Gradle exit $code)" }
+        return
+    }
     if ($HistoryOnly) {
         if ($code -ne 0 -or -not ($output -match 'E2E_STAGE_INFORMATION_HISTORY_CLICK_RELOAD_VERIFIED') -or -not ($output -match 'E2E_STAGE_ACTION_HISTORY_CLICK_VERIFIED') -or -not ($output -match 'E2E_STAGE_BOTH_HISTORY_LINKS_VERIFIED') -or -not ($output -match 'E2E_STAGE_STALE_HISTORY_CLICK_VERIFIED') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "History browser E2E failed or incomplete (Gradle exit $code)" }
         return
@@ -93,6 +127,7 @@ try {
     }
     if ($code -ne 0 -or -not ($output -match 'AUTH_BROWSER_VERIFIED') -or -not ($output -match 'E2E_STAGE_EMERGENCY_SMOKE_VERIFIED') -or -not ($output -match 'E2E_STAGE_INTAKE_EDGES_VERIFIED') -or -not ($output -match 'E2E_STAGE_CROSS_OWNER_VERIFIED') -or -not ($output -match 'E2E_STAGE_NETWORK_ERROR_VERIFIED') -or -not ($output -match 'E2E_STAGE_QUALIFIER_UI_VERIFIED') -or -not ($output -match 'E2E_STAGE_STALE_VERIFIED') -or -not ($output -match 'E2E_STAGE_EXPLICIT_CATEGORY_VERIFIED') -or -not ($output -match 'E2E_STAGE_ACTION_REPORT_RELOADED') -or -not ($output -match 'E2E_STAGE_INFORMATION_HISTORY_CLICK_RELOAD_VERIFIED') -or -not ($output -match 'E2E_STAGE_ACTION_HISTORY_CLICK_VERIFIED') -or -not ($output -match 'E2E_STAGE_BOTH_HISTORY_LINKS_VERIFIED') -or -not ($output -match 'E2E_STAGE_STALE_HISTORY_CLICK_VERIFIED') -or -not ($output -match 'SYNTHETIC_CARD_FIXTURE_READY') -or -not ($output -match '^CARD_BROWSER_HTTP_VERIFIED$') -or ($output -match 'FIXTURE_COMMAND_REJECTED')) { throw "Browser E2E failed or incomplete (Gradle exit $code)" }
 } finally {
+    if ($kure -and -not $kure.HasExited) { Stop-Process -Id $kure.Id -ErrorAction SilentlyContinue }
     if ($frontend -and -not $frontend.HasExited) { Stop-Process -Id $frontend.Id -ErrorAction SilentlyContinue }
     $cleanupFailure = $null
     if ($containerId -and $containerId -match '^[a-f0-9]{64}$') {
@@ -106,6 +141,13 @@ try {
         } catch { $cleanupFailure = "E2E container cleanup failed; inspect ID $containerId before removal" }
     }
     Remove-Item -LiteralPath $tempOut, $tempErr -ErrorAction SilentlyContinue
+    if ($kureOut) { Remove-Item -LiteralPath $kureOut, $kureErr -ErrorAction SilentlyContinue }
+    if ($kureIndex -and (Test-Path -LiteralPath $kureIndex)) {
+        $resolvedIndex = (Resolve-Path -LiteralPath $kureIndex).Path
+        $expectedIndex = Join-Path ([System.IO.Path]::GetTempPath()) ('fh-deposit-e2e-index-' + $runId)
+        if ($resolvedIndex -eq $expectedIndex) { Remove-Item -LiteralPath $resolvedIndex -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     Remove-Item Env:POSTGRES_PASSWORD, Env:E2E_DB_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:KURE_RUNTIME_ENABLED, Env:KURE_RUNTIME_ENDPOINT, Env:DEPOSIT_E2E_VERIFIED_PDF -ErrorAction SilentlyContinue
     if ($cleanupFailure) { throw $cleanupFailure }
 }
