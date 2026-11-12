@@ -255,6 +255,8 @@ public final class FollowUpBrowserE2EHarness {
                     case "emergency-smoke" -> BrowserE2EEmergencySmoke.run(context, jdbc, guard);
                     case "intake-edges" -> BrowserE2EIntakeEdges.run(context, jdbc, guard);
                     case "card-browser" -> BrowserE2ECardFlow.run(context, jdbc, guard);
+                    case "seed-deposit" -> BrowserE2EDepositFixture.seed(context, jdbc, guard);
+                    case "deposit-browser" -> BrowserE2EDepositFlow.run(context, jdbc, guard);
                     case "seed-action" -> BrowserE2EActionFixture.seed(context, jdbc, guard);
                     case "action-smoke" -> BrowserE2EActionSmoke.run(context, jdbc, guard);
                     case "overlap-account" -> overlapAccount(versions, guard);
@@ -281,6 +283,11 @@ public final class FollowUpBrowserE2EHarness {
                 }
             } catch (Exception exception) {
                 String reason = exception.getMessage();
+                if ("deposit-browser".equals(parts[0]) && exception.getStackTrace().length > 0) {
+                    var location = exception.getStackTrace()[0];
+                    System.out.println("DEPOSIT_E2E_FAILURE_LOCATION " + location.getClassName()
+                            + "." + location.getMethodName() + ":" + location.getLineNumber());
+                }
                 System.out.println("FIXTURE_COMMAND_REJECTED " + exception.getClass().getSimpleName()
                         + (reason != null && reason.matches("E2E_[A-Z0-9_]+") ? " " + reason : ""));
             }

@@ -100,6 +100,8 @@ public class SecurityConfig {
 
                     .requestMatchers("/api/v1/account/**")
                     .authenticated()
+                    .requestMatchers("/api/v1/source-review/**")
+                    .authenticated()
 
                     .requestMatchers(
                             HttpMethod.GET,
@@ -137,6 +139,7 @@ public class SecurityConfig {
                             HttpMethod.POST,
                             "/api/v1/consultations/*/understanding",
                             "/api/v1/consultations/*/official-information/search",
+                            "/api/v1/consultations/*/general-information/search",
                             "/api/v1/consultations/*/information-report/prepare",
                             "/api/v1/consultations/*/information-intake/confirm",
                             "/api/v1/consultations/*/information-intake/confirm-topic",

@@ -41,6 +41,17 @@ class InformationExplanationComposerTest {
     }
 
     @Test
+    void disabledAiUsesOnlyReviewedEvidenceWithoutCallingProvider() {
+        var snapshot = snapshot(evidence("COMMON", null));
+        var offline = new InformationExplanationComposer((InformationExplanationService) null);
+        var result = offline.compose(snapshot);
+        assertThat(result.selected()).containsExactlyElementsOf(snapshot.evidence());
+        assertThat(result.explanations().getFirst().mode()).isEqualTo("EXTRACTIVE_FALLBACK");
+        assertThat(result.explanations().getFirst().easyText())
+                .contains("지원 문장", "조건 문장", "예외 문장");
+    }
+
+    @Test
     void unreviewedSnapshotCannotUseFallback() {
         var good = snapshot(evidence("COMMON", null));
         var bad = new InformationEvidenceSnapshot(good.consultationId(), 1, 0, good.scenario(),

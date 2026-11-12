@@ -4,6 +4,8 @@ import com.financialhelper.account.AccountProperties;
 import com.financialhelper.account.InputLimitException;
 import com.financialhelper.guest.GuestSessionService;
 import com.financialhelper.procedure.CardCaseFactExtractor;
+import com.financialhelper.retrieval.GeneralTopicCoverageService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,10 +19,18 @@ public class InformationIntakeService {
     private final GuestSessionService sessions;
     private final ConsultationRepository consultations;
     private final AccountProperties properties;
+    private final GeneralTopicCoverageService topicCoverage;
 
     public InformationIntakeService(GuestSessionService sessions, ConsultationRepository consultations,
             AccountProperties properties) {
+        this(sessions, consultations, properties, null);
+    }
+
+    @Autowired
+    public InformationIntakeService(GuestSessionService sessions, ConsultationRepository consultations,
+            AccountProperties properties, GeneralTopicCoverageService topicCoverage) {
         this.sessions = sessions; this.consultations = consultations; this.properties = properties;
+        this.topicCoverage = topicCoverage;
     }
 
     @Transactional(readOnly = true)
@@ -89,7 +99,7 @@ public class InformationIntakeService {
                 .orElseThrow(ConsultationNotFoundException::new);
     }
 
-    private static State state(Consultation c) {
+    private State state(Consultation c) {
         if (!c.isInformationIntake() && c.getCategory() != null) throw new InvalidConsultationStateException();
         List<ConsultationScenario> candidates = InformationIntakeClassifier.candidates(c.getSituationText());
         var topicResult = FinancialTopicClassifier.classify(c.getSituationText());
@@ -99,7 +109,10 @@ public class InformationIntakeService {
         boolean unsupported = candidates.size() == 1 && candidates.getFirst() == ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE
                 && CardCaseFactExtractor.hasExplicitUnsupportedProduct(c.getSituationText());
         boolean mixed = topics.size() > 1;
-        String status = c.getConfirmedInformationTopic() != null ? "TOPIC_CONFIRMED_NO_SEARCH"
+        boolean hasGeneralCorpus = c.getConfirmedInformationTopic() != null && topicCoverage != null
+                && topicCoverage.hasCurrentCommonCorpus(c.getConfirmedInformationTopic());
+        String status = c.getConfirmedInformationTopic() != null
+                ? hasGeneralCorpus ? "TOPIC_CONFIRMED_SEARCH_AVAILABLE" : "TOPIC_CONFIRMED_NO_SEARCH"
                 : c.isInformationIntake() && c.getScenario() != null ? "READY"
                 : unsupported ? "UNSUPPORTED_SCOPE"
                 : candidates.size() > 1 ? "NEEDS_CLARIFICATION"
@@ -116,7 +129,10 @@ public class InformationIntakeService {
                 : topics.size() == 1 ? "INFORMATION" : "NONE";
         return new State(c.getId(), c.getCaseInputRevision(), status, c.getSituationText(), candidates,
                 c.isInformationIntake() ? c.getScenario() : null, topics, hint,
-                c.getConfirmedInformationTopic(), routingStatus, route, "NOT_EVALUATED", false);
+                c.getConfirmedInformationTopic(), routingStatus, route,
+                c.getConfirmedInformationTopic() == null ? "NOT_EVALUATED"
+                        : hasGeneralCorpus ? "REVIEWED_READY_CORPUS" : "NO_APPROVED_READY_EVIDENCE",
+                hasGeneralCorpus);
     }
 
     public record State(UUID consultationId, long caseInputRevision, String status, String situationText,

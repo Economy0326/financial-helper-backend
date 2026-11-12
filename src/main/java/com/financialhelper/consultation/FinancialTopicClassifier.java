@@ -15,7 +15,11 @@ final class FinancialTopicClassifier {
         boolean card = has(text, "카드") && has(text, "분실", "도난", "잃어버", "부정사용", "결제", "승인", "취소", "한도");
         if (card) topics.add(FinancialTopic.CARD_PAYMENTS);
         if (has(text, "예금자보호", "착오송금", "무단이체")
-                || (has(text, "예금", "계좌", "적금", "송금") && has(text, "보호", "이체", "잔액", "금리", "반환", "출금")))
+                || (has(text, "예금", "계좌", "적금", "송금") && has(text, "보호", "이체", "잔액", "금리", "반환", "출금"))
+                || (has(text, "통장") && has(text, "은행", "금융기관") && has(text, "여러", "보호", "한도"))
+                || (has(text, "예금") && has(text, "서로 다른 금융기관", "다른 금융기관"))
+                || (has(text, "isa", "퇴직연금", "연금저축") && has(text, "보호", "한도"))
+                || (has(text, "원금") && has(text, "소정의 이자")))
             topics.add(FinancialTopic.DEPOSITS_ACCOUNTS);
         if (has(text, "신용점수", "중도상환수수료")
                 || (has(text, "대출", "신용") && has(text, "상환", "금리", "수수료", "점수", "한도", "심사")))

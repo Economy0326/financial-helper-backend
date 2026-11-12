@@ -12,6 +12,7 @@ import com.financialhelper.consultation.Consultation;
 import com.financialhelper.consultation.ConsultationCategory;
 import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.ConsultationScenario;
+import com.financialhelper.consultation.FinancialTopic;
 import com.financialhelper.guest.GuestSession;
 import com.financialhelper.guest.GuestSessionRepository;
 import com.financialhelper.guest.GuestSessionTokenService;
@@ -140,6 +141,73 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         assertThat(response.candidates().getFirst().sourceChunkId()).isEqualTo(chunk.getId());
         assertThat(response.candidates().getFirst().retrievalGenerationId()).isEqualTo(generation.getId());
         verifyNoInteractions(law, openAi);
+    }
+
+    @Test
+    void topicReviewIsSeparateFromScenarioAndRequiresScopeDateAndReadyChunk() {
+        UUID id = UUID.randomUUID();
+        SourceDocument document = chunk.getSourceDocument();
+        jdbc.update("""
+                INSERT INTO source_applicability_review (id, source_document_id, reviewed_raw_sha256,
+                    scope_kind, scenario, review_target_kind, financial_topic, institution_name,
+                    applicability_start_date, applicability_end_date, review_status,
+                    conditions_reviewed, exceptions_reviewed, reviewed_by, reviewed_at)
+                VALUES (?, ?, ?, 'INSTITUTION_SPECIFIC', NULL, 'TOPIC', 'DEPOSITS_ACCOUNTS',
+                    '㈜KB국민카드', DATE '2025-01-01', DATE '2026-12-31',
+                    'APPROVED', TRUE, TRUE, 'synthetic fixture', CURRENT_TIMESTAMP)
+                """, id, document.getId(), document.getRawSha256());
+        jdbc.update("""
+                INSERT INTO source_applicability_chunk
+                    (review_id, source_document_id, source_chunk_id, evidence_role)
+                VALUES (?, ?, ?, 'SUPPORT')
+                """, id, document.getId(), chunk.getId());
+        var ready = new RetrievalCorpusSnapshotService(indexings).readyChunks(generation.getId());
+        assertThat(applicability.eligibleTopic(FinancialTopic.DEPOSITS_ACCOUNTS,
+                LocalDate.of(2026, 1, 2), "㈜KB국민카드", null, ready)).containsKey(chunk.getId());
+        assertThat(applicability.eligibleTopic(FinancialTopic.DEPOSITS_ACCOUNTS,
+                LocalDate.of(2026, 1, 2), null, null, ready)).isEmpty();
+        assertThat(applicability.eligibleTopic(FinancialTopic.INSURANCE,
+                LocalDate.of(2026, 1, 2), "㈜KB국민카드", null, ready)).isEmpty();
+        assertThat(applicability.eligibleTopic(FinancialTopic.DEPOSITS_ACCOUNTS,
+                LocalDate.of(2027, 1, 2), "㈜KB국민카드", null, ready)).isEmpty();
+        assertThat(applicability.eligible(request("㈜KB국민카드", "개인 신용카드",
+                LocalDate.of(2026, 1, 2)), ready)).isEmpty();
+        jdbc.update("""
+                UPDATE source_applicability_review SET review_status = 'REVOKED',
+                    revoked_at = CURRENT_TIMESTAMP, revoked_by = 'synthetic fixture',
+                    revocation_reason = 'test revocation' WHERE id = ?
+                """, id);
+        assertThat(applicability.eligibleTopic(FinancialTopic.DEPOSITS_ACCOUNTS,
+                LocalDate.of(2026, 1, 2), "㈜KB국민카드", null, ready)).isEmpty();
+    }
+
+    @Test
+    void generalTopicHttpSearchRejectsUnreviewedCorpusAndProtectsRevisionOwnershipAndCsrf() throws Exception {
+        String raw = tokens.generateRawToken();
+        var guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
+        var consultation = new Consultation(guest, NOW);
+        consultation.updateInformationIntake("예금자보호 한도가 얼마인가요?", NOW.plusSeconds(1));
+        consultation.confirmInformationTopic(FinancialTopic.DEPOSITS_ACCOUNTS, NOW.plusSeconds(2));
+        consultation = consultations.saveAndFlush(consultation);
+        String url = "/api/v1/consultations/" + consultation.getId() + "/general-information/search";
+        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
+        String body = "{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision()
+                + ",\"timeScope\":\"CURRENT\"}";
+        mvc.perform(post(url).cookie(cookie).with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("INSUFFICIENT_EVIDENCE"))
+                .andExpect(jsonPath("$.candidates.length()").value(0));
+        mvc.perform(post(url).cookie(cookie).contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(post(url).cookie(cookie).with(csrf()).contentType("application/json")
+                        .content("{\"expectedCaseInputRevision\":0,\"timeScope\":\"CURRENT\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("STALE"));
+        String otherRaw = tokens.generateRawToken();
+        guests.saveAndFlush(new GuestSession(tokens.hashToken(otherRaw), NOW, NOW.plusYears(2)));
+        mvc.perform(post(url).cookie(new Cookie(GuestSessionCookie.NAME, otherRaw))
+                        .with(csrf()).contentType("application/json").content(body))
+                .andExpect(status().isNotFound());
+        verifyNoInteractions(openAi, law);
     }
 
     @Test

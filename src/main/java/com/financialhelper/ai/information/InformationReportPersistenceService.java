@@ -21,15 +21,40 @@ public class InformationReportPersistenceService {
     private final ConsultationRepository consultations;
     private final InformationReportRepository reports;
     private final InformationEvidenceSnapshotService assembler;
+    private final GeneralTopicEvidenceSnapshotService topicAssembler;
     private final JsonMapper mapper;
 
     public InformationReportPersistenceService(GuestSessionService sessions, ConsultationRepository consultations,
-            InformationReportRepository reports, InformationEvidenceSnapshotService assembler, JsonMapper mapper) {
+            InformationReportRepository reports, InformationEvidenceSnapshotService assembler,
+            GeneralTopicEvidenceSnapshotService topicAssembler, JsonMapper mapper) {
         this.sessions = sessions;
         this.consultations = consultations;
         this.reports = reports;
         this.assembler = assembler;
+        this.topicAssembler = topicAssembler;
         this.mapper = mapper;
+    }
+
+    @Transactional
+    public InformationReport saveTopic(UUID id, String token, InformationEvidenceSnapshot expected,
+            com.financialhelper.retrieval.GeneralTopicInformationResponse candidates,
+            List<InformationEvidenceSnapshot.Evidence> selected,
+            List<InformationExplanation> explanations) {
+        var session = sessions.requireValidSession(token);
+        var consultation = consultations.findForUpdateByIdAndGuestSession_Id(id, session.getId())
+                .orElseThrow(ConsultationNotFoundException::new);
+        var current = topicAssembler.assemble(id, token, candidates);
+        if (!expected.equals(current) || selected.isEmpty() || !current.evidence().containsAll(selected)) {
+            throw new IllegalStateException("general information evidence changed before save");
+        }
+        OffsetDateTime generatedAt = nextGeneratedAt(id);
+        try {
+            return reports.saveAndFlush(new InformationReport(consultation, current,
+                    mapper.writeValueAsString(candidates), mapper.writeValueAsString(current),
+                    mapper.writeValueAsString(selected), mapper.writeValueAsString(explanations), generatedAt));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("general information report could not be serialized");
+        }
     }
 
     @Transactional
@@ -46,11 +71,7 @@ public class InformationReportPersistenceService {
             throw new IllegalStateException("information evidence changed before save");
         }
         // The consultation row lock serializes writers. PostgreSQL stores timestamps at microsecond precision.
-        OffsetDateTime generatedAt = OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
-        var previous = reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(id);
-        if (previous.isPresent() && !generatedAt.isAfter(previous.get().getGeneratedAt())) {
-            generatedAt = previous.get().getGeneratedAt().plus(1, ChronoUnit.MICROS);
-        }
+        OffsetDateTime generatedAt = nextGeneratedAt(id);
         try {
             return reports.saveAndFlush(new InformationReport(consultation, current,
                     mapper.writeValueAsString(candidates), mapper.writeValueAsString(current),
@@ -59,6 +80,15 @@ public class InformationReportPersistenceService {
         } catch (JacksonException exception) {
             throw new IllegalStateException("information report could not be serialized");
         }
+    }
+
+    private OffsetDateTime nextGeneratedAt(UUID id) {
+        OffsetDateTime generatedAt = OffsetDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
+        var previous = reports.findFirstByConsultation_IdOrderByGeneratedAtDescIdDesc(id);
+        if (previous.isPresent() && !generatedAt.isAfter(previous.get().getGeneratedAt())) {
+            generatedAt = previous.get().getGeneratedAt().plus(1, ChronoUnit.MICROS);
+        }
+        return generatedAt;
     }
 
     @Transactional(readOnly = true)
