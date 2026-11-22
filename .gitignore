@@ -67,3 +67,4 @@ cookies*.txt
 var/retrieval-indexes/
 __pycache__/
 *.pyc
+/docs/evaluation-v3-20261120/active_corpus.json
