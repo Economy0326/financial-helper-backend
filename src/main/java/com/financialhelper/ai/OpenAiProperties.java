@@ -15,12 +15,6 @@ public record OpenAiProperties(
 
     public OpenAiProperties {
 
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalArgumentException(
-                    "OPENAI_API_KEY is required when AI is enabled"
-            );
-        }
-
         if (model == null || model.isBlank()) {
             throw new IllegalArgumentException(
                     "OPENAI_MODEL must not be blank"

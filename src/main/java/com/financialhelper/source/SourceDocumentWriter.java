@@ -38,6 +38,18 @@ public class SourceDocumentWriter {
             SourceIngestionData.Parsed parsed
     ) {
 
+        // Existing records remain readable; every new HTML write must contain text only.
+        if (snapshot.acquisitionType() == SourceAcquisitionType.HTML) {
+            byte[] text = parsed.normalizedContent().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (!"text/plain;charset=UTF-8".equals(parsed.contentType())
+                    || !java.util.Arrays.equals(text, parsed.originalContent())
+                    || parsed.normalizedContent().indexOf('<') >= 0
+                    || !SourceHashing.sha256(text).equals(parsed.rawSha256())
+                    || !parsed.rawSha256().equals(parsed.contentSha256())) {
+                throw new SourceIngestionException("SOURCE_HTML_TEXT_ONLY_REQUIRED", "Generic HTML must use the reviewed text-only registration path");
+            }
+        }
+
         SourceRegistry currentSource =
                 sourceRegistryRepository
 

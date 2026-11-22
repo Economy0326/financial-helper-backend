@@ -1,0 +1,6 @@
+﻿measure,numerator,denominator,interpretation
+initial_known_target,3,7,known target only; not comprehensive intent judgments
+final_known_target,5,7,known target only; not comprehensive intent judgments
+selected_path_target,2,3,known target only; not comprehensive intent judgments
+clear_question_extra_clarification,0,2,known target only; not comprehensive intent judgments
+unsupported_no_answer,2,2,known target only; not comprehensive intent judgments

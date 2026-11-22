@@ -31,6 +31,9 @@ public class RetrievalGenerationIndexingService {
     /** 외부에서 build하고 결과를 저장한 뒤 singleton pointer를 전환한다. */
     public void buildAndActivate(UUID generationId) {
         RetrievalGeneration generation = persistence.inspect(generationId);
+        if (RetrievalGenerationIndexingPersistenceService.includesDocumentClaims(generation.getMetadataJson())) {
+            throw new IllegalStateException("Document claim generations cannot be activated until final rights revalidation is implemented");
+        }
         compatibility.requireCompatible(generation, runtime.metadata());
 
         RetrievalGenerationIndexingPersistenceService.GenerationBuildPlan plan =
@@ -50,6 +53,27 @@ public class RetrievalGenerationIndexingService {
             activeGeneration.activate(generationId);
         } catch (RuntimeException exception) {
             persistence.failIfProcessing(generationId, exception.getMessage());
+            throw exception;
+        }
+    }
+
+    /** Builds an explicitly claimed candidate but never activates it. */
+    public void buildPreparedMixed(UUID generationId) {
+        RetrievalGeneration generation = persistence.inspect(generationId);
+        if (!RetrievalGenerationIndexingPersistenceService.includesDocumentClaims(generation.getMetadataJson()))
+            throw new IllegalStateException("Not a mixed candidate");
+        compatibility.requireCompatible(generation, runtime.metadata());
+        var plan = persistence.claimPreparedMixed(generationId);
+        try {
+            var result = runtime.build(plan.request());
+            var readiness = runtime.readiness(generationId);
+            if (!generationId.equals(readiness.generationId()) || !readiness.ready()
+                    || readiness.documentCount() != plan.expectedDocumentIds().size())
+                throw new KureRuntimeException("KURE runtime readiness does not cover the requested generation");
+            persistence.complete(plan, result);
+        } catch (RuntimeException exception) {
+            try { persistence.cancelMixedAttempt(generationId); }
+            catch (IllegalStateException alreadyCancelled) { exception.addSuppressed(alreadyCancelled); }
             throw exception;
         }
     }

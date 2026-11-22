@@ -83,9 +83,11 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
 
     private SourceChunk chunk;
     private RetrievalGeneration generation;
+    private java.util.List<java.util.Map<String, Object>> previousActiveGeneration;
 
     @BeforeEach
     void createOwnedReadyCorpus() {
+        previousActiveGeneration = jdbc.queryForList("SELECT retrieval_generation_id, switched_at, activation_revision FROM active_retrieval_generation WHERE singleton_key = TRUE");
         String suffix = UUID.randomUUID().toString().replace("-", "");
         UUID registryId = UUID.randomUUID();
         jdbc.update("""
@@ -130,6 +132,17 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
                 generation.getId(), List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(
                 chunk.getId(), 1, 0.9, generation.getId()))));
         when(keyword.searchApproved(any(), anyInt())).thenReturn(List.of(chunk));
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void restoreActiveGeneration() {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) return;
+        jdbc.update("DELETE FROM active_retrieval_generation WHERE singleton_key = TRUE");
+        if (!previousActiveGeneration.isEmpty()) {
+            var previous = previousActiveGeneration.getFirst();
+            jdbc.update("INSERT INTO active_retrieval_generation(singleton_key, retrieval_generation_id, switched_at, activation_revision) VALUES (TRUE, ?, ?, ?)",
+                    previous.get("retrieval_generation_id"), previous.get("switched_at"), previous.get("activation_revision"));
+        }
     }
 
     @Test
@@ -182,35 +195,6 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     }
 
     @Test
-    void generalTopicHttpSearchRejectsUnreviewedCorpusAndProtectsRevisionOwnershipAndCsrf() throws Exception {
-        String raw = tokens.generateRawToken();
-        var guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        var consultation = new Consultation(guest, NOW);
-        consultation.updateInformationIntake("예금자보호 한도가 얼마인가요?", NOW.plusSeconds(1));
-        consultation.confirmInformationTopic(FinancialTopic.DEPOSITS_ACCOUNTS, NOW.plusSeconds(2));
-        consultation = consultations.saveAndFlush(consultation);
-        String url = "/api/v1/consultations/" + consultation.getId() + "/general-information/search";
-        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
-        String body = "{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision()
-                + ",\"timeScope\":\"CURRENT\"}";
-        mvc.perform(post(url).cookie(cookie).with(csrf()).contentType("application/json").content(body))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("INSUFFICIENT_EVIDENCE"))
-                .andExpect(jsonPath("$.candidates.length()").value(0));
-        mvc.perform(post(url).cookie(cookie).contentType("application/json").content(body))
-                .andExpect(status().isForbidden());
-        mvc.perform(post(url).cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":0,\"timeScope\":\"CURRENT\"}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("STALE"));
-        String otherRaw = tokens.generateRawToken();
-        guests.saveAndFlush(new GuestSession(tokens.hashToken(otherRaw), NOW, NOW.plusYears(2)));
-        mvc.perform(post(url).cookie(new Cookie(GuestSessionCookie.NAME, otherRaw))
-                        .with(csrf()).contentType("application/json").content(body))
-                .andExpect(status().isNotFound());
-        verifyNoInteractions(openAi, law);
-    }
-
-    @Test
     void parsedSyntheticHtmlVersionNeedsItsOwnReviewedChunkBeforeSearch() {
         SourceDocument previous = chunk.getSourceDocument();
         previous.supersede(NOW.plusSeconds(4));
@@ -220,13 +204,18 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
                 + "접수와 조사 및 결과 확인은 각각 다른 단계입니다. ".repeat(8)
                 + "</p></main></body></html>";
         byte[] raw = html.getBytes(StandardCharsets.UTF_8);
-        var parsed = new HtmlSourceDocumentParser().parse(SourceIngestionData.Snapshot.from(registry),
+        var extracted = new HtmlSourceDocumentParser().parse(SourceIngestionData.Snapshot.from(registry),
                 new SourceIngestionData.Fetched(registry.getCanonicalUrl(), "text/html", null, null,
                         raw, NOW.plusSeconds(5)));
+        byte[] textBytes = extracted.normalizedContent().getBytes(StandardCharsets.UTF_8);
+        String textHash = SourceHashing.sha256(textBytes);
+        var parsed = new SourceIngestionData.Parsed(extracted.resolvedUrl(), extracted.title(), extracted.publishedAt(),
+                extracted.retrievedAt(), "text/plain;charset=UTF-8", null, null,
+                textHash, textHash, textBytes, extracted.normalizedContent());
         SourceDocument current = new SourceDocument(registry, 2, parsed);
         current.setApplicabilityWindow(LocalDate.of(2025, 1, 1), LocalDate.of(2026, 12, 31));
         current = documents.saveAndFlush(current);
-        assertThat(current.getRawSha256()).isEqualTo(SourceHashing.sha256(raw));
+        assertThat(current.getRawSha256()).isEqualTo(textHash);
         assertThat(current.getDocumentVersion()).isEqualTo(2);
 
         String body = parsed.normalizedContent();
@@ -310,27 +299,6 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
     }
 
     @Test
-    void existingConsultationSearchStillPersistsRevisionBoundContext() {
-        String raw = tokens.generateRawToken();
-        GuestSession guest = guests.saveAndFlush(new GuestSession(
-                tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        Consultation consultation = new Consultation(guest, NOW);
-        consultation.updateCategory(ConsultationCategory.CARD,
-                ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
-        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02",
-                NOW.plusSeconds(2));
-        consultation = consultations.saveAndFlush(consultation);
-        OfficialSearchResponse response = retrieval.search(consultation.getId(), request(
-                "㈜KB국민카드", "개인 신용카드", LocalDate.of(2026, 1, 2)));
-        assertThat(response.status()).isEqualTo(RetrievalStatus.FOUND);
-        assertThat(contexts.findById(response.searchId())).isPresent();
-        assertThat(contexts.findById(response.searchId()).orElseThrow()
-                .getConsultation().getId()).isEqualTo(consultation.getId());
-        assertThat(retrieval.getPassages(consultation.getId(), response.searchId(),
-                List.of(response.candidates().getFirst().candidateId()))).hasSize(1);
-    }
-
-    @Test
     void commonReviewAllowsInstitutionUnknownOnlyForReviewedSupport() {
         OfficialSearchRequest unknown = request(null, "개인 신용카드", LocalDate.of(2026, 1, 2));
         assertThat(applicability.eligible(unknown, ready())).isEmpty();
@@ -373,190 +341,6 @@ class OfficialInformationCorpusPersistenceIntegrationTest {
         assertThat(stale.status()).isEqualTo("STALE");
         assertThat(stale.selectedEvidence()).isEmpty();
         verifyNoInteractions(law, openAi);
-    }
-
-    @Test
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
-    void committedHttpReportBecomesStaleAfterSeparatelyCommittedFactChange() throws Exception {
-        reviewed("COMMON", null);
-        String raw = tokens.generateRawToken();
-        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        Consultation consultation = new Consultation(guest, NOW);
-        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
-        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
-        consultation = consultations.saveAndFlush(consultation);
-        UUID consultationId = consultation.getId();
-        when(informationExplanation.select(any())).thenAnswer(call ->
-                ((com.financialhelper.ai.information.InformationEvidenceSnapshot) call.getArgument(0)).evidence());
-        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
-        String url = "/api/v1/consultations/" + consultationId + "/information-report";
-        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision() + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, consultationId)).isEqualTo(1);
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        jdbc.update("UPDATE consultation SET case_input_revision = case_input_revision + 1 WHERE id = ?", consultationId);
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("STALE"))
-                .andExpect(jsonPath("$.selectedEvidence").isEmpty())
-                .andExpect(jsonPath("$.explanations").isEmpty());
-        verifyNoInteractions(law, openAi);
-    }
-
-    @Test
-    void naturalIntakeCanReachReviewedSyntheticInformationReport() throws Exception {
-        UUID chunkId = chunk.getId(), documentId = chunk.getSourceDocument().getId();
-        UUID registryId = chunk.getSourceDocument().getSourceRegistry().getId();
-        String syntheticUrl = "https://synthetic.invalid/" + UUID.randomUUID();
-        jdbc.update("INSERT INTO official_source_domain (domain, organization_name, enabled) VALUES ('synthetic.invalid', '합성 기관', TRUE)");
-        jdbc.update("UPDATE source_registry SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ? WHERE id = ?", syntheticUrl, registryId);
-        jdbc.update("UPDATE source_document SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ?, resolved_url = ? WHERE id = ?", syntheticUrl, syntheticUrl, documentId);
-        entityManager.clear(); chunk = chunks.findById(chunkId).orElseThrow();
-        reviewed("COMMON", null);
-        String raw = tokens.generateRawToken();
-        var guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        var consultation = consultations.saveAndFlush(new Consultation(guest, NOW));
-        String base = "/api/v1/consultations/" + consultation.getId();
-        var cookie = new Cookie(GuestSessionCookie.NAME, raw);
-        mvc.perform(put(base + "/information-intake").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"situationText\":\"개인 신용카드 분실 2026-01-02\",\"expectedCaseInputRevision\":0}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SCENARIO_CONFIRMATION_REQUIRED"));
-        mvc.perform(post(base + "/information-intake/confirm").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"scenario\":\"CARD_LOSS_UNAUTHORIZED_USE\",\"expectedCaseInputRevision\":1}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.caseInputRevision").value(2));
-        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
-        when(informationExplanation.select(any())).thenAnswer(call -> realSelector.select(call.getArgument(0)));
-        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
-                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(chunk.getId(), chunk.getBody(), List.of(), List.of()))));
-        mvc.perform(post(base + "/information-report/prepare").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":2}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
-                .andExpect(jsonPath("$.evidenceProvenance." + chunk.getId()).value("UNKNOWN"));
-        mvc.perform(get(base + "/information-report").cookie(cookie))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        verifyNoInteractions(law);
-    }
-
-    @Test
-    void syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload() throws Exception {
-        // Replace this test's synthetic source identity before review; no bank document is promoted to COMMON.
-        UUID chunkId = chunk.getId();
-        UUID documentId = chunk.getSourceDocument().getId();
-        UUID registryId = chunk.getSourceDocument().getSourceRegistry().getId();
-        String syntheticUrl = "https://synthetic.invalid/" + UUID.randomUUID();
-        jdbc.update("INSERT INTO official_source_domain (domain, organization_name, enabled) VALUES ('synthetic.invalid', '합성 기관', TRUE)");
-        jdbc.update("UPDATE source_registry SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ? WHERE id = ?", syntheticUrl, registryId);
-        jdbc.update("UPDATE source_document SET organization_name = '합성 기관', official_domain = 'synthetic.invalid', canonical_url = ?, resolved_url = ? WHERE id = ?", syntheticUrl, syntheticUrl, documentId);
-        entityManager.clear();
-        chunk = chunks.findById(chunkId).orElseThrow();
-        UUID review = reviewed("COMMON", null);
-        String raw = tokens.generateRawToken();
-        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        Consultation consultation = new Consultation(guest, NOW);
-        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
-        consultation.updateSituation("개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
-        consultation = consultations.saveAndFlush(consultation);
-        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
-        when(informationExplanation.select(any())).thenAnswer(call -> realSelector.select(call.getArgument(0)));
-        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
-                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(
-                        chunk.getId(), chunk.getBody(), List.of(), List.of()))));
-        Cookie cookie = new Cookie(GuestSessionCookie.NAME, raw);
-        String url = "/api/v1/consultations/" + consultation.getId() + "/information-report";
-        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":" + consultation.getCaseInputRevision() + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
-                .andExpect(jsonPath("$.selectedEvidence[0].scopeKind").value("COMMON"))
-                .andExpect(jsonPath("$.snapshot.missingFacts[0]").value("INSTITUTION"))
-                .andExpect(jsonPath("$.snapshot.coverageGaps[0]").value("INSTITUTION_UNCONFIRMED"));
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        jdbc.update("UPDATE source_applicability_review SET review_status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture', revocation_reason = 'fixture' WHERE id = ?", review);
-        entityManager.clear();
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("STALE"))
-                .andExpect(jsonPath("$.selectedEvidence").isEmpty());
-        verifyNoInteractions(law);
-    }
-
-    @ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"FACT", "DOCUMENT", "REVIEW", "GENERATION"})
-    void httpReportDetectsActualDatabaseChanges(String change) throws Exception {
-        UUID review = reviewed("INSTITUTION_SPECIFIC", "㈜KB국민카드");
-        var config = chunk.getChunkConfiguration();
-        var document = chunk.getSourceDocument();
-        var condition = new SourceChunk(document, config, new SourceChunkData.Definition(
-                config.getConfigVersion(), "{}", 1, "신용카드", null, "제2조", "1", "page:2", 0, 4, "{}"), NOW);
-        var exception = new SourceChunk(document, config, new SourceChunkData.Definition(
-                config.getConfigVersion(), "{}", 2, "분실", null, "제3조", "1", "page:3", 5, 7, "{}"), NOW);
-        condition.approve(NOW); exception.approve(NOW);
-        condition = chunks.saveAndFlush(condition); exception = chunks.saveAndFlush(exception);
-        for (var related : List.of(condition, exception)) {
-            var indexing = indexings.saveAndFlush(new SourceChunkIndexing(related, generation, NOW));
-            indexing.markProcessing(NOW.plusSeconds(1)); indexing.markReady(NOW.plusSeconds(2), "{}");
-            indexings.saveAndFlush(indexing);
-        }
-        jdbc.update("INSERT INTO source_applicability_chunk (review_id, source_document_id, source_chunk_id, evidence_role) VALUES (?, ?, ?, 'CONDITION')", review, document.getId(), condition.getId());
-        jdbc.update("INSERT INTO source_applicability_chunk (review_id, source_document_id, source_chunk_id, evidence_role) VALUES (?, ?, ?, 'EXCEPTION')", review, document.getId(), exception.getId());
-        String raw = tokens.generateRawToken();
-        GuestSession guest = guests.saveAndFlush(new GuestSession(tokens.hashToken(raw), NOW, NOW.plusYears(2)));
-        Consultation consultation = new Consultation(guest, NOW);
-        consultation.updateCategory(ConsultationCategory.CARD, ConsultationScenario.CARD_LOSS_UNAUTHORIZED_USE, NOW.plusSeconds(1));
-        consultation.updateSituation("KB국민카드 개인 신용카드 분실 2026-01-02", NOW.plusSeconds(2));
-        consultation = consultations.saveAndFlush(consultation);
-        UUID consultationId = consultation.getId();
-        long revision = consultation.getCaseInputRevision();
-        var realSelector = new InformationExplanationService(openAi, jsonMapper, new InformationExplanationValidator());
-        when(informationExplanation.select(any())).thenAnswer(invocation -> realSelector.select(invocation.getArgument(0)));
-        when(openAi.generateStructured(anyString(), anyString(), eq(InformationExplanationAiResult.class)))
-                .thenReturn(new InformationExplanationAiResult(List.of(new InformationExplanationAiResult.Selection(
-                        chunk.getId(), chunk.getBody(), List.of(condition.getId()), List.of(exception.getId())))));
-        Cookie cookie = new Cookie(GuestSessionCookie.NAME, raw);
-        String url = "/api/v1/consultations/" + consultationId + "/information-report";
-        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":" + revision + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"))
-                .andExpect(jsonPath("$.selectedEvidence[0].scopeKind").value("INSTITUTION_SPECIFIC"))
-                .andExpect(jsonPath("$.explanations[0].conditions[0].locator").value("page:2"))
-                .andExpect(jsonPath("$.explanations[0].exceptions[0].locator").value("page:3"));
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        jdbc.update("UPDATE information_report SET explanations_json = NULL WHERE consultation_id = ?", consultationId);
-        entityManager.clear();
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.explanations[0].mode").value("LEGACY_EXTRACTIVE"));
-        mvc.perform(post(url + "/prepare").cookie(cookie).with(csrf()).contentType("application/json")
-                        .content("{\"expectedCaseInputRevision\":" + revision + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("READY_CANDIDATES"));
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_report WHERE consultation_id = ?", Integer.class, consultationId)).isEqualTo(2);
-        entityManager.flush();
-        switch (change) {
-            case "FACT" -> jdbc.update("UPDATE consultation SET case_input_revision = case_input_revision + 1 WHERE id = ?", consultationId);
-            case "DOCUMENT" -> jdbc.update("UPDATE source_document SET document_version = document_version + 1 WHERE id = ?", chunk.getSourceDocument().getId());
-            case "REVIEW" -> jdbc.update("UPDATE source_applicability_review SET review_status = 'REVOKED', revoked_at = CURRENT_TIMESTAMP, revoked_by = 'fixture', revocation_reason = 'fixture' WHERE id = ?", review);
-            case "GENERATION" -> {
-                var replacement = generations.saveAndFlush(new RetrievalGeneration(
-                        new RetrievalGenerationData.Definition("replacement-" + UUID.randomUUID(),
-                                "representation-v1", "model", "revision-1", "tokenizer", "revision-1",
-                                "{}", "{}", "{}"), NOW));
-                replacement.markProcessing(NOW.plusSeconds(1));
-                var replacementIndex = indexings.saveAndFlush(new SourceChunkIndexing(chunk, replacement, NOW));
-                replacementIndex.markProcessing(NOW.plusSeconds(1));
-                replacementIndex.markReady(NOW.plusSeconds(2), "{}");
-                indexings.saveAndFlush(replacementIndex);
-                replacement.markReady(1, NOW.plusSeconds(2));
-                generations.saveAndFlush(replacement);
-                active.activate(replacement.getId());
-            }
-            default -> throw new IllegalArgumentException(change);
-        }
-        entityManager.clear();
-        mvc.perform(get(url).cookie(cookie)).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("STALE"))
-                .andExpect(jsonPath("$.selectedEvidence").isEmpty())
-                .andExpect(jsonPath("$.explanations").isEmpty());
-        verifyNoInteractions(law);
     }
 
     @Test

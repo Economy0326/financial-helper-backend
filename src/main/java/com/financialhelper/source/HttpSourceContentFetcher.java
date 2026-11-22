@@ -10,10 +10,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Component
+@org.springframework.context.annotation.Primary
 public class HttpSourceContentFetcher
         implements SourceContentFetcher {
+
+    private static final Semaphore BODY_READ_SLOTS = new Semaphore(8);
 
     private final SourceIngestionProperties
             properties;
@@ -24,26 +32,24 @@ public class HttpSourceContentFetcher
     private final HttpClient
             httpClient;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public HttpSourceContentFetcher(
             SourceIngestionProperties properties,
             SourceUrlPolicy urlPolicy
     ) {
+        this(properties, urlPolicy, HttpClient.newBuilder()
+                .connectTimeout(properties.connectTimeout())
+                .followRedirects(HttpClient.Redirect.NEVER).build());
+    }
+
+    HttpSourceContentFetcher(SourceIngestionProperties properties, SourceUrlPolicy urlPolicy, HttpClient httpClient) {
         this.properties =
                 properties;
 
         this.urlPolicy =
                 urlPolicy;
 
-        this.httpClient =
-                HttpClient.newBuilder()
-                        .connectTimeout(
-                                properties.connectTimeout()
-                        )
-                        // 직접 redirect 목적지 검사를 하기 위해 NEVER로 설정
-                        .followRedirects(
-                                HttpClient.Redirect.NEVER
-                        )
-                        .build();
+        this.httpClient = httpClient;
     }
 
     @Override
@@ -132,10 +138,7 @@ public class HttpSourceContentFetcher
                 );
 
                 throw new SourceIngestionException(
-                        "SOURCE_HTTP_ERROR",
-                        "Official source returned HTTP "
-                                + status
-                );
+                        "SOURCE_HTTP_ERROR", "Official source returned HTTP " + status, status, currentUri.toString());
             }
 
             // 응답 크기 제한
@@ -177,9 +180,8 @@ public class HttpSourceContentFetcher
 
                     body,
 
-                    OffsetDateTime.now(
-                            ZoneOffset.UTC
-                    )
+                    OffsetDateTime.now(ZoneOffset.UTC),
+                    status
             );
         }
 
@@ -213,6 +215,8 @@ public class HttpSourceContentFetcher
                     exception
             );
 
+        } catch (java.net.http.HttpTimeoutException exception) {
+            throw new SourceIngestionException("SOURCE_REQUEST_TIMEOUT", "Official source request timed out", exception);
         } catch (
                 IOException exception
         ) {
@@ -238,33 +242,35 @@ public class HttpSourceContentFetcher
             );
         }
 
-        try (inputStream) {
-
-            byte[] bytes =
-                    inputStream.readNBytes(
-                            (int) maxBytes + 1
-                    );
-
-            if (
-                    bytes.length
-                            > maxBytes
-            ) {
-                throw new SourceIngestionException(
-                        "SOURCE_RESPONSE_TOO_LARGE",
-                        "Official source response exceeded the configured limit"
-                );
+        if (!BODY_READ_SLOTS.tryAcquire()) {
+            closeQuietly(inputStream);
+            throw new SourceIngestionException("SOURCE_RESPONSE_READER_BUSY", "Official source reader is busy");
+        }
+        CompletableFuture<byte[]> completed = new CompletableFuture<>();
+        Thread reader = Thread.ofVirtual().name("official-source-body-reader").start(() -> {
+            try (inputStream) {
+                completed.complete(inputStream.readNBytes((int) maxBytes + 1));
+            } catch (IOException | RuntimeException exception) {
+                completed.completeExceptionally(exception);
+            } finally {
+                BODY_READ_SLOTS.release();
             }
-
+        });
+        try {
+            byte[] bytes = completed.get(properties.requestTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            if (bytes.length > maxBytes) {
+                throw new SourceIngestionException("SOURCE_RESPONSE_TOO_LARGE", "Official source response exceeded the configured limit");
+            }
             return bytes;
-
-        } catch (
-                IOException exception
-        ) {
-            throw new SourceIngestionException(
-                    "SOURCE_RESPONSE_READ_FAILED",
-                    "Could not read official source response",
-                    exception
-            );
+        } catch (TimeoutException exception) {
+            reader.interrupt();
+            throw new SourceIngestionException("SOURCE_REQUEST_TIMEOUT", "Official source response timed out", exception);
+        } catch (InterruptedException exception) {
+            reader.interrupt();
+            Thread.currentThread().interrupt();
+            throw new SourceIngestionException("SOURCE_REQUEST_INTERRUPTED", "Official source request was interrupted", exception);
+        } catch (ExecutionException exception) {
+            throw new SourceIngestionException("SOURCE_RESPONSE_READ_FAILED", "Could not read official source response", exception.getCause());
         }
     }
 

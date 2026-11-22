@@ -25,6 +25,8 @@ dependencies {
 
 	// OpenAI 공식 Java SDK
 	implementation 'com.openai:openai-java:4.52.0'
+	// 문서 검증 요청의 DNS 및 소켓 경로를 제어한다.
+	implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
 	// Spring Boot와 Flyway 연결
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
@@ -35,7 +37,7 @@ dependencies {
 	// 공식 PDF 원문에서 텍스트를 추출하되 원본 bytes는 SourceDocument에 보존
 	implementation 'org.apache.pdfbox:pdfbox:3.0.5'
 
-	// HWP 5.0 OLE container access for the narrow official HWP parser
+	// 공식 HWP 파서의 HWP 5.0 OLE 컨테이너 처리
 	implementation 'org.apache.poi:poi:5.4.1'
 
 	// Flyway PostgreSQL 지원
@@ -56,7 +58,7 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
-// Test-only HTTP server for the isolated browser E2E harness. Never uses bootRun's local profile.
+// 격리 브라우저 테스트 전용 서버로, 로컬 실행 프로필을 사용하지 않는다.
 tasks.register('browserE2eServer', JavaExec) {
 	group = 'verification'
 	description = 'Runs the isolated follow-up browser E2E backend'

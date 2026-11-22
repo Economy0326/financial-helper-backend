@@ -6,6 +6,13 @@ import org.springframework.mock.env.MockEnvironment;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OfficialDemoDatabaseInitializerTest {
+    @Test void separateReviewModeRefusesMissingIdentityBeforeDatabaseAccess() {
+        var environment = new MockEnvironment().withProperty("FH_DEMO_STORAGE_MODE", "separate-review")
+                .withProperty("FH_DEMO_CONTAINER_ID", "invalid");
+        assertThatThrownBy(() -> OfficialDemoDatabaseInitializer.verify(environment))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Official demo database isolation could not be verified");
+    }
     @Test void refusesMissingContainerIdentityBeforeDatabaseAccess() {
         assertThatThrownBy(() -> OfficialDemoDatabaseInitializer.verify(new MockEnvironment()))
                 .isInstanceOf(IllegalStateException.class)

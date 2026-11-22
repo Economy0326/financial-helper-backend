@@ -1,9 +1,4 @@
-"""Small internal HTTP boundary for KURE-v2 document indexing.
-
-The JVM remains the system of record.  This process owns only model loading
-and generation-scoped PLAID artifacts.  Heavy dependencies and model weights
-are loaded lazily so a backend can start with the runtime disabled.
-"""
+"""KURE-v2 모델과 세대별 PLAID 인덱스를 제공하는 내부 HTTP 서버."""
 
 from __future__ import annotations
 
@@ -159,8 +154,7 @@ class RuntimeEngine:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             existing_ids = manifest.get("documentIds", [])
             requested_ids = [doc["id"] for doc in documents]
-            # Mapping order is a persistence concern; the immutable corpus
-            # snapshot and stable UUID membership define the artifact.
+            # 순서가 달라도 동일한 코퍼스 해시와 문서 집합이면 같은 인덱스다.
             matches_definition = (
                 manifest.get("corpusSnapshotSha256")
                 == payload["corpusSnapshotSha256"]
@@ -170,9 +164,7 @@ class RuntimeEngine:
             if matches_definition:
                 if self._artifact_is_ready(final_dir, manifest):
                     return {"generationId": str(generation_id), "readyDocumentIds": requested_ids, "indexMetadata": manifest}
-                # A previous process may have been interrupted after writing
-                # the manifest but before the PLAID files were complete.  Do
-                # not promote that partial definition as idempotently ready.
+                # 중단된 빌드의 불완전한 파일은 준비된 인덱스로 취급하지 않는다.
                 shutil.rmtree(final_dir)
             else:
                 raise ContractError("generation artifact already exists with a different definition")
@@ -235,9 +227,7 @@ class RuntimeEngine:
                 json.dumps(metadata, ensure_ascii=False, sort_keys=True),
                 encoding="utf-8",
             )
-            # FastPlaid keeps memory-mapped tensors open after construction.
-            # Release them before the generation directory is atomically
-            # renamed; Windows otherwise rejects the move with WinError 32.
+            # Windows에서는 메모리 매핑을 닫아야 디렉터리를 교체할 수 있다.
             close = getattr(getattr(index, "_index", None), "close", None)
             if callable(close):
                 close()
@@ -261,7 +251,7 @@ class RuntimeEngine:
 
     @staticmethod
     def _artifact_is_ready(final_dir: Path, manifest: dict[str, Any]) -> bool:
-        """Check the immutable files required by fast-plaid's disk loader."""
+        """디스크 로더에 필요한 인덱스 파일을 확인한다."""
         index_path = final_dir / "index" / "fast_plaid_index"
         required = {
             "metadata.json",
@@ -291,7 +281,7 @@ class RuntimeEngine:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         return {
             "generationId": str(generation_id),
-            "ready": True,
+            "ready": self._artifact_is_ready(manifest_path.parent, manifest),
             "documentCount": int(manifest.get("documentCount", 0)),
             "indexMetadataJson": json.dumps(manifest, ensure_ascii=False, sort_keys=True),
         }
@@ -300,12 +290,7 @@ class RuntimeEngine:
         self,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
-        """Run generation-scoped late-interaction retrieval.
-
-        The runtime accepts only a generation id and optional subset of the
-        stable SourceChunk UUIDs supplied by the JVM.  It never resolves a
-        URL or a SourceDocument identifier itself.
-        """
+        """JVM이 지정한 세대와 허용된 근거 식별자 범위에서 검색한다."""
         try:
             generation_id = uuid.UUID(str(payload["generationId"]))
         except (KeyError, ValueError, TypeError) as exc:
@@ -414,10 +399,7 @@ class RuntimeEngine:
                 from pylate import models
                 from transformers import AutoTokenizer
 
-                # Production keeps the pinned Hub identifier/revision.  A local
-                # directory is an explicit offline option for environments where
-                # that exact revision is already cached; URLs are rejected so the
-                # runtime cannot be redirected to an arbitrary source.
+                # 고정된 모델 또는 로컬 디렉터리만 허용하고 임의 URL은 거절한다.
                 model_source = os.getenv("KURE_MODEL_PATH") or MODEL_IDENTIFIER
                 model_revision = None if os.getenv("KURE_MODEL_PATH") else MODEL_REVISION
                 if "://" in model_source:
@@ -438,7 +420,7 @@ class RuntimeEngine:
                     revision=model_revision,
                 )
                 self._dependency_error = None
-            except Exception as exc:  # dependencies/weights may intentionally be absent
+            except Exception as exc:  # 런타임 비활성 환경에는 모델이 없을 수 있다.
                 self._dependency_error = f"{type(exc).__name__}: {exc}"
                 if require_runtime:
                     raise RuntimeError("KURE runtime dependencies are unavailable") from exc
@@ -462,16 +444,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
-            # The JVM client may keep an HTTP/1.1 connection in its pool.  Close
-            # each short JSON request explicitly so a server-side close cannot be
-            # mistaken for a reusable connection and surfaced as an EOF retry.
+            # 서버가 닫은 연결을 JVM 클라이언트가 재사용하지 않도록 한다.
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(data)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            # A caller can close a health/metadata connection while the response
-            # is being written.  That is a client disconnect, not a runtime or
-            # retrieval failure; never attempt a second error response.
+            # 응답 중 클라이언트가 끊어진 경우 두 번째 응답을 보내지 않는다.
             pass
         finally:
             self.close_connection = True
@@ -535,8 +513,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    # Render private services provide PORT and require a listener on all
-    # interfaces. Explicit CLI arguments still take precedence for local QA.
+    # 명령행 인자는 배포 환경의 포트 설정보다 우선한다.
     parser.add_argument("--host", default=os.getenv("KURE_RUNTIME_HOST", "0.0.0.0"))
     parser.add_argument(
         "--port",

@@ -43,8 +43,13 @@ public final class SourceIngestionData {
             String httpEtag,
             String httpLastModified,
             byte[] originalContent,
-            OffsetDateTime retrievedAt
+            OffsetDateTime retrievedAt,
+            Integer httpStatus
     ) {
+        public Fetched(String resolvedUrl, String contentType, String httpEtag,
+                       String httpLastModified, byte[] originalContent, OffsetDateTime retrievedAt) {
+            this(resolvedUrl, contentType, httpEtag, httpLastModified, originalContent, retrievedAt, null);
+        }
     }
 
     public record Parsed(

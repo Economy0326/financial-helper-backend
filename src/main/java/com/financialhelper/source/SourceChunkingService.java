@@ -88,6 +88,18 @@ public class SourceChunkingService {
         }
 
         String configurationJson = configurationJson();
+        if (sourceDocument.getSourceRegistry() != null && OfficialInformationClaimSelector.supports(
+                sourceDocument.getSourceRegistry().getSourceKey())) {
+            return OfficialInformationClaimSelector.select(sourceDocument,
+                            properties.configVersion(), configurationJson).stream()
+                    .map(definition -> {
+                        int tokenCount = tokenizer.countDocumentTokens(definition.body());
+                        if (tokenCount > properties.maxTokens()) {
+                            throw new SourceChunkingException("review claim exceeds KURE token limit");
+                        }
+                        return persistenceService.saveIfAbsent(sourceDocument, definition);
+                    }).toList();
+        }
         List<StructuralUnit> units = structuralUnits(normalizedContent);
         List<SourceChunk> chunks = new ArrayList<>();
         int sequence = 0;

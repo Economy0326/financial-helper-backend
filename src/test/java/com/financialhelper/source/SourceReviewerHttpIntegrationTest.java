@@ -11,6 +11,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
@@ -30,8 +31,11 @@ class SourceReviewerHttpIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired AccountSessionService sessions;
+    // Guard the auth test from ever fetching an official document if registry seed data changes.
+    @MockitoBean SourceIngestionService ingestion;
 
     @Test void onlyExplicitlyGrantedRealAccountSessionCanReachReviewerWorkflow() throws Exception {
+        Long existingAuditCount = jdbc.queryForObject("SELECT count(*) FROM source_review_decision_audit", Long.class);
         var login = sessions.createSession(AccountProvider.KAKAO,
                 "synthetic-reviewer-" + UUID.randomUUID(), "fixture");
         Cookie accountCookie = new Cookie(AccountSessionCookie.NAME, login.rawToken());
@@ -62,6 +66,6 @@ class SourceReviewerHttpIntegrationTest {
         mvc.perform(post("/api/v1/source-review/deposit/ingest").cookie(accountCookie).with(csrf()))
                 .andExpect(status().isConflict());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM source_review_decision_audit", Long.class))
-                .isZero();
+                .isEqualTo(existingAuditCount);
     }
 }

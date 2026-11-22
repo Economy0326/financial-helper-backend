@@ -75,6 +75,14 @@ public class SourceReviewerController {
                 request.exceptionsReviewed(), request.decision());
     }
 
+    @PostMapping("/candidate-decision")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void decideCandidate(@Valid @RequestBody CandidateDecisionRequest request) {
+        service.decideCandidate(request.documentId(), request.question(), request.expectedRawSha256(),
+                request.applicabilityStartDate(), request.applicabilityEndDate(), request.conditionsReviewed(),
+                request.exceptionsReviewed(), request.decision());
+    }
+
     @PostMapping("/{reviewId}/revoke")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revoke(@PathVariable UUID reviewId) {
@@ -94,5 +102,11 @@ public class SourceReviewerController {
             @NotNull @Pattern(regexp = "[a-f0-9]{64}") String expectedRawSha256,
             boolean conditionsReviewed,
             boolean exceptionsReviewed,
+            @NotNull SourceReviewerService.Decision decision) { }
+
+    public record CandidateDecisionRequest(@NotNull UUID documentId, int question,
+            @NotNull @Pattern(regexp = "[a-f0-9]{64}") String expectedRawSha256,
+            LocalDate applicabilityStartDate, LocalDate applicabilityEndDate,
+            boolean conditionsReviewed, boolean exceptionsReviewed,
             @NotNull SourceReviewerService.Decision decision) { }
 }

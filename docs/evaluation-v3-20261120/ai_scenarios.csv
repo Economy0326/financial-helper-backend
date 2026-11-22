@@ -1,0 +1,11 @@
+﻿case,category,existing_test,outcome,limitation
+A01,숫자·금액,rejectsChangedAmountUnit,PASS,규칙 대역
+A02,날짜,acceptsEquivalentNumericDatesButRejectsChangedDates,PASS,규칙 대역
+A03,조건·예외,objectiveChecksLeaveModalityAndExceptionsToSemanticVerifier,PASS,의미 판단은 별도 검증기에 위임
+A04,현행성,acceptsSyntheticProviderUncertaintyButNotUnsupportedCurrentAssertion,PASS,대역
+A05,근거 부족,incompleteEvidenceNeverReachesProvider,PASS,Provider 미호출
+A06,개인정보,ConsultationInputPrivacyTest,PASS,정규식; 모든 이름 탐지 보장 아님
+A07,권리 미허용,providerIsCalledOnlyForPermittedCurrentEvidenceAndOutputIsNotStored,PASS,Mock 자격 판정
+A08,의미 검증 거절,semanticRejectionFallsBackAndDoesNotConsumeQuota,PASS,UNSUPPORTED 대역
+A09,Provider 오류,semanticRejectionFallsBackAndDoesNotConsumeQuota,PASS,오류 대역
+A10,한국시간 이용권,DocumentAiExplanationQuotaTimeTest,PASS,시계·DB 대역

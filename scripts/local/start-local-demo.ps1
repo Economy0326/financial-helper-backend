@@ -5,7 +5,7 @@ $name = 'fh-official-local-demo'
 $volumeName = 'fh-official-local-demo-data'
 $dbName = 'fh_official_local_demo'
 $dbUser = 'fh_official_demo'
-$dbPort = 54765
+$dbPort = 15432
 $kurePort = 18091
 $createdContainer = $false
 $createdVolume = $false
@@ -146,7 +146,15 @@ try {
     $backendProcess = Start-Process -FilePath (Get-Command java.exe).Source -ArgumentList @('-jar',$jar) `
             -WorkingDirectory $backend -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
     for ($attempt = 0; $attempt -lt 90; $attempt++) {
-        if ($backendProcess.HasExited) { throw 'Backend exited before readiness' }
+        if ($backendProcess.HasExited) {
+        Write-Host "===== BACKEND STDOUT ====="
+        Get-Content $backendOut -Tail 80 -ErrorAction SilentlyContinue
+
+        Write-Host "===== BACKEND STDERR ====="
+       Get-Content $backendErr -Tail 80 -ErrorAction SilentlyContinue
+
+        throw 'Backend exited before readiness'
+        }
         try { if ((Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/health' -TimeoutSec 2).StatusCode -eq 200) { break } } catch {}
         Start-Sleep -Seconds 1
     }

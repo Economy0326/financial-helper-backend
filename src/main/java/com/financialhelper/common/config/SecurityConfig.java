@@ -102,6 +102,14 @@ public class SecurityConfig {
                     .authenticated()
                     .requestMatchers("/api/v1/source-review/**")
                     .authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/v1/information-evidence-snapshots")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/information-evidence-snapshots/topics")
+                    .permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/v1/faq")
+                    .permitAll()
+                    .requestMatchers("/api/v1/information-evidence-snapshots/**", "/api/v1/information-evidence-snapshots")
+                    .authenticated()
 
                     .requestMatchers(
                             HttpMethod.GET,
@@ -109,132 +117,11 @@ public class SecurityConfig {
                     )
                     .permitAll()
 
-                    .requestMatchers(
-                            HttpMethod.POST,
-                            "/api/v1/consultations"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/active"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.PUT,
-                            "/api/v1/consultations/*/category",
-                            "/api/v1/consultations/*/situation",
-                            "/api/v1/consultations/*/information-intake"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.POST,
-                            "/api/v1/consultations/*/understanding",
-                            "/api/v1/consultations/*/official-information/search",
-                            "/api/v1/consultations/*/general-information/search",
-                            "/api/v1/consultations/*/information-report/prepare",
-                            "/api/v1/consultations/*/information-intake/confirm",
-                            "/api/v1/consultations/*/information-intake/confirm-topic",
-                            "/api/v1/consultations/*/follow-up/prepare",
-                            "/api/v1/consultations/*/procedure-follow-up/prepare",
-                            "/api/v1/consultations/*/financial-action-plan",
-                            "/api/v1/consultations/*/scenario/confirm"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/procedure-follow-up",
-                            "/api/v1/consultations/*/information-intake",
-                            "/api/v1/consultations/*/financial-action-plan"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/follow-up"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.PUT,
-                            "/api/v1/consultations/*/follow-up/questions/*/answer"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.PUT,
-                            "/api/v1/consultations/*/procedure-follow-up/questions/*/answer"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/summary"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.POST,
-                            "/api/v1/consultations/*/summary/prepare",
-                            "/api/v1/consultations/*/summary/confirm"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/analysis"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.POST,
-                            "/api/v1/consultations/*/analysis/start",
-                            "/api/v1/consultations/*/analysis/retry",
-                            "/api/v1/consultations/*/analysis/reopen"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/analysis",
-                            "/api/v1/consultations/*/analysis/supplement-context"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/consultations/*/report",
-                            "/api/v1/consultations/*/information-report"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.POST,
-                            "/api/v1/consultations/*/report/prepare"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.GET,
-                            "/api/v1/emergency/types",
-                            "/api/v1/emergency/scenario"
-                    )
-                    .permitAll()
-
-                    .requestMatchers(
-                            HttpMethod.PUT,
-                            "/api/v1/emergency/selection"
-                    )
-                    .permitAll()
+                    // Retired consultation and emergency workflows must not be invoked directly.
+                    // Account-owned history is served separately under /api/v1/account/**.
+                    .requestMatchers("/api/v1/consultations", "/api/v1/consultations/**",
+                            "/api/v1/emergency", "/api/v1/emergency/**")
+                    .denyAll()
 
                     // 정의되지 않은 나머지 요청은 모두 차단
                     .anyRequest()

@@ -22,7 +22,11 @@ public class OfficialDemoDatabaseInitializer implements ApplicationContextInitia
     public static void verify(Environment env) {
         try {
             if ("persistent".equals(env.getProperty("FH_DEMO_STORAGE_MODE"))) {
-                verifyPersistent(env);
+                verifyPersistent(env, false);
+                return;
+            }
+            if ("separate-review".equals(env.getProperty("FH_DEMO_STORAGE_MODE"))) {
+                verifyPersistent(env, true);
                 return;
             }
             String run = env.getProperty("FH_DEMO_RUN_ID");
@@ -69,7 +73,7 @@ public class OfficialDemoDatabaseInitializer implements ApplicationContextInitia
         }
     }
 
-    private static void verifyPersistent(Environment env) throws Exception {
+    private static void verifyPersistent(Environment env, boolean separate) throws Exception {
         String id = env.getProperty("FH_DEMO_CONTAINER_ID");
         String owner = env.getProperty("FH_DEMO_OWNER_ID");
         if (id == null || !id.matches("[a-f0-9]{64}") || owner == null || !owner.matches("[a-f0-9]{32}")) fail();
@@ -87,12 +91,15 @@ public class OfficialDemoDatabaseInitializer implements ApplicationContextInitia
         Map<?, ?> binding = (Map<?, ?>) bindings.getFirst();
         List<?> mounts = (List<?>) container.get("Mounts");
         Map<?, ?> mount = mounts.size() == 1 ? (Map<?, ?>) mounts.getFirst() : Map.of();
-        String db = "fh_official_local_demo";
-        String user = "fh_official_demo";
+        String db = separate ? "fh_review_demo" : "fh_official_local_demo";
+        String user = separate ? "fh_review_demo" : "fh_official_demo";
+        String containerName = separate ? "fh-official-review-mvp" : "fh-official-local-demo";
+        String volumeName = separate ? "fh-official-review-mvp-data" : "fh-official-local-demo-data";
+        String ownerLabel = separate ? "financial-helper.official-review-mvp.owner" : "financial-helper.official-local-demo.owner";
         String password = env.getProperty("FH_DEMO_DB_PASSWORD");
         String url = "jdbc:postgresql://127.0.0.1:" + binding.get("HostPort") + "/" + db;
         List<?> vars = (List<?>) config.get("Env");
-        Process volumeProcess = new ProcessBuilder("docker", "volume", "inspect", "fh-official-local-demo-data")
+        Process volumeProcess = new ProcessBuilder("docker", "volume", "inspect", volumeName)
                 .redirectErrorStream(true).start();
         byte[] volumeOutput = volumeProcess.getInputStream().readAllBytes();
         if (!volumeProcess.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) || volumeProcess.exitValue() != 0) fail();
@@ -100,16 +107,17 @@ public class OfficialDemoDatabaseInitializer implements ApplicationContextInitia
                 new String(volumeOutput, StandardCharsets.UTF_8), List.class);
         Map<?, ?> volume = (Map<?, ?>) volumes.getFirst();
         Map<?, ?> volumeLabels = (Map<?, ?>) volume.get("Labels");
-        if (!id.equals(container.get("Id")) || !"/fh-official-local-demo".equals(container.get("Name"))
-                || !owner.equals(labels.get("financial-helper.official-local-demo.owner"))
-                || !"fh-official-local-demo-data".equals(volume.get("Name"))
+        if (!id.equals(container.get("Id")) || !("/" + containerName).equals(container.get("Name"))
+                || !owner.equals(labels.get(ownerLabel))
+                || !volumeName.equals(volume.get("Name"))
                 || !"local".equals(volume.get("Driver"))
-                || volumeLabels == null || !owner.equals(volumeLabels.get("financial-helper.official-local-demo.owner"))
+                || volumeLabels == null || !owner.equals(volumeLabels.get(ownerLabel))
                 || !Boolean.TRUE.equals(state.get("Running")) || !"postgres:16-alpine".equals(config.get("Image"))
                 || (host.get("Tmpfs") != null && !((Map<?, ?>) host.get("Tmpfs")).isEmpty()) || mounts.size() != 1
-                || !"volume".equals(mount.get("Type")) || !"fh-official-local-demo-data".equals(mount.get("Name"))
+                || !"volume".equals(mount.get("Type")) || !volumeName.equals(mount.get("Name"))
                 || !"/var/lib/postgresql/data".equals(mount.get("Destination"))
                 || bindings.size() != 1 || !"127.0.0.1".equals(binding.get("HostIp"))
+                || (separate && !"15439".equals(binding.get("HostPort")))
                 || !url.equals(env.getProperty("spring.datasource.url"))
                 || !url.equals(env.getProperty("FH_DEMO_DB_URL"))
                 || !user.equals(env.getProperty("spring.datasource.username"))

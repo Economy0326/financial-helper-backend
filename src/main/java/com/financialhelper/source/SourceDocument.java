@@ -185,6 +185,19 @@ public class SourceDocument {
     protected SourceDocument() {
     }
 
+    /** Guard inserts even if a caller bypasses the ingestion writer. Existing rows are untouched. */
+    @jakarta.persistence.PrePersist
+    void rejectRawHtmlOnInsert() {
+        if (sourceRegistry != null && sourceRegistry.getAcquisitionType() == SourceAcquisitionType.HTML
+                && originalContent != null) {
+            for (byte value : originalContent) {
+                if (value == (byte) '<') {
+                    throw new SourceIngestionException("SOURCE_HTML_TEXT_ONLY_REQUIRED", "HTML requires text-only storage");
+                }
+            }
+        }
+    }
+
     public SourceDocument(
             SourceRegistry sourceRegistry,
             int documentVersion,

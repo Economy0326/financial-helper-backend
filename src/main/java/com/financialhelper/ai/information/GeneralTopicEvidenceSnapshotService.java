@@ -5,6 +5,7 @@ import com.financialhelper.consultation.ConsultationRepository;
 import com.financialhelper.consultation.FinancialTopic;
 import com.financialhelper.guest.GuestSessionService;
 import com.financialhelper.retrieval.DepositQueryPurpose;
+import com.financialhelper.retrieval.SixTopicQueryPurpose;
 import com.financialhelper.retrieval.GeneralTopicInformationRequest;
 import com.financialhelper.retrieval.GeneralTopicInformationResponse;
 import com.financialhelper.retrieval.RetrievalCorpusSnapshotService;
@@ -14,6 +15,8 @@ import com.financialhelper.source.RetrievalGenerationStatus;
 import com.financialhelper.source.SourceDocumentRepository;
 import com.financialhelper.source.SourceDocumentStatus;
 import com.financialhelper.source.VerifiedPdfMetadata;
+import com.financialhelper.source.OfficialInformationClaimSelector;
+import com.financialhelper.source.SourceHashing;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -50,8 +53,11 @@ public class GeneralTopicEvidenceSnapshotService {
         var session = sessions.requireValidSession(token);
         var consultation = consultations.findByIdAndGuestSession_Id(id, session.getId())
                 .orElseThrow(ConsultationNotFoundException::new);
+        boolean deposit = found.topic() == FinancialTopic.DEPOSITS_ACCOUNTS;
+        SixTopicQueryPurpose.Match purpose = deposit ? null
+                : SixTopicQueryPurpose.resolve(found.topic(), consultation.getSituationText());
         if (!id.equals(found.consultationId()) || !"READY_CANDIDATES".equals(found.status())
-                || found.topic() != FinancialTopic.DEPOSITS_ACCOUNTS
+                || (!deposit && purpose == null)
                 || consultation.getConfirmedInformationTopic() != found.topic()
                 || consultation.getScenario() != null
                 || consultation.getCaseInputRevision() != found.caseInputRevision()
@@ -60,11 +66,12 @@ public class GeneralTopicEvidenceSnapshotService {
                 || found.timeScope() == null
                 || (found.timeScope() == GeneralTopicInformationRequest.TimeScope.CURRENT
                     && (!LocalDate.now(ZoneId.of("Asia/Seoul")).equals(found.asOfDate())
-                        || DepositQueryPurpose.hasHistoricalMarker(consultation.getSituationText())))) {
+                        || deposit && DepositQueryPurpose.hasHistoricalMarker(consultation.getSituationText())))
+                || (!deposit && found.timeScope() != GeneralTopicInformationRequest.TimeScope.CURRENT)) {
             throw new IllegalStateException("general topic input or reference date changed");
         }
         List<Integer> allowed = DepositQueryPurpose.questionNumbers(consultation.getSituationText());
-        if (allowed.isEmpty()) throw new IllegalStateException("general topic question is not answerable");
+        if (deposit && allowed.isEmpty()) throw new IllegalStateException("general topic question is not answerable");
         var generation = generations.current().orElseThrow(() ->
                 new IllegalStateException("READY retrieval generation is unavailable"));
         if (generation.getStatus() != RetrievalGenerationStatus.READY)
@@ -73,7 +80,9 @@ public class GeneralTopicEvidenceSnapshotService {
         var readyById = new HashMap<UUID, RetrievalCorpusSnapshotService.EligibleChunk>();
         ready.forEach(chunk -> readyById.put(chunk.sourceChunkId(), chunk));
         Map<UUID, ReviewedSourceApplicabilityService.Match> eligible = reviews.eligibleTopic(
-                found.topic(), found.asOfDate(), null, null, ready);
+                found.topic(), found.asOfDate(),
+                found.timeScope() == GeneralTopicInformationRequest.TimeScope.HISTORICAL,
+                null, null, ready);
         List<InformationEvidenceSnapshot.Evidence> evidence = new ArrayList<>();
         for (var candidate : found.candidates()) {
             var support = readyById.get(candidate.sourceChunkId());
@@ -91,23 +100,32 @@ public class GeneralTopicEvidenceSnapshotService {
                     || !Objects.equals(review.scopeKind(), candidate.scopeKind())
                     || !Objects.equals(review.conditionLocators(), candidate.conditionLocators())
                     || !Objects.equals(review.exceptionLocators(), candidate.exceptionLocators())
-                    || !VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(support.canonicalUrl())
-                    || support.parentSection() == null || support.pageReference() == null
+                    || (deposit && !VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(support.canonicalUrl()))
+                    || support.parentSection() == null || (deposit && support.pageReference() == null)
                     || support.locator() == null) {
                 throw new IllegalStateException("general topic evidence identity changed");
             }
-            int question = allowed.stream().filter(number -> support.parentSection().startsWith(number + ". ")
-                    && support.body().startsWith(number + ". ")).findFirst().orElseThrow(() ->
-                    new IllegalStateException("evidence is outside the question scope"));
+            Integer question = deposit ? allowed.stream()
+                    .filter(number -> support.parentSection().startsWith(number + ". ")
+                        && support.body().startsWith(number + ". ")).findFirst().orElseThrow(() ->
+                        new IllegalStateException("evidence is outside the question scope")) : null;
             var document = documents.findById(candidate.sourceDocumentId()).orElseThrow(() ->
                     new IllegalStateException("source document is unavailable"));
             if (document.getStatus() != SourceDocumentStatus.ACTIVE
                     || document.getDocumentVersion() != candidate.documentVersion()
-                    || !VerifiedPdfMetadata.DEPOSIT_RAW_SHA256.equals(document.getRawSha256())
-                    || !VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(document.getCanonicalUrl())
-                    || !"금융위원회".equals(document.getOrganizationName())
-                    || !"예금보호한도 상향 관련 주요 QA".equals(document.getTitle())
-                    || !LocalDate.of(2025, 7, 22).equals(document.getPublishedAt())) {
+                    || (deposit && (!VerifiedPdfMetadata.DEPOSIT_RAW_SHA256.equals(document.getRawSha256())
+                        || !VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(document.getCanonicalUrl())
+                        || !"금융위원회".equals(document.getOrganizationName())
+                        || !"예금보호한도 상향 관련 주요 QA".equals(document.getTitle())
+                        || !LocalDate.of(2025, 7, 22).equals(document.getPublishedAt())))
+                    || (!deposit && (!OfficialInformationClaimSelector.officialUrl(purpose.sourceKey())
+                            .equals(document.getCanonicalUrl())
+                        || !SourceHashing.sha256(document.getOriginalContent()).equals(document.getRawSha256())
+                        || OfficialInformationClaimSelector.select(document, "verification", "{}")
+                            .stream().noneMatch(definition ->
+                                definition.body().equals(support.body())
+                                && definition.locator().equals(support.locator())
+                                && definition.parentSection().equals(support.parentSection()))))) {
                 throw new IllegalStateException("official PDF version or metadata changed");
             }
             evidence.add(new InformationEvidenceSnapshot.Evidence(document.getId(),
@@ -117,7 +135,8 @@ public class GeneralTopicEvidenceSnapshotService {
                     support.locator(), support.body(), review.institution(), review.product(),
                     review.start(), review.end(), related(ready, support.sourceDocumentId(),
                     review.conditionLocators()), related(ready, support.sourceDocumentId(),
-                    review.exceptionLocators()), question, VerifiedPdfMetadata.DEPOSIT_POST_URL));
+                    review.exceptionLocators()), question,
+                    deposit ? VerifiedPdfMetadata.DEPOSIT_POST_URL : null));
         }
         var latest = consultations.findByIdAndGuestSession_Id(id, session.getId())
                 .orElseThrow(ConsultationNotFoundException::new);
@@ -126,7 +145,8 @@ public class GeneralTopicEvidenceSnapshotService {
                 || latest.getFollowUpAnswerRevision() != found.followUpAnswerRevision()
                 || latest.getConfirmedInformationTopic() != found.topic()
                 || !after.getId().equals(generation.getId())
-                || !eligible.equals(reviews.eligibleTopic(found.topic(), found.asOfDate(), null, null,
+                || !eligible.equals(reviews.eligibleTopic(found.topic(), found.asOfDate(),
+                        found.timeScope() == GeneralTopicInformationRequest.TimeScope.HISTORICAL, null, null,
                         corpus.readyChunks(generation.getId())))) {
             throw new IllegalStateException("general topic evidence changed during capture");
         }

@@ -10,7 +10,8 @@ public final class ConsultationInputPrivacy {
     private static final Pattern LANDLINE = Pattern.compile("(?<!\\d)(?:02|0[3-6][1-5])[\\s.-]*\\d{3,4}[\\s.-]*\\d{4}(?!\\d)");
     private static final Pattern API_SECRET = Pattern.compile("(?i)\\b(?:bearer|api[_ -]?key|access[_ -]?token|secret[_ -]?key)\\s*[:=]?\\s*[A-Za-z0-9_./+=-]{8,}");
     private static final Pattern AUTH_SECRET = Pattern.compile("(?i)(?:인증번호|일회용\\s*비밀번호|비밀번호|패스워드|password|otp|pin)\\s*(?:은|는|이|가|:|=|\\s){0,5}\\s*[A-Za-z0-9!@#$%^&*_-]{4,}");
-    private static final Pattern ACCOUNT = Pattern.compile("(?:계좌번호|입금계좌|출금계좌)\\s*(?:는|은|이|가|:|=|\\s){0,5}\\s*(?<!\\d)(?:\\d[\\s-]?){8,16}(?!\\d)");
+    private static final Pattern ACCOUNT = Pattern.compile("(?:계좌번호|입금계좌|출금계좌)\\s*(?:는|은|이|가|:|=|\\s){0,5}\\s*(?<!\\d)(?:\\d[ -]?){8,16}(?!\\d)|계좌\\s*(?:는|은|이|가|:|=|\\s){0,5}\\s*(?<!\\d)(?:\\d[ -]?){10,16}(?!\\d)");
+    private static final Pattern LABELED_CARD = Pattern.compile("(?:카드번호|카드\\s*번호)\\s*(?:는|은|이|가|:|=|\\s){0,5}\\s*(?<!\\d)(?:\\d[ -]?){13,19}(?!\\d)");
     private static final Pattern ADDRESS = Pattern.compile("(?:주소|거주지|집주소)\\s*(?:는|은|이|가|:|=|\\s){0,5}\\s*[^\\n,.]{2,35}(?:로|길|동)\\s*\\d{1,4}(?:-\\d{1,4})?");
     private static final Pattern CARD_CANDIDATE = Pattern.compile("(?<!\\d)(?:\\d[ -]?){13,19}(?!\\d)");
 
@@ -21,7 +22,7 @@ public final class ConsultationInputPrivacy {
         if (RESIDENT_ID.matcher(value).find() || EMAIL.matcher(value).find()
                 || MOBILE.matcher(value).find() || LANDLINE.matcher(value).find()
                 || API_SECRET.matcher(value).find()
-                || AUTH_SECRET.matcher(value).find() || ACCOUNT.matcher(value).find()
+                || AUTH_SECRET.matcher(value).find() || ACCOUNT.matcher(value).find() || LABELED_CARD.matcher(value).find()
                 || ADDRESS.matcher(value).find() || containsCardNumber(value)) {
             throw new UnsafeConsultationInputException();
         }
