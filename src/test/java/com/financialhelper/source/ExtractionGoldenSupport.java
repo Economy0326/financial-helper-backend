@@ -5,13 +5,17 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,7 +32,7 @@ final class ExtractionGoldenSupport {
                 type, type == SourceAcquisitionType.HTML ? "#fixture" : null);
         var parsed = parser.parse(source, new SourceIngestionData.Fetched(source.canonicalUrl(),
                 contentType, null, null, raw, OffsetDateTime.parse("2026-10-01T00:00:00Z")));
-        assertThat(parsed.originalContent()).isEqualTo(raw);
+        assertThat(Arrays.equals(parsed.originalContent(), raw)).as("원본 바이트 보존").isTrue();
         assertThat(parsed.rawSha256()).isEqualTo(SourceHashing.sha256(raw));
         assertThat(parsed.contentSha256()).isEqualTo(SourceHashing.sha256(parsed.normalizedContent()));
         return parsed;
@@ -75,12 +79,17 @@ final class ExtractionGoldenSupport {
     }
 
     static byte[] hwp(List<List<String>> sections, List<String> names) throws Exception {
+        return hwp(sections, names, false);
+    }
+
+    static byte[] hwp(List<List<String>> sections, List<String> names, boolean compressed) throws Exception {
         if (sections.size() != names.size()) throw new IllegalArgumentException("Section names must match bodies");
         try (var fs = new POIFSFileSystem(); var output = new ByteArrayOutputStream()) {
             byte[] header = new byte[256];
             byte[] signature = "HWP Document File".getBytes(StandardCharsets.US_ASCII);
             System.arraycopy(signature, 0, header, 0, signature.length);
             header[35] = 5;
+            header[36] = (byte) (compressed ? 1 : 0);
             fs.getRoot().createDocument("FileHeader", new ByteArrayInputStream(header));
             var body = fs.getRoot().createDirectory("BodyText");
             for (int i = 0; i < sections.size(); i++) {
@@ -91,10 +100,22 @@ final class ExtractionGoldenSupport {
                             .putInt(0x43 | (text.length << 20)).array());
                     records.write(text);
                 }
-                body.createDocument(names.get(i), new ByteArrayInputStream(records.toByteArray()));
+                byte[] section = records.toByteArray();
+                body.createDocument(names.get(i), new ByteArrayInputStream(compressed ? deflate(section) : section));
             }
             fs.writeFilesystem(output);
             return output.toByteArray();
         }
+    }
+
+    private static byte[] deflate(byte[] records) throws IOException {
+        var deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
+        var output = new ByteArrayOutputStream();
+        try (var stream = new DeflaterOutputStream(output, deflater)) {
+            stream.write(records);
+        } finally {
+            deflater.end();
+        }
+        return output.toByteArray();
     }
 }
