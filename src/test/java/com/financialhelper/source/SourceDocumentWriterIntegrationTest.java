@@ -432,7 +432,7 @@ class SourceDocumentWriterIntegrationTest {
     ) {
 
         byte[] rawBytes =
-                raw.getBytes(
+                normalized.getBytes(
                         StandardCharsets.UTF_8
                 );
 
@@ -441,7 +441,7 @@ class SourceDocumentWriterIntegrationTest {
                 source.getSourceKey(),
                 null,
                 retrievedAt,
-                "text/html;charset=UTF-8",
+                "text/plain;charset=UTF-8",
                 null,
                 null,
 

@@ -404,7 +404,7 @@ class SourceFoundationPersistenceIntegrationTest {
                 "test source " + fixtureToken,
                 null,
                 retrievedAt,
-                "text/html;charset=UTF-8",
+                "text/plain;charset=UTF-8",
                 null,
                 null,
                 SourceHashing.sha256(raw),

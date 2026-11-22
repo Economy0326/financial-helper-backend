@@ -35,12 +35,4 @@ public final class AnalysisData {
         }
     }
 
-    // 실행 여부 결정
-    public record Reservation(
-            UUID jobId,
-            // shouldDispatch: true => 새 분석 작업 실행 가능 (중복 방지용)
-            boolean shouldDispatch,
-            AnalysisStateResponse state
-    ) {
-    }
 }

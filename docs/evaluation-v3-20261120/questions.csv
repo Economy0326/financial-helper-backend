@@ -1,0 +1,31 @@
+﻿id,topic,category,question,gold_claim_ids,gold_scope
+Q01,personal,명확,개인사업자 대출 갈아타기는 온라인에서 몇 시에 이용할 수 있나요?,f425d3bd29ea18d91e21729440643c119aa60910b461d10946cda65071b9eb5e,one_known_relevant
+Q02,personal,유사,자영업자 대출을 바꾸려면 금리와 잔액을 어디서 비교하나요?,69af3201b7ef07e15bf6b8860785a4b04cec2ff1eb4a710f96886a7e30879f53,one_known_relevant
+Q03,personal,조건,개인사업자 운전자금 대출의 갈아타기 금액 기준은 무엇인가요?,fee719f6c0db9e2ac0682496e9b23684f77ec4a7db1a67e11f9c605b2a4d186f,one_known_relevant
+Q04,personal,예외,금리가 이미 낮은 정책금융상품은 개인사업자 대출 갈아타기에서 제외되나요?,8b08b173fbdfb9f422a02af58852fe95a3711811406de1dd69a96b93f8e1a25a,one_known_relevant
+Q05,personal,명확,개인사업자 대출 갈아타기 계약이 완료되면 기존 대출금은 어떻게 되나요?,e3f0c4fc3138166a2c833d6bdd82e6729cf1f89882e78c28699fb474d95ca44f,one_known_relevant
+Q06,credit,명확,여신거래 안심차단은 어디서 신청하고 해제하나요?,59de10937b16f2ddcacbc5552a74b1e5bc9dc896c8c0c3bd99d87487794b4c1b,one_known_relevant
+Q07,credit,유사,여신거래 차단을 신청하면 신용점수가 떨어지나요?,9169e4289b9761efa7b11ecdf685bb0739ced7bf7065868a43bb36963e11f5a3,one_known_relevant
+Q08,credit,예외,여신거래 안심차단이 적용되지 않는 등록 대부업자는 누구인가요?,d9190e277758fb9faea269df0e5cbd83fdf9317edcc6da3bf7a61c3838541f2c,one_known_relevant
+Q09,credit,조건,여신거래 안심차단을 해제한 뒤 다시 신청할 수 있나요?,07130c9382ec25d97d125296381a0e232545888a6b075508c31c35de24ed4e6b,one_known_relevant
+Q10,credit,명확,여신거래 안심차단 신청 상태는 어디에서 확인하나요?,65b20a90d00a4bcb88422713317e3dd5f813e65762997448243a95a3a7d3b7ef,one_known_relevant
+Q11,deposit,명확,예금보호 한도가 얼마로 상향되나요?,bac2ed5e38dd550973c0f7bde79a74f1e27979f61ddc59871addebf964e653fc,one_known_relevant
+Q12,deposit,유사,은행이 파산해서 예금을 주지 못하면 얼마까지 보호되나요?,174260b6f62fa5b6ce2a1ac563b995a5c2d0f582951d710229e8519e6d13ce30,one_known_relevant
+Q13,deposit,조건,9월 1일 이후 예금보험 보호가 작동하는 상황은 무엇인가요?,174260b6f62fa5b6ce2a1ac563b995a5c2d0f582951d710229e8519e6d13ce30,one_known_relevant
+Q14,deposit,유사,상호금융권의 예금보호 한도는 얼마인가요?,bac2ed5e38dd550973c0f7bde79a74f1e27979f61ddc59871addebf964e653fc,one_known_relevant
+Q15,deposit,명확,저축은행 예금보호 한도 상향 내용은 무엇인가요?,bac2ed5e38dd550973c0f7bde79a74f1e27979f61ddc59871addebf964e653fc,one_known_relevant
+Q16,open,명확,오픈뱅킹 안심차단에 가입하면 기존 등록 계좌는 어떻게 되나요?,457588360a7756813ac4a41a79638ddac2bf1fd9d6821077e096c35de6b57321,one_known_relevant
+Q17,open,유사,오픈뱅킹 안심차단으로 간편결제가 중단될 수 있나요?,73fca39a4d554a3728ee7146b89baa34a5839122ebd89c2f9bcb94a1f110a8cc,one_known_relevant
+Q18,open,조건,오픈뱅킹을 막고 싶은 금융회사를 직접 선택할 수 있나요?,06454656ad455c219b41cb44f6cc0a3401231dcbcbdd14d848e282113d550e01,one_known_relevant
+Q19,open,명확,오픈뱅킹 안심차단 현황을 어디에서 확인하나요?,c89367126f7daaa2b00de8d1c31d6d9c3250fb18b579add08291b924c131504c,one_known_relevant
+Q20,open,유사,오픈뱅킹 안심차단 가입 사실은 얼마나 자주 안내되나요?,a3fe7198a3d87940cbf54c3bef2be77f01258cb8459e3e35826ed50979f461dc,one_known_relevant
+Q21,housing,명확,전세 계약 갱신 시 전세대출 갈아타기는 언제 가능한가요?,7718c780b2cca77486e32b4615165b6ad768fda64c13520b94ab469e9fd566bb,one_known_relevant
+Q22,housing,조건,전세대출 갈아타기에서 기존 보증기관과 새 보증기관이 같아야 하나요?,b86ab6f414150b00dc2bf22dbd713253553c0ac4d77ffb86784f5201371d7881,one_known_relevant
+Q23,housing,예외,저금리 정책금융상품과 중도금 집단대출도 갈아탈 수 있나요?,e8afd7b40cccca3d4be405a45ca1d86cf1dfeadbb94a60ca93f7fcb96b882c43,one_known_relevant
+Q24,housing,명확,주담대 갈아타기 기존 대출 조회는 몇 시까지 가능한가요?,227ce32624b9e6fd41888ce122be52039d8e781de08d8381bf2bd4b2f0161846,one_known_relevant
+Q25,housing,조건,주담대와 전세대출 갈아타기에서 신규 대출 한도는 얼마인가요?,ff5669854e2f18a401b8243688e5ce1ced036e7b67cd0b6cb0105206d926b5be,one_known_relevant
+Q26,unsupported,미지원,이번 달 삼성전자 주가는 얼마인가요?,,no_approved_answer
+Q27,unsupported,미지원,미국 비자 신청 비용은 얼마인가요?,,no_approved_answer
+Q28,unsupported,미지원,오늘 서울 지하철 첫차 시간은 언제인가요?,,no_approved_answer
+Q29,unsupported,미지원,비트코인 가격이 내일 오를까요?,,no_approved_answer
+Q30,unsupported,미지원,이탈리아 여행에 필요한 여권 유효기간은 얼마인가요?,,no_approved_answer

@@ -9,9 +9,13 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.UUID;
 
 public interface ActiveRetrievalGenerationRepository
         extends JpaRepository<ActiveRetrievalGeneration, Boolean> {
+
+    @Query(value = "SELECT retrieval_generation_id FROM active_retrieval_generation WHERE singleton_key=TRUE", nativeQuery = true)
+    Optional<UUID> findCurrentGenerationId();
 
     @Modifying(flushAutomatically = true)
     @Query(

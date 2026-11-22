@@ -79,6 +79,7 @@ class ActiveRetrievalGenerationIntegrationTest {
         RetrievalGeneration second = ready("second");
 
         activeService.activate(first.getId());
+        long firstRevision = jdbcTemplate.queryForObject("SELECT activation_revision FROM active_retrieval_generation WHERE singleton_key=TRUE", Long.class);
         assertThat(activeService.current())
                 .get()
                 .extracting(RetrievalGeneration::getId)
@@ -93,6 +94,38 @@ class ActiveRetrievalGenerationIntegrationTest {
                 "SELECT COUNT(*) FROM active_retrieval_generation",
                 Integer.class
         )).isOne();
+        activeService.activate(first.getId());
+        assertThat(jdbcTemplate.queryForObject("SELECT activation_revision FROM active_retrieval_generation WHERE singleton_key=TRUE", Long.class))
+                .isEqualTo(firstRevision + 2);
+    }
+
+    @Test
+    void mixedActivationIsForbiddenForDemoProfile() {
+        var demoEnvironment = new org.springframework.mock.env.MockEnvironment();
+        demoEnvironment.setActiveProfiles("official-local-demo");
+        var isolatedOnly = new ActiveRetrievalGenerationPersistenceService(null, null, null, null, null, null, demoEnvironment);
+        assertThatThrownBy(() -> isolatedOnly.activateIsolatedMixed(UUID.randomUUID()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("isolated test database");
+    }
+
+    @Test
+    void rejectedPendingGenerationPreservesPreviouslyActiveReadyGeneration() {
+        RetrievalGeneration existing = ready("existing");
+        activeService.activate(existing.getId());
+        RetrievalGeneration pending = generationRepository.saveAndFlush(
+                new RetrievalGeneration(definition("pending-rejected"), now()));
+        ownedGenerationIds.add(pending.getId());
+
+        assertThatThrownBy(() -> activeService.activate(pending.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("READY");
+
+        assertThat(activeService.current()).get()
+                .extracting(RetrievalGeneration::getId).isEqualTo(existing.getId());
+        assertThat(generationRepository.findById(existing.getId())).get()
+                .extracting(RetrievalGeneration::getStatus).isEqualTo(RetrievalGenerationStatus.READY);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM active_retrieval_generation", Integer.class))
+                .isOne();
     }
 
     private RetrievalGeneration ready(String key) {

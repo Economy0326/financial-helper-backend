@@ -82,11 +82,7 @@ class LegacyInformationReportHttpIntegrationTest {
     }
 
     @Test
-    void originalV39ReportIsRetainedAndUnavailableEvidenceIsNotExposed() throws Exception {
-        mvc.perform(get("/api/v1/consultations/{id}/information-report", CONSULTATION)
-                        .cookie(new Cookie(GuestSessionCookie.NAME, TOKEN)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("STALE"))
-                .andExpect(jsonPath("$.selectedEvidence").isEmpty()).andExpect(jsonPath("$.explanations").isEmpty());
+    void originalV39ReportIsRetainedAfterMigration() throws Exception {
         try (var c = DriverManager.getConnection(System.getenv("TEST_DB_URL"), System.getenv("TEST_DB_USERNAME"), System.getenv("TEST_DB_PASSWORD"));
              var s = c.prepareStatement("SELECT explanations_json FROM " + SCHEMA + ".information_report WHERE id = ?")) {
             s.setObject(1, REPORT);

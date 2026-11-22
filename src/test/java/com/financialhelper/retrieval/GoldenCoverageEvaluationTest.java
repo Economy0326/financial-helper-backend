@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /** Synthetic contract probes; no real official document or answer key is asserted. */
@@ -54,12 +56,18 @@ class GoldenCoverageEvaluationTest {
             when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
             ActiveRetrievalGenerationPersistenceService active = mock(ActiveRetrievalGenerationPersistenceService.class);
             when(active.current()).thenReturn(Optional.of(generation));
+            when(active.currentId()).thenReturn(Optional.of(generationId));
             RetrievalCorpusSnapshotService corpus = mock(RetrievalCorpusSnapshotService.class);
             when(corpus.readyChunks(generationId)).thenReturn(List.of(
                     new RetrievalCorpusSnapshotService.EligibleChunk(chunkId,
                             "합성 자료: 실제 공식 원문이 아님", UUID.randomUUID(), 1,
                             LocalDate.of(2026, 1, 1), null, null, "합성 기관", "합성 문서",
                             null, "제1조", "1", "page:1", "https://example.invalid/synthetic")));
+            when(corpus.readyChunks(eq(generationId), anySet())).thenAnswer(invocation -> {
+                Set<UUID> requested = invocation.getArgument(1);
+                return corpus.readyChunks(generationId).stream()
+                        .filter(chunk -> requested.contains(chunk.sourceChunkId())).toList();
+            });
             KureRuntimeClient kure = mock(KureRuntimeClient.class);
             SourceKeywordSearchService keyword = mock(SourceKeywordSearchService.class);
             OfficialSourceRetrievalService retrieval = new OfficialSourceRetrievalService(

@@ -258,7 +258,6 @@ public final class FollowUpBrowserE2EHarness {
                     case "seed-deposit" -> BrowserE2EDepositFixture.seed(context, jdbc, guard);
                     case "deposit-browser" -> BrowserE2EDepositFlow.run(context, jdbc, guard);
                     case "seed-action" -> BrowserE2EActionFixture.seed(context, jdbc, guard);
-                    case "action-smoke" -> BrowserE2EActionSmoke.run(context, jdbc, guard);
                     case "overlap-account" -> overlapAccount(versions, guard);
                     case "supersede" -> {
                         if (parts.length != 3) throw new IllegalArgumentException("Two IDs required");

@@ -39,6 +39,9 @@ public interface SourceDocumentRepository
             SourceDocumentStatus status
     );
 
+    @Query("select document from SourceDocument document join fetch document.sourceRegistry where document.id = :documentId")
+    Optional<SourceDocument> findWithSourceRegistryById(@Param("documentId") UUID documentId);
+
     // 해당 SourceRegistry에 속한 모든 SourceDocument 버전을 documentVersion 오름차순으로 찾기
     List<SourceDocument>
     findAllBySourceRegistry_IdOrderByDocumentVersionAsc(

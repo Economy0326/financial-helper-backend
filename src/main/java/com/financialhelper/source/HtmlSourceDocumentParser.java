@@ -202,6 +202,17 @@ public class HtmlSourceDocumentParser implements SourceDocumentParser {
 
     private LocalDate extractPublishedAt(Document document, SourceIngestionData.Snapshot source) {
 
+        if ("korea.kr".equalsIgnoreCase(source.officialDomain())) {
+            var info = document.selectFirst(".article_head .info");
+            if (info != null) {
+                var match = java.util.regex.Pattern.compile("\\b(20[0-9]{2})[.]([0-9]{2})[.]([0-9]{2})\\b").matcher(info.text());
+                if (match.find()) {
+                    try { return LocalDate.of(Integer.parseInt(match.group(1)), Integer.parseInt(match.group(2)), Integer.parseInt(match.group(3))); }
+                    catch (java.time.DateTimeException ignored) { return null; }
+                }
+            }
+        }
+
         if ("fsc.go.kr".equalsIgnoreCase(source.officialDomain())) {
             Element date = document.selectFirst(".board-view-wrap > .header > .day > span:first-child");
             if (date != null) {
@@ -406,6 +417,13 @@ public class HtmlSourceDocumentParser implements SourceDocumentParser {
             Document document,
             SourceIngestionData.Snapshot source
     ) {
+
+        if ("korea.kr".equalsIgnoreCase(source.officialDomain())) {
+            try { return document.selectFirst(KoreaPolicyNews.select(document)); }
+            catch (IllegalArgumentException invalid) {
+                throw new SourceIngestionException("SOURCE_CONTENT_SELECTOR_NOT_FOUND", "FSC policy-news body was not verified");
+            }
+        }
 
         String configuredSelector =
                 source.contentSelector();

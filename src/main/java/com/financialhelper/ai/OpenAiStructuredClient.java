@@ -10,18 +10,14 @@ import com.openai.models.responses.StructuredResponseCreateParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Objects;
 
 @Component
-@ConditionalOnProperty(
-        prefix = "app.ai",
-        name = "enabled",
-        havingValue = "true"
-)
+@ConditionalOnExpression("${app.ai.enabled:false} or (${app.ai.document-explanations-enabled:false} and ${app.ai.document-semantic-verification-enabled:false})")
 // 실제로 OpenAI API를 호출하는 역할
 public class OpenAiStructuredClient {
 
@@ -46,6 +42,15 @@ public class OpenAiStructuredClient {
             String input,
             Class<T> responseType
     ) {
+        return generateStructured(instructions, input, responseType, null);
+    }
+
+    public <T> T generateStructured(
+            String instructions,
+            String input,
+            Class<T> responseType,
+            Long maxOutputTokens
+    ) {
 
         validateRequestArguments(
                 instructions,
@@ -53,7 +58,7 @@ public class OpenAiStructuredClient {
                 responseType
         );
 
-        StructuredResponseCreateParams<T> params =
+        var builder =
                 ResponseCreateParams.builder()
                         // 지시문
                         .instructions(instructions)
@@ -69,8 +74,12 @@ public class OpenAiStructuredClient {
 
                         // API 측에 response를 저장하지 않도록 요청
                         // 필요한 영속 상태는 PostgreSQL에서 직접 관리
-                        .store(false)
-                        .build();
+                        .store(false);
+        if (maxOutputTokens != null) {
+            if (maxOutputTokens < 1) throw new IllegalArgumentException("maxOutputTokens must be positive");
+            builder.maxOutputTokens(maxOutputTokens);
+        }
+        StructuredResponseCreateParams<T> params = builder.build();
 
         long startedAt = System.nanoTime();
         try {

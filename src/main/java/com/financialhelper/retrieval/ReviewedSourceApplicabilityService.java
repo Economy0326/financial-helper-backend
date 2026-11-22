@@ -2,6 +2,7 @@ package com.financialhelper.retrieval;
 
 import com.financialhelper.consultation.FinancialTopic;
 import com.financialhelper.source.VerifiedPdfMetadata;
+import com.financialhelper.source.TemporalEvidencePolicy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,9 +20,11 @@ import java.util.UUID;
 @Service
 public class ReviewedSourceApplicabilityService {
     private final JdbcTemplate jdbc;
+    private final SearchAvailabilityWindowGate searchWindow;
 
-    public ReviewedSourceApplicabilityService(JdbcTemplate jdbc) {
+    public ReviewedSourceApplicabilityService(JdbcTemplate jdbc, SearchAvailabilityWindowGate searchWindow) {
         this.jdbc = jdbc;
+        this.searchWindow = searchWindow;
     }
 
     @Transactional(readOnly = true)
@@ -62,31 +65,38 @@ public class ReviewedSourceApplicabilityService {
     public Map<UUID, Match> eligibleTopic(FinancialTopic topic, LocalDate asOfDate,
                                           String institution, String product,
                                           List<RetrievalCorpusSnapshotService.EligibleChunk> ready) {
+        return eligibleTopic(topic, asOfDate, false, institution, product, ready);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<UUID, Match> eligibleTopic(FinancialTopic topic, LocalDate asOfDate,
+                                          boolean historical, String institution, String product,
+                                          List<RetrievalCorpusSnapshotService.EligibleChunk> ready) {
         if (topic == null || asOfDate == null || ready == null) return Map.of();
         List<Review> reviews = jdbc.query("""
                 SELECT r.id, r.source_document_id, r.scope_kind, r.institution_name,
                        r.product_type, r.applicability_start_date, r.applicability_end_date,
-                       r.condition_required, r.exception_required, d.canonical_url, d.raw_sha256
+                       r.condition_required, r.exception_required, d.canonical_url, d.raw_sha256,
+                       r.temporal_policy, r.temporal_verified_on, r.temporal_valid_until
                 FROM source_applicability_review r
                 JOIN source_document d ON d.id = r.source_document_id
                 WHERE r.review_target_kind = 'TOPIC' AND r.financial_topic = ?
                   AND r.review_status = 'APPROVED' AND r.conditions_reviewed = TRUE
                   AND r.exceptions_reviewed = TRUE AND r.revoked_at IS NULL
                   AND d.status = 'ACTIVE' AND d.raw_sha256 = r.reviewed_raw_sha256
-                  AND r.applicability_start_date <= ?
-                  AND (r.applicability_end_date IS NULL OR r.applicability_end_date >= ?)
-                  AND d.applicability_start_date IS NOT NULL
-                  AND d.applicability_start_date <= ?
-                  AND (d.applicability_end_date IS NULL OR d.applicability_end_date >= ?)
                   AND (r.product_type IS NULL OR r.product_type = ?)
                   AND (r.scope_kind = 'COMMON' OR (r.scope_kind = 'INSTITUTION_SPECIFIC'
                        AND r.institution_name = ?))
                 """, (rs, n) -> new Review((UUID) rs.getObject(1), (UUID) rs.getObject(2),
                 rs.getString(3), rs.getString(4), rs.getString(5),
                 rs.getObject(6, LocalDate.class), rs.getObject(7, LocalDate.class),
-                rs.getBoolean(8), rs.getBoolean(9), rs.getString(10), rs.getString(11)),
-                topic.name(), asOfDate, asOfDate,
-                asOfDate, asOfDate, product, institution);
+                rs.getBoolean(8), rs.getBoolean(9), rs.getString(10), rs.getString(11),
+                TemporalEvidencePolicy.valueOf(rs.getString(12)),
+                rs.getObject(13, LocalDate.class), rs.getObject(14, LocalDate.class)),
+                topic.name(), product, institution);
+        reviews = reviews.stream().filter(review -> searchWindow.allows(review.id()))
+                .filter(review -> review.policy().usable(asOfDate,
+                historical, review.start(), review.end(), review.verifiedOn(), review.validUntil())).toList();
         return matches(reviews, ready, topic);
     }
 
@@ -164,6 +174,15 @@ public class ReviewedSourceApplicabilityService {
     private record Review(UUID id, UUID documentId, String scopeKind, String institution,
                           String product, LocalDate start, LocalDate end,
                           boolean conditionRequired, boolean exceptionRequired,
-                          String canonicalUrl, String rawHash) {}
+                          String canonicalUrl, String rawHash, TemporalEvidencePolicy policy,
+                          LocalDate verifiedOn, LocalDate validUntil) {
+        Review(UUID id, UUID documentId, String scopeKind, String institution, String product,
+                LocalDate start, LocalDate end, boolean conditionRequired, boolean exceptionRequired,
+                String canonicalUrl, String rawHash) {
+            this(id, documentId, scopeKind, institution, product, start, end,
+                    conditionRequired, exceptionRequired, canonicalUrl, rawHash,
+                    TemporalEvidencePolicy.EXPLICIT_EFFECTIVE, null, null);
+        }
+    }
     private record Link(UUID chunkId, String role) {}
 }

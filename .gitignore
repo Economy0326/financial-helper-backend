@@ -57,6 +57,12 @@ Thumbs.db
 ### Curl / Guest Session Test Files ###
 cookies*.txt
 
+### Local database exports and Python environments ###
+*.dump
+*.backup
+*.sql.gz
+.venv/
+
 ### Retrieval runtime artifacts ###
 var/retrieval-indexes/
 __pycache__/

@@ -68,6 +68,18 @@ public interface SourceChunkIndexingRepository
             @Param("generationId") UUID generationId
     );
 
+    @Query("""
+            select indexing from SourceChunkIndexing indexing
+            join fetch indexing.sourceChunk chunk
+            join fetch chunk.sourceDocument document
+            join fetch indexing.retrievalGeneration generation
+            where generation.id = :generationId and chunk.id in :chunkIds
+              and indexing.indexingStatus = com.financialhelper.source.SourceChunkIndexingStatus.READY
+            order by document.id, chunk.sequence
+            """)
+    List<SourceChunkIndexing> findReadyByGenerationIdAndChunkIds(
+            @Param("generationId") UUID generationId, @Param("chunkIds") java.util.Set<UUID> chunkIds);
+
     long countByRetrievalGeneration_IdAndIndexingStatus(
             UUID retrievalGenerationId,
             SourceChunkIndexingStatus indexingStatus

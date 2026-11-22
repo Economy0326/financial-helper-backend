@@ -54,7 +54,7 @@ public class IsolatedDatabaseInitializer implements ApplicationContextInitialize
                     || !Boolean.TRUE.equals(state.get("Running")) || !"postgres:16-alpine".equals(config.get("Image"))
                     || tmpfs == null || !tmpfs.containsKey("/var/lib/postgresql/data")
                     || !((List<?>) container.get("Mounts")).isEmpty() || bindings.size() != 1
-                    || !"127.0.0.1".equals(binding.get("HostIp"))
+                    || !"127.0.0.1".equals(binding.get("HostIp")) || "15432".equals(binding.get("HostPort"))
                     || !("jdbc:postgresql://127.0.0.1:" + binding.get("HostPort") + "/" + db)
                             .equals(env.getProperty("spring.datasource.url"))
                     || !user.equals(env.getProperty("spring.datasource.username"))

@@ -10,6 +10,7 @@ import com.financialhelper.source.ActiveRetrievalGenerationPersistenceService;
 import com.financialhelper.source.RetrievalGeneration;
 import com.financialhelper.source.RetrievalGenerationStatus;
 import com.financialhelper.source.VerifiedPdfMetadata;
+import com.financialhelper.source.OfficialInformationClaimSelector;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -55,18 +56,20 @@ public class GeneralTopicInformationService {
         FinancialTopic topic = consultation.getConfirmedInformationTopic();
         if (!consultation.isInformationIntake() || topic == null || consultation.getScenario() != null)
             return result(id, consultation, null, "NEEDS_TOPIC_CONFIRMATION", List.of(), List.of());
-        if (topic != FinancialTopic.DEPOSITS_ACCOUNTS)
-            return result(id, consultation, null, "UNSUPPORTED_FINANCIAL_TOPIC", List.of(), List.of());
-
         // Older stored text is checked again before any external retrieval boundary.
         ConsultationInputPrivacy.requireSafe(consultation.getSituationText());
-        String query = DepositQueryPurpose.query(consultation.getSituationText());
+        boolean deposit = topic == FinancialTopic.DEPOSITS_ACCOUNTS;
+        SixTopicQueryPurpose.Match purpose = deposit ? null
+                : SixTopicQueryPurpose.resolve(topic, consultation.getSituationText());
+        String query = deposit ? DepositQueryPurpose.query(consultation.getSituationText())
+                : purpose == null ? null : purpose.query();
         if (query == null)
             return result(id, consultation, null, "NEEDS_CLARIFICATION", List.of("QUESTION_SCOPE"), List.of());
         boolean historical = request.timeScope() == GeneralTopicInformationRequest.TimeScope.HISTORICAL;
         if (historical != (request.asOfDate() != null))
             return result(id, consultation, null, "NEEDS_CLARIFICATION", List.of("REFERENCE_DATE"), List.of());
-        if (!historical && DepositQueryPurpose.hasHistoricalMarker(consultation.getSituationText()))
+        if ((!deposit && historical)
+                || !historical && deposit && DepositQueryPurpose.hasHistoricalMarker(consultation.getSituationText()))
             return result(id, consultation, null, "NEEDS_CLARIFICATION", List.of("REFERENCE_DATE"), List.of());
         LocalDate asOf = historical ? request.asOfDate() : LocalDate.now(ZoneId.of("Asia/Seoul"));
         RetrievalGeneration before = generations.current().orElse(null);
@@ -78,12 +81,14 @@ public class GeneralTopicInformationService {
         OfficialSearchRequest scoped = new OfficialSearchRequest(query, topic.name(), null, null,
                 null, List.of(), 10, null);
         Map<UUID, ReviewedSourceApplicabilityService.Match> topicEligible = reviews.eligibleTopic(
-                topic, asOf, null, null, corpus.readyChunks(before.getId()));
+                topic, asOf, historical, null, null, corpus.readyChunks(before.getId()));
         var scopedReady = corpus.readyChunks(before.getId()).stream()
-                .filter(chunk -> VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(chunk.canonicalUrl()))
-                .filter(chunk -> DepositQueryPurpose.questionNumbers(consultation.getSituationText())
+                .filter(chunk -> deposit ? VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(chunk.canonicalUrl())
+                        : OfficialInformationClaimSelector.officialUrl(purpose.sourceKey()).equals(chunk.canonicalUrl()))
+                .filter(chunk -> deposit ? DepositQueryPurpose.questionNumbers(consultation.getSituationText())
                         .stream().anyMatch(question -> chunk.parentSection() != null
-                                && chunk.parentSection().startsWith(question + ". ")))
+                                && chunk.parentSection().startsWith(question + ". "))
+                        : OfficialInformationClaimSelector.label(purpose.sourceKey()).equals(chunk.parentSection()))
                 .map(RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId)
                 .collect(Collectors.toSet());
         Map<UUID, ReviewedSourceApplicabilityService.Match> eligible = topicEligible.entrySet().stream()
@@ -103,7 +108,7 @@ public class GeneralTopicInformationService {
             return result(id, current, asOf, "STALE", List.of("SOURCE_STATE_CHANGED"), List.of());
         var finalReady = corpus.readyChunks(after.getId());
         Map<UUID, ReviewedSourceApplicabilityService.Match> finalReviews = reviews.eligibleTopic(
-                topic, asOf, null, null, finalReady);
+                topic, asOf, historical, null, null, finalReady);
         var readyById = finalReady.stream().collect(Collectors.toMap(
                 RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId, Function.identity()));
         if (found.candidates().stream().anyMatch(candidate ->

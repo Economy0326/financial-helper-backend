@@ -63,6 +63,10 @@ public class SourceReviewerService {
     }
 
     public UUID requireReviewer() {
+        return requireReviewer(jdbc);
+    }
+
+    static UUID requireReviewer(JdbcTemplate jdbc) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof AccountPrincipal principal)) {
             throw new SourceReviewException(HttpStatus.UNAUTHORIZED, "SOURCE_REVIEW_LOGIN_REQUIRED");
@@ -87,6 +91,16 @@ public class SourceReviewerService {
                             source.getId(), SourceDocumentStatus.ACTIVE).orElse(null);
                     boolean deposit = SOURCE_KEY.equals(source.getSourceKey())
                             && VerifiedPdfMetadata.DEPOSIT_PDF_URL.equals(source.getCanonicalUrl());
+                    boolean information = OfficialInformationClaimSelector.supports(source.getSourceKey());
+                    int candidateCount = 0;
+                    if (document != null && (deposit || information)) {
+                        List<SourceChunk> stored = chunkRepository.findAllBySourceDocument_IdOrderBySequenceAsc(document.getId());
+                        if (deposit && stored.size() == 11) candidateCount = (int) stored.stream()
+                                .filter(chunk -> chunk.getSequence() > 0 && chunk.getSequence() != 4).count();
+                        else candidateCount = (int) stored.stream().filter(chunk ->
+                                "SUPPORT".equals(OfficialInformationClaimSelector.role(
+                                        source.getSourceKey(), chunk.getSequence()))).count();
+                    }
                     ReviewCounts counts = document == null ? new ReviewCounts(0, 0, 0, 0)
                             : jdbc.queryForObject("""
                                     SELECT count(*), count(*) FILTER (WHERE review_status = 'APPROVED'),
@@ -101,9 +115,15 @@ public class SourceReviewerService {
                             document == null ? null : document.getTitle(),
                             document == null ? null : document.getPublishedAt(),
                             document == null ? null : document.getDocumentVersion(),
-                            document == null ? null : document.getRawSha256(), deposit,
-                            counts.total(), counts.approved(), counts.pending(), counts.rejected(),
-                            deposit && topicCoverage.hasCurrentCommonCorpus(FinancialTopic.DEPOSITS_ACCOUNTS));
+                            document == null ? null : document.getRawSha256(), deposit || information,
+                            candidateCount, counts.total(), counts.approved(), counts.pending(), counts.rejected(),
+                            (document != null && deposit && topicCoverage.hasCurrentCommonCorpus(FinancialTopic.DEPOSITS_ACCOUNTS, document.getId()))
+                            || (document != null && information && topicCoverage.hasCurrentCommonCorpus(
+                                    OfficialInformationClaimSelector.topic(source.getSourceKey()), document.getId())),
+                            source.getId(), document == null && source.getAcquisitionType() == SourceAcquisitionType.HTML
+                                    && !LegacyHtmlSourcePolicy.allowsLegacyPath(source.getId(), source.getSourceKey())
+                                    && ("fsc.go.kr".equalsIgnoreCase(source.getOfficialDomain()) || "korea.kr".equalsIgnoreCase(source.getOfficialDomain())
+                                        || (source.getContentSelector() != null && !source.getContentSelector().isBlank())));
                 }).toList();
     }
 
@@ -219,6 +239,41 @@ public class SourceReviewerService {
             if (exception) addRole(reviewId, documentId, candidate.supportChunkId(), "EXCEPTION");
             return new PreparedReview(candidate.question(), reviewId);
         }).toList();
+    }
+
+    @Transactional
+    public void decideCandidate(UUID documentId, int question, String expectedRawSha256,
+                                LocalDate startDate, LocalDate endDate, boolean conditionsReviewed,
+                                boolean exceptionsReviewed, Decision decision) {
+        UUID reviewer = requireReviewer();
+        if (documentId == null || decision == null || expectedRawSha256 == null
+                || !expectedRawSha256.matches("[a-f0-9]{64}")) {
+            throw new SourceReviewException(HttpStatus.BAD_REQUEST, "SOURCE_REVIEW_DECISION_INVALID");
+        }
+        documentRepository.findForUpdateById(documentId).orElseThrow(() ->
+                new SourceReviewException(HttpStatus.NOT_FOUND, "SOURCE_REVIEW_NOT_FOUND"));
+        SourceDocument document = requireExactDocument(documentId);
+        if (!expectedRawSha256.equals(document.getRawSha256())) {
+            throw new SourceReviewException(HttpStatus.CONFLICT, "SOURCE_REVIEW_VERSION_CHANGED");
+        }
+        List<ReviewState> existing = reviews(documentId);
+        if (existing.isEmpty()) {
+            prepare(documentId, startDate, endDate);
+            existing = reviews(documentId);
+        }
+        List<ReviewState> matches = existing.stream().filter(row -> row.question() == question).toList();
+        if (matches.size() != 1) throw new SourceReviewException(HttpStatus.CONFLICT, "SOURCE_REVIEW_SCOPE_CHANGED");
+        ReviewState target = matches.getFirst();
+        if (!"PENDING".equals(target.status())) {
+            String requested = decision == Decision.APPROVE ? "APPROVED" : "REJECTED";
+            Integer count = jdbc.queryForObject("""
+                    SELECT count(*) FROM source_review_decision_audit
+                    WHERE review_id = ? AND reviewer_account_id = ? AND decision = ? AND reviewed_raw_sha256 = ?
+                    """, Integer.class, target.reviewId(), reviewer, requested, expectedRawSha256);
+            if (requested.equals(target.status()) && count != null && count == 1) return;
+            throw new SourceReviewException(HttpStatus.CONFLICT, "SOURCE_REVIEW_ALREADY_DECIDED");
+        }
+        decide(target.reviewId(), expectedRawSha256, conditionsReviewed, exceptionsReviewed, decision);
     }
 
     @Transactional
@@ -402,9 +457,9 @@ public class SourceReviewerService {
     public record ReviewableSource(String sourceKey, String organization, String officialUrl,
                                    String format, UUID documentId, String title,
                                    LocalDate publishedAt, Integer documentVersion, String rawSha256,
-                                   boolean reviewWorkflowAvailable, int reviewItemCount,
+                                   boolean reviewWorkflowAvailable, int candidateItemCount, int reviewItemCount,
                                    int approvedItemCount, int pendingItemCount, int rejectedItemCount,
-                                   boolean searchAvailable) { }
+                                   boolean searchAvailable, UUID registryId, boolean textRegistrationAvailable) { }
     public record DocumentView(UUID documentId, int documentVersion, String rawSha256,
                                String title, LocalDate publishedAt, String pdfUrl, String metadataSourceUrl,
                                OffsetDateTime retrievedAt, boolean storedBytesMatchHash,

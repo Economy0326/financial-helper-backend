@@ -1,5 +1,12 @@
 # 금융도우미 Backend 작업 규칙
 
+## 현재 제품 경로
+
+- `source`: 공식문서 수집, 이용조건, Claim 검토 및 판본 관리.
+- `retrieval`: 금융정보 검색, 결과·FAQ·Report와 문서 AI 설명.
+- `retrieval_runtime`: 세대별 KURE 인덱싱 및 검색 런타임.
+- 이미 적용된 Flyway 이력과 과거 사용자 데이터는 보존한다.
+
 - 사용자 승인 범위의 단일 Task만 수행하고, 다음 Task를 선행 구현하지 않는다.
 - 실제 코드·schema·관련 테스트가 구현 상태의 Source of Truth다.
 - 문서 workspace의 `docs/architecture.md`는 Architecture 판단이 필요한 때, `docs/task-contract.md`는 현재 Task 계약이 제공된 때 명시적으로 읽는다. 두 문서의 자동 로드를 가정하지 않는다.

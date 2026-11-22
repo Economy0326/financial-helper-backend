@@ -1,6 +1,7 @@
 package com.financialhelper.source;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -23,12 +24,13 @@ public interface SourceChunkRepository
             String configVersion
     );
 
+    @EntityGraph(attributePaths = {"sourceDocument", "sourceDocument.sourceRegistry", "chunkConfiguration"})
     List<SourceChunk>
     findAllBySourceDocument_IdOrderBySequenceAsc(
             UUID sourceDocumentId
     );
 
-    @Query("select chunk from SourceChunk chunk join fetch chunk.sourceDocument where chunk.id = :id")
+    @Query("select chunk from SourceChunk chunk join fetch chunk.sourceDocument document join fetch document.sourceRegistry join fetch chunk.chunkConfiguration where chunk.id = :id")
     Optional<SourceChunk> findWithDocumentById(@Param("id") UUID id);
 
     /**
@@ -61,6 +63,26 @@ public interface SourceChunkRepository
             @Param("limit")
             int limit
     );
+
+      @Query(value = """
+              SELECT chunk.* FROM source_chunk chunk
+              JOIN source_document document ON document.id = chunk.source_document_id
+              WHERE chunk.review_status = 'APPROVED' AND document.status = 'ACTIVE'
+                AND chunk.keyword_search_vector @@ to_tsquery('simple', CAST(:query AS TEXT))
+              ORDER BY ts_rank_cd(chunk.keyword_search_vector, to_tsquery('simple', CAST(:query AS TEXT))) DESC, chunk.id
+              LIMIT :limit
+              """, nativeQuery = true)
+      List<SourceChunk> searchApprovedKeywordPrefixes(@Param("query") String query, @Param("limit") int limit);
+
+    @Query(value = """
+        SELECT chunk.* FROM source_chunk chunk
+        JOIN source_document document ON document.id=chunk.source_document_id
+        WHERE chunk.review_status='APPROVED' AND document.status='ACTIVE'
+          AND to_tsvector('simple', coalesce(document.title,'') || ' ' || coalesce(chunk.parent_section,'') || ' ' || chunk.body)
+              @@ websearch_to_tsquery('simple', CAST(:query AS TEXT))
+        ORDER BY chunk.id LIMIT :limit
+        """, nativeQuery = true)
+    List<SourceChunk> searchDocumentContextKeyword(@Param("query") String query, @Param("limit") int limit);
 
     @Query(
             """

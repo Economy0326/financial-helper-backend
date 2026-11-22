@@ -39,9 +39,163 @@ class OfficialSourceRetrievalServiceTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(activeGeneration.currentId()).thenAnswer(invocation ->
+                activeGeneration.current().map(RetrievalGeneration::getId));
+        org.mockito.Mockito.lenient().when(corpusSnapshot.readyChunks(org.mockito.ArgumentMatchers.any(UUID.class), org.mockito.ArgumentMatchers.anySet()))
+                .thenAnswer(invocation -> {
+                    java.util.Set<UUID> ids = invocation.getArgument(1);
+                    return corpusSnapshot.readyChunks(invocation.getArgument(0, UUID.class)).stream()
+                            .filter(chunk -> ids.contains(chunk.sourceChunkId())).toList();
+                });
         service = new OfficialSourceRetrievalService(
                 activeGeneration, corpusSnapshot, keywordSearch,
                 kureRuntime, sourceChunkRepository);
+    }
+
+    @Test
+    void generationSwitchDuringSearchReturnsUnavailableWithoutEvidence() {
+        UUID generationId = UUID.randomUUID(), chunkId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        org.mockito.Mockito.doReturn(Optional.of(UUID.randomUUID())).when(activeGeneration).currentId();
+        var claim = new RetrievalCorpusSnapshotService.EligibleChunk(chunkId, "합성 대출은 신청할 수 있습니다.", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "합성 대출", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(claim));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(generationId, List.of()));
+        var result = service.searchDocumentClaims("합성 대출 신청");
+        assertThat(result.status()).isEqualTo(RetrievalStatus.TEMPORARILY_UNAVAILABLE);
+        assertThat(result.candidates()).isEmpty();
+        assertThat(result.coverageGaps()).contains("EVIDENCE_CHANGED_DURING_SEARCH");
+    }
+
+    @Test
+    void comparisonIncludesBothNamedSubjectsWhenOneIsSemanticOnly() {
+        UUID generationId = UUID.randomUUID(), firstId = UUID.randomUUID(), secondId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var first = new RetrievalCorpusSnapshotService.EligibleChunk(firstId, "신청할 수 있습니다.", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "초록계좌 안내", null, null, null, "loc", "url", "fixture", null, true);
+        var second = new RetrievalCorpusSnapshotService.EligibleChunk(secondId, "해제할 수 있습니다.", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "보라계좌 안내", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(first, second));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generationId, List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(firstId, 1, 0.8, generationId),
+                        new KureRuntimeClient.KureRuntimeQueryResult.Hit(secondId, 2, 0.7, generationId))));
+        var keyword = mock(SourceChunk.class);
+        when(keyword.getId()).thenReturn(firstId);
+        when(keywordSearch.searchDocumentClaims(anyString(), anyInt(), org.mockito.ArgumentMatchers.any(UUID.class))).thenReturn(List.of(keyword));
+        var result = service.searchDocumentClaims("초록계좌와 보라계좌 차이");
+        assertThat(result.status()).isEqualTo(RetrievalStatus.FOUND);
+        assertThat(result.candidates()).extracting(OfficialEvidenceCandidate::sourceChunkId).containsExactlyInAnyOrder(firstId, secondId);
+    }
+
+    @Test
+    void ambiguousSingleTermWithMultipleClaimsRequiresClarification() {
+        UUID generationId = UUID.randomUUID(), firstId = UUID.randomUUID(), secondId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var first = new RetrievalCorpusSnapshotService.EligibleChunk(firstId, "합성 첫 근거", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "문서 A", null, null, null, "loc", "url", "fixture", null, true);
+        var second = new RetrievalCorpusSnapshotService.EligibleChunk(secondId, "합성 둘째 근거", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "문서 B", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(first, second));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(generationId, List.of()));
+        var firstChunk = mock(SourceChunk.class);
+        var secondChunk = mock(SourceChunk.class);
+        when(firstChunk.getId()).thenReturn(firstId);
+        when(secondChunk.getId()).thenReturn(secondId);
+        when(keywordSearch.searchDocumentClaims(anyString(), anyInt(), org.mockito.ArgumentMatchers.any(UUID.class))).thenReturn(List.of(firstChunk, secondChunk));
+        var ambiguous = service.searchDocumentClaims("기존");
+        assertThat(ambiguous.status()).isEqualTo(RetrievalStatus.NEEDS_CLARIFICATION);
+        assertThat(ambiguous.candidates()).extracting(OfficialEvidenceCandidate::sourceChunkId)
+                .containsExactlyInAnyOrder(firstId, secondId);
+        assertThat(ambiguous.coverageGaps()).contains("QUESTION_SCOPE_UNCLEAR");
+        assertThat(service.searchDocumentClaims("?기존!").status()).isEqualTo(RetrievalStatus.NEEDS_CLARIFICATION);
+        var contextual = service.searchDocumentClaims("합성 상품 기존 조건");
+        assertThat(contextual.status()).isEqualTo(RetrievalStatus.NEEDS_CLARIFICATION);
+        assertThat(contextual.candidates()).hasSize(2);
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenThrow(new IllegalStateException("synthetic outage"));
+        var outage = service.searchDocumentClaims("기존");
+        assertThat(outage.status()).isEqualTo(RetrievalStatus.TEMPORARILY_UNAVAILABLE);
+        assertThat(outage.coverageGaps()).contains("SEMANTIC_BRANCH_UNAVAILABLE");
+    }
+
+    @Test
+    void semanticOnlyClaimMustMatchTitleScopeAndClaimPurpose() {
+        UUID generationId = UUID.randomUUID(), chunkId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var chunk = new RetrievalCorpusSnapshotService.EligibleChunk(chunkId, "기존 수수료를 비교하세요.", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "가상상품 안내", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(chunk));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generationId, List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(chunkId, 1, 0.8, generationId))));
+        when(keywordSearch.searchDocumentClaims(anyString(), anyInt(), org.mockito.ArgumentMatchers.any(UUID.class))).thenReturn(List.of());
+        assertThat(service.searchDocumentClaims("가상상품 수수료가 있나요?").status()).isEqualTo(RetrievalStatus.FOUND);
+        assertThat(service.searchDocumentClaims("다른상품 수수료가 있나요?").status()).isEqualTo(RetrievalStatus.NO_MATCH);
+    }
+
+    @Test
+    void documentClaimSemanticOnlyIsNotAdoptedAsAnswerEvidence() {
+        UUID generationId = UUID.randomUUID(), chunkId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var chunk = new RetrievalCorpusSnapshotService.EligibleChunk(chunkId, "합성 근거", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "합성 문서", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(chunk));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generationId, List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(chunkId, 1, 0.8, generationId))));
+        when(keywordSearch.searchDocumentClaims(anyString(), anyInt(), org.mockito.ArgumentMatchers.any(UUID.class))).thenReturn(List.of());
+        var result = service.searchDocumentClaims("무관한 합성 질문");
+        assertThat(result.status()).isIn(RetrievalStatus.NO_MATCH, RetrievalStatus.NEEDS_CLARIFICATION);
+        assertThat(result.status()).isNotEqualTo(RetrievalStatus.FOUND);
+        assertThat(result.coverageGaps()).contains("SEMANTIC_RELEVANCE_UNCONFIRMED");
+    }
+
+    @Test
+    void documentClaimKeywordFailureIsUnavailableNotAnAbsenceConclusion() {
+        UUID generationId = UUID.randomUUID(), chunkId = UUID.randomUUID();
+        var generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var chunk = new RetrievalCorpusSnapshotService.EligibleChunk(chunkId, "합성 근거", UUID.randomUUID(), 1,
+                null, null, "{}", "합성 기관", "합성 문서", null, null, null, "loc", "url", "fixture", null, true);
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(chunk));
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generationId, List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(chunkId, 1, 0.8, generationId))));
+        when(keywordSearch.searchDocumentClaims(anyString(), anyInt(), org.mockito.ArgumentMatchers.any(UUID.class))).thenThrow(new IllegalStateException("synthetic failure"));
+        var result = service.searchDocumentClaims("합성 질문");
+        assertThat(result.status()).isEqualTo(RetrievalStatus.TEMPORARILY_UNAVAILABLE);
+        assertThat(result.coverageGaps()).contains("KEYWORD_BRANCH_UNAVAILABLE");
+    }
+
+    @Test
+    void rightsLostDuringRetrievalAreRemovedBeforeResponse() {
+        UUID generationId = UUID.randomUUID(), chunkId = UUID.randomUUID();
+        RetrievalGeneration generation = mock(RetrievalGeneration.class);
+        when(generation.getId()).thenReturn(generationId);
+        when(generation.getStatus()).thenReturn(RetrievalGenerationStatus.READY);
+        when(activeGeneration.current()).thenReturn(Optional.of(generation));
+        var initial = new RetrievalCorpusSnapshotService.EligibleChunk(chunkId, "합성 안내", UUID.randomUUID(), 1,
+                null, null, "{}", "금융위원회", "합성", null, null, null, "loc", "url");
+        when(corpusSnapshot.readyChunks(generationId)).thenReturn(List.of(initial), List.of());
+        when(kureRuntime.query(org.mockito.ArgumentMatchers.any())).thenReturn(new KureRuntimeClient.KureRuntimeQueryResult(
+                generationId, List.of(new KureRuntimeClient.KureRuntimeQueryResult.Hit(chunkId, 1, 1.0, generationId))));
+        when(keywordSearch.searchApproved(anyString(), anyInt())).thenReturn(List.of());
+        var response = service.search(new OfficialSearchRequest("안내", null, "금융위원회", null, null, List.of(), 10));
+        assertThat(response.candidates()).isEmpty();
+        assertThat(response.coverageGaps()).contains("EVIDENCE_NO_LONGER_AVAILABLE");
     }
 
     @Test
@@ -267,6 +421,7 @@ class OfficialSourceRetrievalServiceTest {
 
     @Test
     void passage_expansion_keeps_parent_article_and_exception_chunks_in_one_version() {
+        when(corpusSnapshot.mayExpand(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anySet())).thenReturn(true);
         UUID generationId = UUID.randomUUID();
         UUID documentId = UUID.randomUUID();
         UUID candidateChunkId = UUID.randomUUID();

@@ -1,5 +1,8 @@
 import unittest
 import uuid
+import json
+from pathlib import Path
+from unittest.mock import patch
 from http import HTTPStatus
 
 from retrieval_runtime.runtime import (
@@ -15,6 +18,11 @@ from retrieval_runtime.runtime import (
 
 
 class ContractTest(unittest.TestCase):
+    def test_readiness_rejects_manifest_without_index_files(self):
+        with patch.object(Path, "exists", return_value=True), patch.object(Path, "read_text", return_value=json.dumps({"documentCount": 1})), patch.object(RuntimeEngine, "_artifact_is_ready", return_value=False):
+            result = RuntimeEngine(Path("synthetic")).readiness(uuid.uuid4())
+            self.assertFalse(result["ready"])
+
     def test_build_payload_uses_pinned_model_and_unique_ids(self):
         document_id = str(uuid.uuid4())
         generation_id = str(uuid.uuid4())

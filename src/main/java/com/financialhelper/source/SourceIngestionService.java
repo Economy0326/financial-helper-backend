@@ -124,6 +124,10 @@ public class SourceIngestionService {
             SourceRegistry source
     ) {
 
+        if (source.getAcquisitionType() == SourceAcquisitionType.HTML) {
+            throw new SourceIngestionException("SOURCE_HTML_TEXT_ONLY_REQUIRED", "HTML requires the reviewed text-only registration path");
+        }
+
         if (
                 !officialSourceDomainRepository
                         .existsByDomainAndEnabledTrue(
@@ -160,6 +164,8 @@ public class SourceIngestionService {
                                 + snapshot.acquisitionType()
                 ));
         SourceIngestionData.Parsed parsed = parser.parse(snapshot, fetched);
+
+        OfficialInformationClaimSelector.validateFetchedCandidate(snapshot, parsed);
 
         // 새로운 write transaction 안에서 SourceRegistry를 다시 확인하고 저장
         return sourceDocumentWriter

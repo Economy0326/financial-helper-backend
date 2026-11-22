@@ -1,0 +1,4 @@
+﻿method,cases,errors,positive_n,known_gold_hit_at_3,single_label_p_at_3_proxy,single_label_ndcg_at_3_proxy,no_gold_candidates,negative_n,p50_ms,p95_ms
+FTS,30,0,25,0.04,0.0133,0.04,0,5,1912,3670
+KURE,30,0,25,1.0,0.3333,1.0,5,5,7674,9647
+HYBRID_PRODUCT,30,0,25,0.36,0.12,0.36,0,5,12796,32433

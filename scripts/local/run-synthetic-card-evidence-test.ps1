@@ -1,6 +1,13 @@
-param([switch]$FullSuite, [switch]$DepositPdf)
+param([switch]$FullSuite, [switch]$DepositPdf, [switch]$SixTopicPreflight, [switch]$CandidateDecision, [switch]$VerificationRecords, [switch]$VerifiedDecision, [switch]$R1BReviewerAuth, [switch]$R1BReady, [switch]$R1BReport, [switch]$R3A, [switch]$R3BScenario, [switch]$R3BScenarioReport, [switch]$R3UI, [switch]$FscPreview, [switch]$BatchReady, [switch]$DocumentReview)
 $ErrorActionPreference = 'Stop'
-if ($FullSuite -and $DepositPdf) { throw 'Choose one test mode' }
+if (([int][bool]$FullSuite + [int][bool]$DepositPdf + [int][bool]$SixTopicPreflight + [int][bool]$CandidateDecision + [int][bool]$VerificationRecords + [int][bool]$VerifiedDecision + [int][bool]$R1BReviewerAuth + [int][bool]$R1BReady + [int][bool]$R1BReport + [int][bool]$R3A + [int][bool]$R3BScenario + [int][bool]$R3BScenarioReport + [int][bool]$R3UI + [int][bool]$FscPreview + [int][bool]$BatchReady + [int][bool]$DocumentReview) -gt 1) {
+    throw 'Choose one test mode'
+}
+if ($R1BReviewerAuth -or $R1BReady -or $R1BReport -or $R3A -or $R3BScenario -or $R3BScenarioReport -or $R3UI -or $FscPreview -or $BatchReady -or $DocumentReview) {
+    # These modes must never inherit a running user's runtime endpoint.
+    $env:KURE_RUNTIME_ENABLED = 'false'
+    $env:LAW_OPEN_API_ENABLED = 'false'
+}
 if ($DepositPdf -and (-not $env:DEPOSIT_PDF_PREFLIGHT_PATH -or
         -not (Test-Path -LiteralPath $env:DEPOSIT_PDF_PREFLIGHT_PATH -PathType Leaf))) {
     throw 'DEPOSIT_PDF_PREFLIGHT_PATH must point to a verified local PDF'
@@ -29,7 +36,7 @@ try {
     $binding = $container.NetworkSettings.Ports.'5432/tcp'
     if ($container.Id -ne $id -or $container.Name -ne ('/' + $name) -or
         $container.Config.Labels.'financial-helper.test-run' -ne $run -or
-        $binding.Count -ne 1 -or $binding[0].HostIp -ne '127.0.0.1' -or
+        $binding.Count -ne 1 -or $binding[0].HostIp -ne '127.0.0.1' -or $binding[0].HostPort -eq '15432' -or
         -not $container.HostConfig.Tmpfs.'/var/lib/postgresql/data' -or $container.Mounts.Count -ne 0) {
         throw 'Container isolation verification failed'
     }
@@ -46,7 +53,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'Temporary PostgreSQL did not become ready' }
-    if ($DepositPdf) {
+    if ($DepositPdf -or $SixTopicPreflight -or (($R3UI -or $BatchReady) -and $env:FH_R4B2_REAL_KURE -eq 'true')) {
         $indexRoot = Join-Path $env:TEMP ('fh-isolated-kure-' + $run)
         New-Item -ItemType Directory -Path $indexRoot -ErrorAction Stop | Out-Null
         $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -55,6 +62,9 @@ try {
         $listener.Stop()
         $kureOut = Join-Path $indexRoot 'runtime.out'
         $kureErr = Join-Path $indexRoot 'runtime.err'
+        if (($R3UI -or $BatchReady) -and $env:FH_R4B2_REAL_KURE -eq 'true') {
+            $env:HF_HUB_OFFLINE = '1'; $env:TRANSFORMERS_OFFLINE = '1'; $env:KURE_DEVICE = 'cpu'
+        }
         $kureProcess = Start-Process -FilePath (Get-Command python.exe).Source `
             -ArgumentList @('retrieval_runtime/runtime.py','--host','127.0.0.1','--port',"$kurePort",'--index-root',$indexRoot) `
             -WorkingDirectory (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path `
@@ -88,9 +98,79 @@ try {
             & .\gradlew.bat test --no-daemon --rerun-tasks `
                 --tests 'com.financialhelper.source.DepositPdfPersistencePreflightIntegrationTest'
             $result = $LASTEXITCODE
+        } elseif ($SixTopicPreflight) {
+            $env:SIX_TOPIC_OFFICIAL_PREFLIGHT = 'true'
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.SixTopicOfficialSourcePreflightIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R3UI) {
+            $env:FH_UI_E2E = 'true'
+            & .\gradlew.bat test --rerun --offline --no-daemon `
+                --tests 'com.financialhelper.source.CandidateDecisionIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R3BScenarioReport) {
+            & .\gradlew.bat test --offline --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.CandidateDecisionIntegrationTest' `
+                --tests 'com.financialhelper.source.DocumentClaimBatchReadyIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R3BScenario) {
+            & .\gradlew.bat test --offline --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.retrieval.ConsultationOfficialInformationApiIntegrationTest' `
+                --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest' `
+                --tests 'com.financialhelper.ai.information.LegacyInformationReportHttpIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($FscPreview) {
+            & .\gradlew.bat test --offline --no-daemon --tests 'com.financialhelper.source.FscReviewerLivePreviewIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($DocumentReview) {
+            & .\gradlew.bat test --offline --no-daemon --tests 'com.financialhelper.source.DocumentClaimReviewerIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($BatchReady) {
+            & .\gradlew.bat test --offline --no-daemon --rerun-tasks --tests 'com.financialhelper.source.DocumentClaimBatchReadyIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R3A) {
+            & .\gradlew.bat test --offline --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.DocumentClaimReviewerIntegrationTest' `
+                --tests 'com.financialhelper.source.CandidateDecisionIntegrationTest' `
+                --tests 'com.financialhelper.source.FscReviewerLivePreviewIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R1BReviewerAuth) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.SourceReviewerHttpIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R1BReady) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.ActiveRetrievalGenerationIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($R1BReport) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest' `
+                --tests 'com.financialhelper.ai.information.LegacyInformationReportHttpIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($VerifiedDecision) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.VerifiedCandidateDecisionIntegrationTest' `
+                --tests 'com.financialhelper.source.SourceUrlVerificationRecordIntegrationTest' `
+                --tests 'com.financialhelper.source.CurrentGuidanceEvidencePolicyTest'
+            $result = $LASTEXITCODE
+        } elseif ($VerificationRecords) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.SourceUrlVerificationRecordIntegrationTest'
+            $result = $LASTEXITCODE
+        } elseif ($CandidateDecision) {
+            & .\gradlew.bat test --no-daemon --rerun-tasks `
+                --tests 'com.financialhelper.source.CandidateDecisionIntegrationTest' `
+                --tests 'com.financialhelper.source.DocumentClaimBatchReadyIntegrationTest' `
+                --tests 'com.financialhelper.source.TemporalEvidenceAssistantTest' `
+                --tests 'com.financialhelper.source.OfficialSourceVerificationServiceTest' `
+                --tests 'com.financialhelper.source.PinnedOfficialSourceContentFetcherTest' `
+                --tests 'com.financialhelper.source.SourceUrlPolicyTest' `
+                --tests 'com.financialhelper.source.PdfSourceDocumentParserTest' `
+                --tests 'com.financialhelper.source.OfficialInformationSourceIdentityTest'
+            $result = $LASTEXITCODE
         } else {
             & .\gradlew.bat test --no-daemon --rerun-tasks `
-                --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest.syntheticCommonCardReportWorksWithoutKnownInstitutionAndRevocationBlocksReload' `
+                --tests 'com.financialhelper.retrieval.OfficialInformationCorpusPersistenceIntegrationTest.informationReportUsesReviewedCorpusAndRevocationMakesItStale' `
                 --tests 'com.financialhelper.retrieval.GoldenCoverageEvaluationTest'
             $result = $LASTEXITCODE
         }
@@ -124,6 +204,6 @@ try {
             Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-    Remove-Item Env:POSTGRES_PASSWORD, Env:TEST_DB_PASSWORD, Env:FH_TEST_RUN_ID, Env:FH_TEST_CONTAINER_ID, Env:KURE_RUNTIME_ENABLED, Env:KURE_RUNTIME_ENDPOINT, Env:DEPOSIT_REAL_KURE_EVAL -ErrorAction SilentlyContinue
+    Remove-Item Env:POSTGRES_PASSWORD, Env:TEST_DB_PASSWORD, Env:FH_TEST_RUN_ID, Env:FH_TEST_CONTAINER_ID, Env:KURE_RUNTIME_ENABLED, Env:KURE_RUNTIME_ENDPOINT, Env:DEPOSIT_REAL_KURE_EVAL, Env:SIX_TOPIC_OFFICIAL_PREFLIGHT -ErrorAction SilentlyContinue
 }
 exit $result

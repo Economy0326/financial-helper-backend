@@ -51,7 +51,6 @@ public class OfficialSourceRetrievalService {
     private final SourceKeywordSearchService keywordSearch;
     private final KureRuntimeClient kureRuntime;
     private final SourceChunkRepository sourceChunkRepository;
-    private final ConfirmedCaseSnapshotService confirmedCaseSnapshotService;
     private final Map<UUID, SearchContext> legacyContexts = new ConcurrentHashMap<>();
     private final PersistentSearchContextRepository persistentContextRepository;
     private final ConsultationRepository consultationRepository;
@@ -68,7 +67,7 @@ public class OfficialSourceRetrievalService {
             SourceChunkRepository sourceChunkRepository
     ) {
         this(activeGeneration, corpusSnapshot, keywordSearch, kureRuntime,
-                sourceChunkRepository, null, null, null, null, null, null, java.time.Duration.ofMinutes(10));
+                sourceChunkRepository, null, null, null, null, null, java.time.Duration.ofMinutes(10));
     }
 
     @Autowired
@@ -78,7 +77,6 @@ public class OfficialSourceRetrievalService {
             SourceKeywordSearchService keywordSearch,
             KureRuntimeClient kureRuntime,
             SourceChunkRepository sourceChunkRepository,
-            ConfirmedCaseSnapshotService confirmedCaseSnapshotService,
             PersistentSearchContextRepository persistentContextRepository,
             ConsultationRepository consultationRepository,
             AccountSessionService accountSessionService,
@@ -91,7 +89,6 @@ public class OfficialSourceRetrievalService {
         this.keywordSearch = keywordSearch;
         this.kureRuntime = kureRuntime;
         this.sourceChunkRepository = sourceChunkRepository;
-        this.confirmedCaseSnapshotService = confirmedCaseSnapshotService;
         this.persistentContextRepository = persistentContextRepository;
         this.consultationRepository = consultationRepository;
         this.accountSessionService = accountSessionService;
@@ -104,24 +101,6 @@ public class OfficialSourceRetrievalService {
         return search(request);
     }
 
-    /** context로 사용하기 전에 현재 consultation revision을 capture한다. */
-    public OfficialSearchResponse search(UUID consultationId, OfficialSearchRequest request) {
-        if (confirmedCaseSnapshotService == null) {
-            throw new IllegalStateException("confirmed case snapshot service is required");
-        }
-        ConfirmedCaseSnapshotData snapshot = confirmedCaseSnapshotService.capture(consultationId);
-        OfficialSearchRequest enriched = new OfficialSearchRequest(
-                request.query(), request.category(), request.institution(), request.productType(),
-                request.incidentDate(), snapshot.facts(), request.limit(), request.scenario());
-        OfficialSearchResponse response = search(enriched);
-        if (persistentContextRepository != null) {
-            persistentContextRepository.deleteById(response.searchId());
-        }
-        persistContext(response, consultationId, snapshot.caseInputRevision(),
-                snapshot.followUpAnswerRevision());
-        return response;
-    }
-
     public OfficialSearchResponse search(OfficialSearchRequest request) {
         return searchInternal(request, true);
     }
@@ -129,6 +108,20 @@ public class OfficialSourceRetrievalService {
     /** 상담 API에서 사용한다. 현재성 검증 전에는 검색 handle을 저장하지 않는다. */
     public OfficialSearchResponse searchCandidates(OfficialSearchRequest request) {
         return searchInternal(request, false);
+    }
+
+    /** Generic document claims only; membership and rights are resolved by the server. */
+    public OfficialSearchResponse searchDocumentClaims(String question) {
+        if (question == null || question.isBlank())
+            throw new IllegalArgumentException("question is required");
+        com.financialhelper.consultation.ConsultationInputPrivacy.requireSafe(question);
+        try {
+            return searchInternal(new OfficialSearchRequest(question, null, null, null, null, List.of(), 10), false, null, true);
+        } catch (UnknownRetrievalCandidateException changed) {
+            // A concurrent activation or revocation invalidates the detached result.
+            return new OfficialSearchResponse(UUID.randomUUID(), RetrievalStatus.TEMPORARILY_UNAVAILABLE, false,
+                    List.of(), List.of("EVIDENCE_CHANGED_DURING_SEARCH"), List.of());
+        }
     }
 
     /** Only the consultation information API uses the explicitly reviewed eligibility set. */
@@ -144,11 +137,17 @@ public class OfficialSourceRetrievalService {
 
     private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext,
                                                   Set<UUID> reviewedChunkIds) {
+        return searchInternal(request, storeContext, reviewedChunkIds, false);
+    }
+
+    private OfficialSearchResponse searchInternal(OfficialSearchRequest request, boolean storeContext,
+                                                  Set<UUID> reviewedChunkIds, boolean documentClaimMode) {
+        long timingStart = System.nanoTime();
         if (request == null) {
             throw new IllegalArgumentException("request must not be null");
         }
         UUID searchId = UUID.randomUUID();
-        if (request.institution() == null && reviewedChunkIds == null) {
+        if (!documentClaimMode && request.institution() == null && reviewedChunkIds == null) {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NEEDS_CLARIFICATION, false,
                     List.of("INSTITUTION"), List.of(), List.of());
@@ -165,7 +164,7 @@ public class OfficialSourceRetrievalService {
             return response;
         }
 
-        if (isOutOfScopeCardRequest(request)) {
+        if (!documentClaimMode && isOutOfScopeCardRequest(request)) {
             OfficialSearchResponse response = new OfficialSearchResponse(
                     searchId, RetrievalStatus.NO_MATCH, false, List.of(),
                     List.of("CARD_SCOPE_OUT_OF_SCOPE"), List.of());
@@ -181,12 +180,14 @@ public class OfficialSourceRetrievalService {
             return response;
         }
 
+        long eligibilityStart = System.nanoTime();
         List<RetrievalCorpusSnapshotService.EligibleChunk> scopedCorpus = corpusSnapshot
                 .readyChunks(generation.getId()).stream()
-                .filter(chunk -> reviewedChunkIds == null
+                .filter(chunk -> documentClaimMode ? chunk.documentClaim() : reviewedChunkIds == null
                         ? matchesNonTemporalScope(chunk, request)
                         : reviewedChunkIds.contains(chunk.sourceChunkId()))
                 .toList();
+        long eligibilityNanos = System.nanoTime() - eligibilityStart;
         boolean temporalUnknown = request.incidentDate() != null
                 && scopedCorpus.stream().anyMatch(chunk ->
                 chunk.applicabilityStartDate() == null);
@@ -211,12 +212,13 @@ public class OfficialSourceRetrievalService {
         boolean semanticFailed = false;
         boolean keywordFailed = false;
 
+        long semanticStart = System.nanoTime();
         try {
             KureRuntimeClient.KureRuntimeQueryResult result = kureRuntime.query(
                     new KureRuntimeClient.KureRuntimeQueryRequest(
                             generation.getId(), request.query().isBlank()
                                     ? request.institution() : request.query(),
-                            Math.min(100, request.limit()),
+                            documentClaimMode ? 100 : Math.min(100, request.limit()),
                             eligible.keySet()));
             if (!generation.getId().equals(result.generationId())) {
                 throw new KureRuntimeException("KURE query generation mismatch");
@@ -238,9 +240,12 @@ public class OfficialSourceRetrievalService {
                     semanticFailureCategory(exception), exception.getClass().getSimpleName());
         }
 
+        long semanticNanos = System.nanoTime() - semanticStart;
+        long keywordStart = System.nanoTime();
         try {
-            List<SourceChunk> keywordChunks = keywordSearch.searchApproved(
-                    request.query().isBlank() ? request.institution() : request.query(),
+            String keywordQuery = request.query().isBlank() ? request.institution() : request.query();
+            List<SourceChunk> keywordChunks = documentClaimMode ? keywordSearch.searchDocumentClaims(keywordQuery, 100, generation.getId()) : keywordSearch.searchApproved(
+                    keywordQuery,
                     // keyword repository는 의도적으로 generation에 독립적이다. immutable한
                     // generation 범위 eligibility set을 적용하기 전에 제한된 최댓값을 조회한다.
                     // 그렇지 않으면 오래된 chunk version이 caller의 작은 limit을 소비해
@@ -263,11 +268,90 @@ public class OfficialSourceRetrievalService {
                     exception.getClass().getSimpleName());
         }
 
+        long keywordNanos = System.nanoTime() - keywordStart;
+        long fusionStart = System.nanoTime();
         List<ReciprocalRankFusion.FusedHit> fused = ReciprocalRankFusion.fuse(
-                semantic, keyword, request.limit());
+                semantic, keyword, documentClaimMode ? 100 : request.limit());
+        List<ReciprocalRankFusion.FusedHit> exploration = fused;
+        long fusionNanos = System.nanoTime() - fusionStart;
+        long relevanceStart = System.nanoTime();
+        boolean unconfirmedSemantic = false;
+        if (documentClaimMode) {
+            Set<UUID> corroborated = keyword.stream().map(ReciprocalRankFusion.RankedHit::sourceChunkId)
+                    .collect(java.util.stream.Collectors.toSet());
+            boolean knownPurpose = DocumentClaimRelevance.hasKnownPurpose(request.query());
+            Map<UUID, String> approvedDocumentText = new HashMap<>();
+            corpus.forEach(chunk -> approvedDocumentText.merge(chunk.sourceDocumentId(), chunk.title() + " " + chunk.body(), (a, b) -> a + " " + b));
+            var relevanceFiltered = fused.stream().filter(hit -> {
+                var chunk = eligible.get(hit.sourceChunkId());
+                if (chunk == null) return false;
+                return knownPurpose
+                        ? !DocumentClaimRelevance.matchedPurposesInSection(request.query(), chunk.title(), chunk.body(), chunk.parentSection()).isEmpty()
+                          || DocumentClaimRelevance.generalProcedureReference(request.query(), chunk.title(), approvedDocumentText.get(chunk.sourceDocumentId()), chunk.body())
+                        : corroborated.contains(hit.sourceChunkId());
+            }).toList();
+            unconfirmedSemantic = relevanceFiltered.size() < fused.size();
+            fused = relevanceFiltered.stream()
+                    .limit(request.limit()).toList();
+        }
+        // A single search term matching multiple claims does not identify which
+        // subject or question the user intended. Do not turn a rank into an answer.
+        var terms = java.util.regex.Pattern.compile("[\\p{L}\\p{N}]+").matcher(request.query());
+        boolean singleTerm = terms.find() && !terms.find();
+        long documentCount = fused.stream().map(hit -> eligible.get(hit.sourceChunkId()))
+                .filter(java.util.Objects::nonNull).map(RetrievalCorpusSnapshotService.EligibleChunk::sourceDocumentId).distinct().count();
+        boolean ambiguousScope = documentClaimMode && fused.size() > 1 && (singleTerm
+                || (!DocumentClaimRelevance.hasKnownPurpose(request.query()) && documentCount > 1));
+        // Exploratory hits are never answers: require an actual query fragment in
+        // approved evidence or its title, and only use them to ask the user.
+        if (documentClaimMode && !DocumentClaimRelevance.hasKnownPurpose(request.query())) {
+            var fragments = java.util.regex.Pattern.compile("[\\p{L}\\p{N}]+\\s*").matcher(request.query());
+            List<String> anchors = new ArrayList<>();
+            while (fragments.find()) {
+                String token = fragments.group().trim().replaceFirst("(에서도|에게도|으로는|에는|에도|에서|으로|에게|은|는|이|가|을|를|의|에|도|와|과)$", "");
+                if (token.length() >= 2) anchors.add(token.toLowerCase(java.util.Locale.ROOT));
+            }
+            var exploratoryHits = exploration.stream().filter(hit -> {
+                var chunk = eligible.get(hit.sourceChunkId());
+                if (chunk == null) return false;
+                String text = (chunk.title() + " " + chunk.body()).toLowerCase(java.util.Locale.ROOT);
+                return anchors.stream().anyMatch(text::contains);
+            }).limit(request.limit()).toList();
+            long groups = exploratoryHits.stream().map(hit -> eligible.get(hit.sourceChunkId()).sourceDocumentId()).distinct().count();
+            if ((fused.isEmpty() || ambiguousScope) && groups > 0 && !exploratoryHits.isEmpty()) { fused = exploratoryHits; ambiguousScope = true; }
+        }
+        // A comparison already names its subjects. Keep separately attributable
+        // approved evidence for both, rather than forcing a choice of only one.
+        if (documentClaimMode && request.query().matches("(?s).*(비교|차이|다른\\s*점).*")) {
+            var words = java.util.regex.Pattern.compile("[\\p{L}\\p{N}]+").matcher(request.query());
+            java.util.Set<String> queryTerms = new java.util.HashSet<>();
+            while (words.find()) {
+                String term = words.group().replaceFirst("(에서도|에게도|으로는|에는|에도|에서|으로|에게|은|는|이|가|을|를|의|에|도|와|과)$", "");
+                if (term.length() >= 2) queryTerms.add(term.toLowerCase(java.util.Locale.ROOT));
+            }
+            // Use the eligible RRF exploration pool: the keyword-only answer
+            // filter may otherwise remove one of the explicitly named subjects.
+            var titles = exploration.stream().map(hit -> eligible.get(hit.sourceChunkId())).filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toMap(RetrievalCorpusSnapshotService.EligibleChunk::sourceDocumentId,
+                            c -> c.title().toLowerCase(java.util.Locale.ROOT), (a, b) -> a));
+            var subjects = titles.entrySet().stream().filter(entry -> queryTerms.stream().anyMatch(term -> entry.getValue().contains(term)
+                    && titles.values().stream().filter(title -> title.contains(term)).count() == 1)).map(java.util.Map.Entry::getKey)
+                    .collect(java.util.stream.Collectors.toSet());
+            var comparison = exploration.stream().filter(hit -> subjects.contains(eligible.get(hit.sourceChunkId()).sourceDocumentId()))
+                    .filter(hit -> {
+                        var chunk = eligible.get(hit.sourceChunkId());
+                        return DocumentClaimRelevance.hasKnownPurpose(request.query())
+                                ? !DocumentClaimRelevance.matchedPurposesInSection(request.query(), chunk.title(), chunk.body(), chunk.parentSection()).isEmpty()
+                                : !DocumentClaimRelevance.availablePurposes(chunk.body()).isEmpty();
+                    }).limit(request.limit()).toList();
+            if (comparison.stream().map(hit -> eligible.get(hit.sourceChunkId()).sourceDocumentId()).distinct().count() >= 2) {
+                fused = comparison; ambiguousScope = false;
+            }
+        }
         boolean degraded = semanticFailed || keywordFailed;
         RetrievalStatus status;
         List<String> gaps = new ArrayList<>();
+        if (unconfirmedSemantic) gaps.add("SEMANTIC_RELEVANCE_UNCONFIRMED");
         if (temporalUnknown) {
             gaps.add("TEMPORAL_APPLICABILITY_UNKNOWN");
         }
@@ -278,7 +362,10 @@ public class OfficialSourceRetrievalService {
             gaps.add("KEYWORD_BRANCH_UNAVAILABLE");
         }
         // An empty surviving branch cannot prove absence while the other branch failed.
-        if (fused.isEmpty() && (semanticFailed || keywordFailed)) {
+        if (ambiguousScope) {
+            status = degraded ? RetrievalStatus.TEMPORARILY_UNAVAILABLE : RetrievalStatus.NEEDS_CLARIFICATION;
+            gaps.add("QUESTION_SCOPE_UNCLEAR");
+        } else if (fused.isEmpty() && (semanticFailed || keywordFailed)) {
             status = RetrievalStatus.TEMPORARILY_UNAVAILABLE;
         } else if (fused.isEmpty()) {
             status = RetrievalStatus.NO_MATCH;
@@ -289,10 +376,18 @@ public class OfficialSourceRetrievalService {
             status = RetrievalStatus.FOUND;
         }
 
+        long relevanceNanos = System.nanoTime() - relevanceStart;
+        long finalEligibilityStart = System.nanoTime();
         Map<UUID, OfficialEvidenceCandidate> candidateById = new HashMap<>();
         List<OfficialEvidenceCandidate> candidates = new ArrayList<>();
+        UUID finalGeneration = activeGeneration.currentId().orElseThrow(UnknownRetrievalCandidateException::new);
+        if (!generation.getId().equals(finalGeneration)) throw new UnknownRetrievalCandidateException();
+        Set<UUID> returnedIds = fused.stream().map(ReciprocalRankFusion.FusedHit::sourceChunkId).collect(java.util.stream.Collectors.toSet());
+        Set<UUID> stillEligible = fused.isEmpty() ? Set.of() : corpusSnapshot.readyChunks(generation.getId(), returnedIds).stream()
+                .map(RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId).collect(java.util.stream.Collectors.toSet());
         int rank = 1;
         for (ReciprocalRankFusion.FusedHit hit : fused) {
+            if (!stillEligible.contains(hit.sourceChunkId())) continue;
             RetrievalCorpusSnapshotService.EligibleChunk chunk = eligible.get(hit.sourceChunkId());
             UUID candidateId = UUID.randomUUID();
             OfficialEvidenceCandidate candidate = new OfficialEvidenceCandidate(
@@ -303,13 +398,29 @@ public class OfficialSourceRetrievalService {
                     chunk.parentSection(),
                     chunk.representationMetadataJson(),
                     chunk.articleReference(), chunk.pageReference(), chunk.locator(),
-                    chunk.canonicalUrl(), chunk.body());
+                    chunk.canonicalUrl(), chunk.body(), chunk.publishedAt(),
+                    chunk.documentClaim() ? "NOT_VERIFIED" : null);
             candidateById.put(candidateId, candidate);
             candidates.add(candidate);
+        }
+        if (candidates.isEmpty() && status == RetrievalStatus.FOUND) {
+            status = degraded ? RetrievalStatus.TEMPORARILY_UNAVAILABLE : RetrievalStatus.NO_MATCH;
+            gaps.add("EVIDENCE_NO_LONGER_AVAILABLE");
         }
         OfficialSearchResponse response = new OfficialSearchResponse(
                 searchId, status, degraded, List.of(), gaps, candidates);
         if (storeContext) remember(searchId, response, candidateById, null, 0L, 0L);
+        if (!candidates.isEmpty()) {
+            Set<UUID> beforeReturn = corpusSnapshot.readyChunks(generation.getId(), candidates.stream().map(OfficialEvidenceCandidate::sourceChunkId).collect(java.util.stream.Collectors.toSet())).stream()
+                    .map(RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId).collect(java.util.stream.Collectors.toSet());
+            if (!beforeReturn.containsAll(candidates.stream().map(OfficialEvidenceCandidate::sourceChunkId).toList())
+                    || !generation.getId().equals(activeGeneration.currentId().orElse(null)))
+                throw new UnknownRetrievalCandidateException();
+        }
+        if (documentClaimMode) log.info("Document retrieval timing ms: corpus_eligibility_db={} kure={} keyword_db={} rrf={} relevance={} final_validation_and_response={} total={}",
+                eligibilityNanos / 1_000_000, semanticNanos / 1_000_000, keywordNanos / 1_000_000,
+                fusionNanos / 1_000_000, relevanceNanos / 1_000_000,
+                (System.nanoTime() - finalEligibilityStart) / 1_000_000, (System.nanoTime() - timingStart) / 1_000_000);
         return response;
     }
 
@@ -342,13 +453,28 @@ public class OfficialSourceRetrievalService {
             throw new UnknownRetrievalCandidateException();
         }
         List<SourcePassage> passages = new ArrayList<>();
+        var active = activeGeneration.current().orElseThrow(UnknownRetrievalCandidateException::new);
+        boolean mixedGeneration = RetrievalGenerationIndexingPersistenceService.includesDocumentClaims(active.getMetadataJson());
+        Map<UUID, RetrievalCorpusSnapshotService.EligibleChunk> readyById = new HashMap<>();
+        corpusSnapshot.readyChunks(active.getId()).forEach(chunk -> readyById.put(chunk.sourceChunkId(), chunk));
+        Set<UUID> readyIds = readyById.keySet();
         for (UUID candidateId : candidateIds) {
             OfficialEvidenceCandidate candidate = context.candidates.get(candidateId);
+            if (!active.getId().equals(candidate.retrievalGenerationId()) || !readyIds.contains(candidate.sourceChunkId()))
+                throw new UnknownRetrievalCandidateException();
+            var current = readyById.get(candidate.sourceChunkId());
+            if (current.documentClaim() && (!current.sourceDocumentId().equals(candidate.sourceDocumentId())
+                    || current.documentVersion() != candidate.documentVersion()
+                    || !java.util.Objects.equals(current.body(), candidate.body())
+                    || !java.util.Objects.equals(current.locator(), candidate.locator())
+                    || !java.util.Objects.equals(current.canonicalUrl(), candidate.canonicalUrl())))
+                throw new UnknownRetrievalCandidateException();
             Set<UUID> referencedIds = referencedChunkIds(candidate);
             List<SourceChunk> chunks = sourceChunkRepository
                     .findAllBySourceDocument_IdOrderBySequenceAsc(candidate.sourceDocumentId()).stream()
                     .filter(chunk -> chunk.getReviewStatus() == SourceChunkReviewStatus.APPROVED)
                     .filter(chunk -> chunk.getSourceDocument().getStatus() == SourceDocumentStatus.ACTIVE)
+                    .filter(chunk -> mixedGeneration ? readyIds.contains(chunk.getId()) : corpusSnapshot.mayExpand(chunk, readyIds))
                     .filter(chunk -> sameExpansionUnit(chunk, candidate) || referencedIds.contains(chunk.getId()))
                     .sorted(Comparator.comparingInt(SourceChunk::getSequence)).toList();
             if (chunks.stream().noneMatch(chunk -> chunk.getId().equals(candidate.sourceChunkId()))) {
@@ -358,8 +484,18 @@ public class OfficialSourceRetrievalService {
                     .reduce((left, right) -> left + "\n" + right).orElse(candidate.body());
             passages.add(new SourcePassage(UUID.randomUUID(), candidateId, candidate.sourceDocumentId(),
                     candidate.documentVersion(), chunks.stream().map(SourceChunk::getId).toList(), text,
-                    candidate.articleReference(), candidate.pageReference(), candidate.locator(), candidate.canonicalUrl()));
+                    candidate.articleReference(), candidate.pageReference(), candidate.locator(), candidate.canonicalUrl(),
+                    current.documentClaim() ? current.publishedAt() : candidate.publishedAt(),
+                    current.documentClaim() ? "NOT_VERIFIED" : candidate.currentApplicability()));
         }
+        UUID latest = activeGeneration.currentId().orElseThrow(UnknownRetrievalCandidateException::new);
+        if (!active.getId().equals(latest)) throw new UnknownRetrievalCandidateException();
+        Set<UUID> latestReady = corpusSnapshot.readyChunks(active.getId()).stream()
+                .map(RetrievalCorpusSnapshotService.EligibleChunk::sourceChunkId).collect(java.util.stream.Collectors.toSet());
+        if (candidateIds.stream().map(context.candidates::get).anyMatch(c -> !latestReady.contains(c.sourceChunkId())))
+            throw new UnknownRetrievalCandidateException();
+        if (!active.getId().equals(activeGeneration.currentId().orElse(null)))
+            throw new UnknownRetrievalCandidateException();
         return List.copyOf(passages);
     }
 
@@ -584,13 +720,6 @@ public class OfficialSourceRetrievalService {
                 throw new IllegalStateException("search context persistence failed", exception);
             }
         }
-    }
-
-    private void persistContext(OfficialSearchResponse response, UUID consultationId,
-                                long caseRevision, long answerRevision) {
-        Map<UUID, OfficialEvidenceCandidate> candidates = new HashMap<>();
-        response.candidates().forEach(candidate -> candidates.put(candidate.candidateId(), candidate));
-        remember(response.searchId(), response, candidates, consultationId, caseRevision, answerRevision);
     }
 
     private SearchContext loadContext(UUID searchId, UUID consultationId) {

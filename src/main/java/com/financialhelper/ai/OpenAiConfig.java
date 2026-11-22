@@ -3,19 +3,15 @@ package com.financialhelper.ai;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
 
-// AI_ENABLED가 true로 설정되어 있을 때만 OpenAiConfig를 활성화하도록 설정
-@ConditionalOnProperty(
-        prefix = "app.ai",
-        name = "enabled",
-        havingValue = "true"
-)
+// 문서 설명은 기존 상담 AI와 별도로 켤 수 있으며 의미 검증도 함께 필요하다.
+@ConditionalOnExpression("${app.ai.enabled:false} or (${app.ai.document-explanations-enabled:false} and ${app.ai.document-semantic-verification-enabled:false})")
 
 @EnableConfigurationProperties(
         OpenAiProperties.class
@@ -31,6 +27,10 @@ public class OpenAiConfig {
             OpenAiProperties properties
     ) {
 
+        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            throw new IllegalArgumentException("OPENAI_API_KEY is required when AI is enabled");
+        }
+
         // OpenAIOkHttpClient -> 실제 HTTP 통신
         return OpenAIOkHttpClient.builder()
                 .apiKey(
@@ -39,6 +39,7 @@ public class OpenAiConfig {
                 .timeout(
                         properties.timeout()
                 )
+                .maxRetries(0)
                 .build();
     }
 }
